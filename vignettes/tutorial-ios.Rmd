@@ -7,6 +7,15 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
 ## Background
 
 Instruments for a particular trait may be non-specific. Using the genotype-phenotype map we can take instruments for a trait and examine the extent to which they are associated with other traits. The index of suspicion is the extent to which an instrument associates with other traits, normalised by the original trait effect estimate. New weights can be developed for the instrument based on the index of suspicion.
