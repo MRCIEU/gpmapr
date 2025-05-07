@@ -1,0 +1,58 @@
+---
+title: "Index of suspicion tutorial"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{tutorial-ios}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+## Background
+
+Instruments for a particular trait may be non-specific. Using the genotype-phenotype map we can take instruments for a trait and examine the extent to which they are associated with other traits. The index of suspicion is the extent to which an instrument associates with other traits, normalised by the original trait effect estimate. New weights can be developed for the instrument based on the index of suspicion.
+
+## 1. Get instruments
+
+Provide a trait within the [https://gpmap.opengwas.io](https://gpmap.opengwas.io) database
+
+```{r}
+crp_instruments <- get_instruments(trait = "CRP")
+```
+
+## 2. Get traits that are associated with the same instruments
+
+```{r}
+crp_phewas <- phewas(variants = crp_instruments$variants) %>%
+    wide_format()
+```
+
+## 3. Normalise by SNP-exposure effect size
+
+```{r}
+crp_phewas <- crp_phewas %>%
+    normalise_by_exposure(exposure = crp_instruments)
+```
+
+## 4. Orthogonalise traits
+
+```{r}
+crp_phewas <- crp_phewas %>%
+    orthogonalise_traits()
+```
+
+## 5. Get index of suspicion
+
+```{r}
+crp_phewas <- crp_phewas %>%
+    index_of_suspicion()
+```
+
+## 6. Get new weights
+
+The weights in MR are usually based on the variance of the SNP-outcome association, which is mostly influenced by the allele frequency and the sample size. We can also combine the index of suspicion into this weighting scheme. The new weights are the product of the original weights and the normalised index of suspicion.
+
+```{r}
+crp_phewas <- crp_phewas %>%
+    ios_weights()
+```
+

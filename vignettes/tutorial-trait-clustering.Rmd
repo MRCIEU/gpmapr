@@ -1,0 +1,53 @@
+---
+title: "Trait clustering tutorial"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{tutorial-trait-clustering}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(gpmapr)
+library(dplyr)
+```
+
+## Background
+
+It is often difficult to determine how specific the instruments for a particular trait are. For example if you have a particular measure of adiposity, how do you know that the instruments are not also associated with other measures of adiposity? It may be the case that there is a cluster of traits that are statistically indistinguishable from one another in an MR framework. This aims to illustrate how to create trait clusters based on the similarity of the instruments used to measure them.
+
+The `gpmapr` package provides a way to cluster traits based on instrument similarity. This is done by starting with an index trait, identifying instruments for that trait, and then searching for traits with similar associations. Finally, it uses a conditional F-statistic measure to determine how to cluster traits.
+
+
+## 1. Get instruments
+
+Provide a trait within the [https://gpmap.opengwas.io](https://gpmap.opengwas.io) database
+
+```{r}
+bmi_instruments <- get_instruments(trait = "ieu-a-2")
+```
+
+## 2. Get traits that are associated with the same instruments
+
+```{r}
+bmi_phewas <- phewas(variants = bmi_instruments$variants) %>%
+    wide_format()
+```
+
+
+## 3. Get clusters
+
+```{r}
+bmi_clusters <- get_clusters(phewas_result = bmi_phewas)
+```
+
+
+

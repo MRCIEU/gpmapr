@@ -1,0 +1,31 @@
+---
+title: "Tissue stratification tutorial"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{tutorial-ios}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+## Background
+
+Complex traits are often composite measures, and may be able to be refined by stratifying instruments based on the tissue in which they are expressed. This tutorial aims to illustrate how to use the genotype-phenotype map to stratify instruments based on tissue expression.
+
+## 1. Get instruments
+
+Provide a trait within the [https://gpmap.opengwas.io](https://gpmap.opengwas.io) database
+
+```{r}
+bmi_instruments <- get_instruments(trait = "CRP")
+```
+
+## 2. Get traits that are associated with the same instruments
+
+```{r}
+bmi_colocs <- coloc_search(variants = bmi_instruments$variants)
+```
+
+## 3. Assign instruments to tissues
+
+...
+
