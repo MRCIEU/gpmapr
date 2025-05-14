@@ -32,28 +32,28 @@ crp_instruments <- get_instruments(trait = "CRP")
 
 ```{r}
 crp_phewas <- phewas(variants = crp_instruments$variants) %>%
-    wide_format()
+  wide_format()
 ```
 
 ## 3. Normalise by SNP-exposure effect size
 
 ```{r}
 crp_phewas <- crp_phewas %>%
-    normalise_by_exposure(exposure = crp_instruments)
+  normalise_by_exposure(exposure = crp_instruments)
 ```
 
 ## 4. Orthogonalise traits
 
 ```{r}
 crp_phewas <- crp_phewas %>%
-    orthogonalise_traits()
+  orthogonalise_traits()
 ```
 
 ## 5. Get index of suspicion
 
 ```{r}
 crp_phewas <- crp_phewas %>%
-    index_of_suspicion()
+  index_of_suspicion()
 ```
 
 ## 6. Get new weights
@@ -62,6 +62,6 @@ The weights in MR are usually based on the variance of the SNP-outcome associati
 
 ```{r}
 crp_phewas <- crp_phewas %>%
-    ios_weights()
+  ios_weights()
 ```
 

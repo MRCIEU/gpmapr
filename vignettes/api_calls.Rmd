@@ -25,12 +25,81 @@ library(gpmapr)
 health()
 ```
 
-To do:
+Returns list of all traits.  
+```{r}
+all_traits <- traits()
+first_trait <- all_traits$traits[1]
+```
 
-- Get list of instruments for a trait
-- Get list of associations for a trait
-- Get list of colocs for a trait
-- Get list of traits associated with a variant
-- Get list of colocs for a variant
-- Get LD proxies for a variant
-- Get LD matrix for list of variants
+Returns a specific trait.
+```{r}
+specific_trait <- trait(first_trait$id)
+specific_trait
+```
+
+Returns a specific trait with associations.
+```{r}
+trait_with_associations <- trait(first_trait$id, include_associations = TRUE)
+trait_with_associations
+```
+
+Returns list of all genes.
+```{r}
+all_genes <- genes()
+first_gene <- all_genes$genes[1]
+```
+
+Returns a specific gene.
+```{r}
+# you can call using 'symbol' or 'id' from the above list
+specific_gene <- gene(first_gene$id)
+specific_gene
+```
+
+You can also include associations
+```{r}
+gene_with_associations <- gene(first_gene$id, include_associations = TRUE)
+gene_with_associations
+```
+
+There are various ways you can get information about a variant.
+```
+snp_id: 123, as supplied by the API.
+rsid: rs123456789
+variant: chr:bp_ea_oa, where ea is alphabetically < oa
+grange: chr:start_bp-stop_bp
+```
+
+Variants calls do not include associations.  To do so, you can call variant()
+
+```{r}
+# you can call using 'snp_ids', 'variants', 'rsids', or 'grange'
+variants_by_snp_id(snp_ids)
+variants_by_rsid(rsids)
+variants_by_variant(variants)
+variants_by_grange(chr, start, end)
+#with all the above you can also include associations
+variants_by_snp_id(snp_ids, include_associations = TRUE)
+variants_by_rsid(rsids, include_associations = TRUE)
+variants_by_variant(variant_ids, include_associations = TRUE)
+variants_by_grange(chr, start, end, include_associations = TRUE)
+```
+
+Get variant info for a variant.  This automatically includes associations.
+```{r}
+variant_info <- variant(snp_id)
+variant_info
+```
+
+Get LD proxies for a variant.
+```{r}
+ld_proxies_by_snp_id(snp_ids)
+ld_proxies_by_variant(variants)
+```
+
+Get LD matrix for a variant.
+```{r}
+ld_matrix_by_snp_id(snp_ids)
+ld_matrix_by_variant(variants)
+```
+
