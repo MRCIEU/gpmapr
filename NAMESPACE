@@ -2,7 +2,6 @@
 
 export(gene)
 export(genes)
-export(get_variants_with_options)
 export(health)
 export(ld_matrix_by_snp_id)
 export(ld_matrix_by_variant)

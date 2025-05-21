@@ -57,7 +57,6 @@ trait <- function(trait_id, include_associations = FALSE) {
 
 #' @title Get Gene Information
 #' @description Get gene information from the API
-#' @param symbol A character string specifying the gene symbol
 #' @return A list containing the gene information
 #' @export
 genes <- function() {
@@ -114,7 +113,7 @@ variants_by_snp_id <- function(snp_ids, include_associations = FALSE, p_value_th
 
 #' @title Get Variants by Variant ID
 #' @description Get variants from the API by Variant ID
-#' @param variant_ids A character string specifying the Variant ID
+#' @param variants A character string specifying the Variant ID
 #' @param include_associations A logical value specifying whether to include associations
 #' @param p_value_threshold A numeric value specifying the p-value threshold
 #' @return A list containing the variants
@@ -139,13 +138,6 @@ variants_by_grange <- function(chr, start, stop, include_associations = FALSE, p
   return(get_variants_with_options(url, include_associations, p_value_threshold))
 }
 
-#' @title Get Variants with Options
-#' @description Get variants from the API with options
-#' @param url A character string specifying the URL
-#' @param include_associations A logical value specifying whether to include associations
-#' @param p_value_threshold A numeric value specifying the p-value threshold
-#' @return A list containing the variants
-#' @export
 get_variants_with_options <- function(url, include_associations = FALSE, p_value_threshold = NULL) {
   if (include_associations) {
     url <- paste0(url, "&include_associations=true")
@@ -174,7 +166,7 @@ variant <- function(snp_id) {
 
 #' @title Get LD Proxies by Variant ID
 #' @description Get LD proxies from the API by Variant ID
-#' @param variant_ids A character string specifying the Variant ID
+#' @param variants A character string specifying the Variant ID
 #' @return A list containing the LD proxies
 #' @export
 ld_proxies_by_variant <- function(variants) {
@@ -202,7 +194,7 @@ ld_proxies_by_snp_id <- function(snp_ids) {
 
 #' @title Get LD Matrix by Variant ID
 #' @description Get LD matrix from the API by Variant ID
-#' @param variant_ids A character string specifying the Variant ID
+#' @param variants A character string specifying the Variant ID
 #' @return A list containing the LD matrix
 #' @export
 ld_matrix_by_variant <- function(variants) {

@@ -6,9 +6,6 @@
 \usage{
 genes()
 }
-\arguments{
-\item{symbol}{A character string specifying the gene symbol}
-}
 \value{
 A list containing the gene information
 }

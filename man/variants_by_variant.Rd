@@ -11,11 +11,11 @@ variants_by_variant(
 )
 }
 \arguments{
+\item{variants}{A character string specifying the Variant ID}
+
 \item{include_associations}{A logical value specifying whether to include associations}
 
 \item{p_value_threshold}{A numeric value specifying the p-value threshold}
-
-\item{variant_ids}{A character string specifying the Variant ID}
 }
 \value{
 A list containing the variants

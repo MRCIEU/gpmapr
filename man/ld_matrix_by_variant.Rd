@@ -7,7 +7,7 @@
 ld_matrix_by_variant(variants)
 }
 \arguments{
-\item{variant_ids}{A character string specifying the Variant ID}
+\item{variants}{A character string specifying the Variant ID}
 }
 \value{
 A list containing the LD matrix
