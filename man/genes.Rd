@@ -4,7 +4,7 @@
 \alias{genes}
 \title{Get Gene Information}
 \usage{
-genes(symbol)
+genes()
 }
 \arguments{
 \item{symbol}{A character string specifying the gene symbol}

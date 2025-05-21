@@ -11,7 +11,7 @@ vignette: >
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
-  eval = FALSE
+  eval = TRUE
 )
 ```
 
@@ -21,45 +21,59 @@ library(gpmapr)
 
 ## API calls
 
-```{r}
-health()
+```{r health-check}
+# Check API health
+result <- health()
+result$status
 ```
 
 Returns list of all traits.  
-```{r}
+```{r get-all-traits}
 all_traits <- traits()
-first_trait <- all_traits$traits[1]
+first_trait <- all_traits$traits[1, ]
+first_trait$trait_name
 ```
 
 Returns a specific trait.
-```{r}
+```{r get-specific-trait}
 specific_trait <- trait(first_trait$id)
-specific_trait
+specific_trait$trait$trait_name
+nrow(specific_trait$colocs)
+nrow(specific_trait$study_extractions)
+nrow(specific_trait$rare_results)
 ```
 
 Returns a specific trait with associations.
-```{r}
+```{r get-trait-with-associations}
 trait_with_associations <- trait(first_trait$id, include_associations = TRUE)
-trait_with_associations
+trait_with_associations$trait$trait_name
+nrow(trait_with_associations$colocs)
+nrow(trait_with_associations$associations)
 ```
 
 Returns list of all genes.
-```{r}
+```{r get-all-genes}
 all_genes <- genes()
-first_gene <- all_genes$genes[1]
+first_gene <- all_genes$genes[1, ]
+first_gene
 ```
 
 Returns a specific gene.
-```{r}
+```{r get-specific-gene}
 # you can call using 'symbol' or 'id' from the above list
-specific_gene <- gene(first_gene$id)
-specific_gene
+specific_gene <- gene(first_gene$gene)
+specific_gene$gene$gene
+nrow(specific_gene$genes_in_regions)
+nrow(specific_gene$colocs)
 ```
 
 You can also include associations
-```{r}
-gene_with_associations <- gene(first_gene$id, include_associations = TRUE)
-gene_with_associations
+```{r get-gene-with-associations}
+gene_with_associations <- gene(first_gene$gene, include_associations = TRUE)
+gene_with_associations$gene$gene
+nrow(gene_with_associations$genes_in_regions)
+nrow(gene_with_associations$colocs)
+nrow(gene_with_associations$associations)
 ```
 
 There are various ways you can get information about a variant.
@@ -72,33 +86,39 @@ grange: chr:start_bp-stop_bp
 
 Variants calls do not include associations.  To do so, you can call variant()
 
-```{r}
+The following calls obtain informaiton about a list of variants, you can optionally include associations at a p-value threshold.
+
+```{r get-variants}
 # you can call using 'snp_ids', 'variants', 'rsids', or 'grange'
+snp_ids <- head(gene_with_associations$colocs$snp_id, 5)
+variants <- head(gene_with_associations$colocs$candidate_snp, 5)
+
 variants_by_snp_id(snp_ids)
-variants_by_rsid(rsids)
 variants_by_variant(variants)
-variants_by_grange(chr, start, end)
-#with all the above you can also include associations
-variants_by_snp_id(snp_ids, include_associations = TRUE)
-variants_by_rsid(rsids, include_associations = TRUE)
-variants_by_variant(variant_ids, include_associations = TRUE)
-variants_by_grange(chr, start, end, include_associations = TRUE)
+variants_by_grange(20, 50948630, 50948640)
+
+#with all the above you can also include associations, and optionally set a p-value threshold
+# variants_by_snp_id(snp_ids, include_associations = TRUE, p_value_threshold = 0.05)
+# variants_by_variant(variants, include_associations = TRUE, p_value_threshold = 5e-5)
+# variants_by_grange(20, 50948630, 50948640, include_associations = TRUE, p_value_threshold = 1)
 ```
 
-Get variant info for a variant.  This automatically includes associations.
-```{r}
-variant_info <- variant(snp_id)
-variant_info
+To obtain all colocalizing and rare variant information for a variant, use the variant() call.  This automatically includes associations.
+```{r get-variant-info}
+variant_info <- variant(snp_ids[1])
+variant_info$variant$snp
+nrow(variant_info$colocs)
+nrow(variant_info$associations)
 ```
 
 Get LD proxies for a variant.
-```{r}
+```{r get-ld-proxies}
 ld_proxies_by_snp_id(snp_ids)
 ld_proxies_by_variant(variants)
 ```
 
 Get LD matrix for a variant.
-```{r}
+```{r get-ld-matrix}
 ld_matrix_by_snp_id(snp_ids)
 ld_matrix_by_variant(variants)
 ```
