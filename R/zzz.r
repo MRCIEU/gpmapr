@@ -1,6 +1,3 @@
 .onLoad <- function(libname, pkgname) {
-    select_api("production")
+  select_api("dev")
 }
-
-
-

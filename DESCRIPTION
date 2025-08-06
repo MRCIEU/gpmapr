@@ -2,6 +2,8 @@ Package: gpmapr
 Title: Query the OpenGWAS genotype-phenotype map
 Version: 0.0.0.9000
 Authors@R: 
+    person("Andrew", "Elmore", , "andrew.elmore@bristol.ac.uk", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-0000-0000")),
     person("Gibran", "Hemani", , "g.hemani@bristol.ac.uk", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0003-0920-1055"))
 Description: This package is a simple wrapper around the OpenGWAS genotype-phenotype map API.
@@ -11,9 +13,9 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
 Imports:
     httr,
-    jsonlite
+    jsonlite,
+    tidyverse
 Suggests: 
-    dplyr,
     knitr,
     rmarkdown,
     testthat (>= 3.0.0)
