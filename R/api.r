@@ -175,7 +175,7 @@ variants_by_rsid_api <- function(rsids) {
 variants_by_snp_id_api <- function(snp_ids, include_associations = FALSE, p_value_threshold = NULL) {
   snp_ids <- paste(snp_ids, collapse = "&snp_ids=")
   url <- paste0(getOption("gpmap_url"), "/v1/variants?snp_ids=", snp_ids)
-  return(get_variants_with_options(url, include_associations, p_value_threshold))
+  return(get_variants_with_options_api(url, include_associations, p_value_threshold))
 }
 
 #' @title Get Variants by Variant ID
@@ -188,7 +188,7 @@ variants_by_snp_id_api <- function(snp_ids, include_associations = FALSE, p_valu
 variants_by_variant_api <- function(variants, include_associations = FALSE, p_value_threshold = NULL) {
   variants <- paste(variants, collapse = "&variants=")
   url <- paste0(getOption("gpmap_url"), "/v1/variants?variants=", variants)
-  return(get_variants_with_options(url, include_associations, p_value_threshold))
+  return(get_variants_with_options_api(url, include_associations, p_value_threshold))
 }
 
 #' @title Get Variants by GRange
@@ -202,7 +202,7 @@ variants_by_variant_api <- function(variants, include_associations = FALSE, p_va
 #' @export
 variants_by_grange_api <- function(chr, start, stop, include_associations = FALSE, p_value_threshold = NULL) {
   url <- paste0(getOption("gpmap_url"), "/v1/variants?grange=", chr, ":", start, "-", stop)
-  return(get_variants_with_options(url, include_associations, p_value_threshold))
+  return(get_variants_with_options_api(url, include_associations, p_value_threshold))
 }
 
 get_variants_with_options_api <- function(url, include_associations = FALSE, p_value_threshold = NULL) {

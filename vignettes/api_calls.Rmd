@@ -90,18 +90,15 @@ The following calls obtain informaiton about a list of variants, you can optiona
 
 ```{r get-variants}
 # you can call using 'snp_ids', 'variants', 'rsids', or 'grange'
-snp_ids <- head(gene_with_associations$colocs$snp_id, 5)
-variants <- head(gene_with_associations$colocs$candidate_snp, 5)
+snp_ids <- head(gene_with_associations$coloc_groups$snp_id, 5)
 
 variants_by_snp_id_api(snp_ids)
-variants_by_variant_api(variants)
 variants_by_grange_api(20, 50948630, 50948640)
 
-#with all the above you can also include associations, and optionally set a p-value threshold
-# variants_by_snp_id(snp_ids, include_associations = TRUE, p_value_threshold = 0.05)
-# variants_by_variant(variants, include_associations = TRUE, p_value_threshold = 5e-5)
-# variants_by_grange(20, 50948630, 50948640, include_associations = TRUE, p_value_threshold = 1)
 ```
+With all the above you can also include associations, and optionally set a p-value threshold
+`variants_by_snp_id(snp_ids, include_associations = TRUE, p_value_threshold = 0.05)`
+`variants_by_grange(20, 50948630, 50948640, include_associations = TRUE, p_value_threshold = 1)`
 
 To obtain all colocalizing and rare variant information for a variant, use the variant() call.  This automatically includes associations.
 ```{r get-variant-info}
@@ -114,12 +111,10 @@ nrow(variant_info$associations)
 Get LD proxies for a variant.
 ```{r get-ld-proxies}
 ld_proxies_by_snp_id_api(snp_ids)
-ld_proxies_by_variant_api(variants)
 ```
 
 Get LD matrix for a variant.
 ```{r get-ld-matrix}
 ld_matrix_by_snp_id_api(snp_ids)
-ld_matrix_by_variant_api(variants)
 ```
 
