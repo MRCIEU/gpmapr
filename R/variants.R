@@ -16,7 +16,13 @@
 #'  * coloc_pairs (optional): a dataframe containing information about which studies have coloc pairs for this variant
 #'      where the study_extraction_a_id and study_extraction_b_id are the study_extraction_ids of the two studies.
 #'      h4_threshold is the cutoff for included coloc pairs, defaults to 0.8
-#'
+#' @details
+#' The dataframes returned by this function are as follows:
+#' @inheritSection coloc_groups_doc coloc_groups_dataframe
+#' @inheritSection rare_results_doc rare_results_dataframe
+#' @inheritSection study_extractions_doc study_extractions_dataframe
+#' @inheritSection summary_statistics_doc summary_statistics_dataframe
+#' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
 #' @export
 variant <- function(snp_id,
                     coloc_group_threshold = "strong",

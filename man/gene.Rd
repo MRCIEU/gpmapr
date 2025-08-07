@@ -35,6 +35,7 @@ See below for details.
 \item rare_results: (optional) a list of dataframes containing the rare results for this trait
 \item coloc_pairs: (optional) a dataframe containing all pairwise coloc results for this trait.
 \item variants: a dataframe containing the variants for each associated coloc group or rare group.
+}
 See below for details.
 }
 \description{
@@ -43,7 +44,7 @@ A collection of studies that are associated with a particular gene.
 \details{
 The dataframes returned by this function are as follows:
 }
-\section{coloc_groups dataframe}{
+\section{coloc_groups_dataframe}{
 
 The coloc_groups dataframe contains information about which studies have coloc results.
 It has the following columns:
@@ -71,7 +72,7 @@ It has the following columns:
 }
 }
 
-\section{study_extractions dataframe}{
+\section{study_extractions_dataframe}{
 
 The study_extractions dataframe contains information about which studies have coloc results.
 It has the following columns:
@@ -101,7 +102,7 @@ It has the following columns:
 }
 }
 
-\section{rare_results dataframe}{
+\section{rare_results_dataframe}{
 
 The rare_results dataframe contains information about which studies have coloc results.
 It has the following columns:
@@ -126,7 +127,7 @@ It has the following columns:
 }
 }
 
-\section{coloc_pairs dataframe}{
+\section{coloc_pairs_dataframe}{
 
 The coloc_pairs dataframe contains information about which studies have coloc pairs.
 It has the following columns:
@@ -140,7 +141,7 @@ It has the following columns:
 }
 }
 
-\section{variants dataframe}{
+\section{variants_dataframe}{
 
 The variants dataframe contains variant information that is pulled from the Variant Effect Predictor (VEP) database.
 It has the following columns, along side many more columns from VEP:

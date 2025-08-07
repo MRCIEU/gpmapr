@@ -14,7 +14,8 @@ RoxygenNote: 7.3.2
 Imports:
     httr,
     jsonlite,
-    tidyverse
+    dplyr,
+    readr
 Suggests: 
     knitr,
     rmarkdown,

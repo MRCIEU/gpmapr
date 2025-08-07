@@ -9,7 +9,7 @@ coloc_pairs_doc()
 \description{
 Shared documentation for coloc_pairs dataframe columns
 }
-\section{coloc_pairs dataframe}{
+\section{coloc_pairs_dataframe}{
 
 The coloc_pairs dataframe contains information about which studies have coloc pairs.
 It has the following columns:

@@ -8,6 +8,10 @@ variant_api(snp_id, include_coloc_pairs = FALSE, h4_threshold = 0.8)
 }
 \arguments{
 \item{snp_id}{A character string specifying the SNP ID}
+
+\item{include_coloc_pairs}{A logical value specifying whether to include coloc pairs}
+
+\item{h4_threshold}{A numeric value specifying the h4 threshold for coloc pairs}
 }
 \value{
 A list containing the variant

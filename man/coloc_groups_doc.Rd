@@ -9,7 +9,7 @@ coloc_groups_doc()
 \description{
 Shared documentation for coloc_groups dataframe columns
 }
-\section{coloc_groups dataframe}{
+\section{coloc_groups_dataframe}{
 
 The coloc_groups dataframe contains information about which studies have coloc results.
 It has the following columns:

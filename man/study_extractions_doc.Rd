@@ -9,7 +9,7 @@ study_extractions_doc()
 \description{
 Shared documentation for study_extractions dataframe columns
 }
-\section{study_extractions dataframe}{
+\section{study_extractions_dataframe}{
 
 The study_extractions dataframe contains information about which studies have coloc results.
 It has the following columns:

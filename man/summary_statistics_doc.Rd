@@ -9,7 +9,7 @@ summary_statistics_doc()
 \description{
 Shared documentation for summary_statistics dataframe columns
 }
-\section{summary_statistics dataframe}{
+\section{summary_statistics_dataframe}{
 
 The summary_statistics dataframe contains information about which studies have summary statistics.
 It has the following columns:

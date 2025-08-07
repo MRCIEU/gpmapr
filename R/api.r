@@ -68,6 +68,8 @@ traits_api <- function() {
 #' @description Get a trait from the API
 #' @param trait_id A character string specifying the trait ID
 #' @param include_associations A logical value specifying whether to include associations
+#' @param include_coloc_pairs A logical value specifying whether to include coloc pairs
+#' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs
 #' @return A list containing the trait
 #' @export
 trait_api <- function(trait_id, include_associations = FALSE, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
@@ -221,6 +223,8 @@ get_variants_with_options_api <- function(url, include_associations = FALSE, p_v
 #' @title Get a Variant API
 #' @description Get a variant from the API
 #' @param snp_id A character string specifying the SNP ID
+#' @param include_coloc_pairs A logical value specifying whether to include coloc pairs
+#' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs
 #' @return A list containing the variant
 #' @export
 variant_api <- function(snp_id, include_coloc_pairs = FALSE, h4_threshold = 0.8) {

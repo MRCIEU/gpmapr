@@ -15,6 +15,10 @@ trait_api(
 \item{trait_id}{A character string specifying the trait ID}
 
 \item{include_associations}{A logical value specifying whether to include associations}
+
+\item{include_coloc_pairs}{A logical value specifying whether to include coloc pairs}
+
+\item{h4_threshold}{A numeric value specifying the h4 threshold for coloc pairs}
 }
 \value{
 A list containing the trait

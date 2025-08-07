@@ -1,8 +1,8 @@
-#' @title Get LD Matrix
+#' @title LD Matrix
 #' @description Get LD matrix from the API by Variant ID
 #' @param variant_ids A character string specifying the Variant ID.  Variant IDs can be SNP IDs or variant IDs.
 #' @return A list containing the LD matrix
-#' @inheritSection ld_doc ld dataframe
+#' @inheritSection ld_doc ld_dataframe
 #' @export
 ld_matrix <- function(variant_ids = c()) {
   if (is.numeric(variant_ids)) {
@@ -15,11 +15,11 @@ ld_matrix <- function(variant_ids = c()) {
   return(ld_matrix)
 }
 
-#' @title Get LD Proxies
+#' @title LD Proxies
 #' @description Get LD proxies from the API by Variant ID
 #' @param variant_ids A character string specifying the Variant ID.  Variant IDs can be SNP IDs or variant IDs.
 #' @return A list containing the LD proxies
-#' @inheritSection ld_doc ld dataframe
+#' @inheritSection ld_doc ld_dataframe
 #' @export
 ld_proxies <- function(variant_ids = c()) {
   if (is.numeric(variant_ids)) {

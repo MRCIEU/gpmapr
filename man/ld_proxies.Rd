@@ -2,7 +2,7 @@
 % Please edit documentation in R/ld.R
 \name{ld_proxies}
 \alias{ld_proxies}
-\title{Get LD Proxies}
+\title{LD Proxies}
 \usage{
 ld_proxies(variant_ids = c())
 }
@@ -15,7 +15,7 @@ A list containing the LD proxies
 \description{
 Get LD proxies from the API by Variant ID
 }
-\section{ld dataframe}{
+\section{ld_dataframe}{
 
 The ld dataframe contains information about the LD matrix.
 It has the following columns:

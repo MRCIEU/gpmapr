@@ -2,7 +2,7 @@
 % Please edit documentation in R/ld.R
 \name{ld_matrix}
 \alias{ld_matrix}
-\title{Get LD Matrix}
+\title{LD Matrix}
 \usage{
 ld_matrix(variant_ids = c())
 }
@@ -15,7 +15,7 @@ A list containing the LD matrix
 \description{
 Get LD matrix from the API by Variant ID
 }
-\section{ld dataframe}{
+\section{ld_dataframe}{
 
 The ld dataframe contains information about the LD matrix.
 It has the following columns:

@@ -9,7 +9,7 @@ ld_doc()
 \description{
 Shared documentation for ld dataframe columns
 }
-\section{ld dataframe}{
+\section{ld_dataframe}{
 
 The ld dataframe contains information about the LD matrix.
 It has the following columns:

@@ -9,7 +9,7 @@ rare_results_doc()
 \description{
 Shared documentation for rare_results dataframe columns
 }
-\section{rare_results dataframe}{
+\section{rare_results_dataframe}{
 
 The rare_results dataframe contains information about which studies have coloc results.
 It has the following columns:

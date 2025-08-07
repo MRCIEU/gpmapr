@@ -9,7 +9,7 @@ variants_doc()
 \description{
 Shared documentation for variants dataframe columns
 }
-\section{variants dataframe}{
+\section{variants_dataframe}{
 
 The variants dataframe contains variant information that is pulled from the Variant Effect Predictor (VEP) database.
 It has the following columns, along side many more columns from VEP:

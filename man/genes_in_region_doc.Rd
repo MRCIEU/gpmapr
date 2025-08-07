@@ -9,7 +9,7 @@ genes_in_region_doc()
 \description{
 Shared documentation for genes_in_region dataframe columns
 }
-\section{genes_in_region dataframe}{
+\section{genes_in_region_dataframe}{
 
 The genes_in_region dataframe contains information about which genes are in a region.
 It has the following columns:

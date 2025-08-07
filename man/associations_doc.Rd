@@ -9,7 +9,7 @@ associations_doc()
 \description{
 Shared documentation for associations dataframe columns
 }
-\section{associations dataframe}{
+\section{associations_dataframe}{
 
 The associations dataframe contains information about which studies have association results.
 It has the following columns:

@@ -1,6 +1,6 @@
 #' @title Coloc Groups Dataframe Documentation
 #' @description Shared documentation for coloc_groups dataframe columns
-#' @section coloc_groups dataframe:
+#' @section coloc_groups_dataframe:
 #' The coloc_groups dataframe contains information about which studies have coloc results.
 #' It has the following columns:
 #' \itemize{
@@ -30,7 +30,7 @@ coloc_groups_doc <- function() {}
 
 #' @title Study Extractions Dataframe Documentation
 #' @description Shared documentation for study_extractions dataframe columns
-#' @section study_extractions dataframe:
+#' @section study_extractions_dataframe:
 #' The study_extractions dataframe contains information about which studies have coloc results.
 #' It has the following columns:
 #' \itemize{
@@ -62,7 +62,7 @@ study_extractions_doc <- function() {}
 
 #' @title Rare Results Dataframe Documentation
 #' @description Shared documentation for rare_results dataframe columns
-#' @section rare_results dataframe:
+#' @section rare_results_dataframe:
 #' The rare_results dataframe contains information about which studies have coloc results.
 #' It has the following columns:
 #' \itemize{
@@ -89,7 +89,7 @@ rare_results_doc <- function() {}
 
 #' @title Coloc Pairs Dataframe Documentation
 #' @description Shared documentation for coloc_pairs dataframe columns
-#' @section coloc_pairs dataframe:
+#' @section coloc_pairs_dataframe:
 #' The coloc_pairs dataframe contains information about which studies have coloc pairs.
 #' It has the following columns:
 #' \itemize{
@@ -105,7 +105,7 @@ coloc_pairs_doc <- function() {}
 
 #' @title Associations Dataframe Documentation
 #' @description Shared documentation for associations dataframe columns
-#' @section associations dataframe:
+#' @section associations_dataframe:
 #' The associations dataframe contains information about which studies have association results.
 #' It has the following columns:
 #' \itemize{
@@ -122,7 +122,7 @@ associations_doc <- function() {}
 
 #' @title Summary Statistics Dataframe Documentation
 #' @description Shared documentation for summary_statistics dataframe columns
-#' @section summary_statistics dataframe:
+#' @section summary_statistics_dataframe:
 #' The summary_statistics dataframe contains information about which studies have summary statistics.
 #' It has the following columns:
 #' \itemize{
@@ -146,7 +146,7 @@ summary_statistics_doc <- function() {}
 
 #' @title Variants Dataframe Documentation
 #' @description Shared documentation for variants dataframe columns
-#' @section variants dataframe:
+#' @section variants_dataframe:
 #' The variants dataframe contains variant information that is pulled from the Variant Effect Predictor (VEP) database.
 #' It has the following columns, along side many more columns from VEP:
 #' \itemize{
@@ -160,7 +160,7 @@ variants_doc <- function() {}
 
 #' @title Genes in Region Dataframe Documentation
 #' @description Shared documentation for genes_in_region dataframe columns
-#' @section genes_in_region dataframe:
+#' @section genes_in_region_dataframe:
 #' The genes_in_region dataframe contains information about which genes are in a region.
 #' It has the following columns:
 #' \itemize{
@@ -180,7 +180,7 @@ genes_in_region_doc <- function() {}
 
 #' @title LD Dataframe Documentation
 #' @description Shared documentation for ld dataframe columns
-#' @section ld dataframe:
+#' @section ld_dataframe:
 #' The ld dataframe contains information about the LD matrix.
 #' It has the following columns:
 #' \itemize{

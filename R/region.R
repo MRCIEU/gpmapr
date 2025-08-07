@@ -16,15 +16,16 @@
 #'   \item rare_results: (optional) a list of dataframes containing the rare results for this trait
 #'   \item coloc_pairs: (optional) a dataframe containing all pairwise coloc results for this trait.
 #'   \item variants: a dataframe containing the variants for each associated coloc group or rare group.
+#' }
 #' See below for details.
 #' @details
 #' The dataframes returned by this function are as follows:
-#' @inheritSection coloc_groups_doc coloc_groups dataframe
-#' @inheritSection genes_in_region_doc genes_in_region dataframe
-#' @inheritSection study_extractions_doc study_extractions dataframe
-#' @inheritSection rare_results_doc rare_results dataframe
-#' @inheritSection coloc_pairs_doc coloc_pairs dataframe
-#' @inheritSection variants_doc variants dataframe
+#' @inheritSection coloc_groups_doc coloc_groups_dataframe
+#' @inheritSection genes_in_region_doc genes_in_region_dataframe
+#' @inheritSection study_extractions_doc study_extractions_dataframe
+#' @inheritSection rare_results_doc rare_results_dataframe
+#' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
+#' @inheritSection variants_doc variants_dataframe
 #' @export
 region <- function(region_id,
                    include_associations = FALSE,
