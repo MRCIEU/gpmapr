@@ -1,0 +1,100 @@
+LC
+
+---
+title: "Using gpmapr"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{gpmapr}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = TRUE
+)
+```
+
+```{r setup}
+library(gpmapr)
+```
+
+# Introduction
+
+The gpmapr package provides a set of functions to interact with the GPMap API.
+
+# Getting started
+
+The first port of entry is the `search_gpmap` function.  This function allows you to search for a trait, gene, or variant.
+
+```{r search-trait}
+hemoglobin <- search_gpmap("hemoglobin")
+hemoglobin
+```
+You can see information about the different traits that match your search, how to subsequently get more information (under `call`), and metadata about the trait (under `info`).
+
+### Understanding `info`
+
+* Extractions: Each trait has a number of extractions, related to the number of finemapped ld regions that had a p-value < 1.5e-4.
+* Colocalisation Groups: The number of colocalisation groups associated with the trait / gene / variant.
+* Colocalising Traits: The number of traits that are colocalising with the trait / gene / variant.
+* Rare Disease Results: Each trait has a number of rare disease results, related to the number of groups of rare disease results that had a p-value < 1.5e-4.
+
+You can also search for a gene (by ENSG ID or gene name) or variant (by CHR:BP or rsID).
+
+```{r other-searches}
+search_gpmap("SLC44A")
+search_gpmap("22:37042914")
+```
+
+### Variant search returns proxy variants
+
+The variant search will return the original variant and any proxy variants that are in LD with the original variant, which also have colocalisation results.  Each variant is marked as either `original_variant` or `proxy_variant`.  In this example, the original variant has no colocalisation results, but the proxy variant does.  The proxy variant is also marked as having a r^2 of 0.96
+
+```{r proxy-variants}
+proxy_variants <- search_gpmap("rs17078078")
+proxy_variants
+```
+
+# Diving in
+
+You can get more information about a trait by subsequently calling the `trait()`, `gene()`, or `variant()` functions.  This will provide you with the colocalisation results, rare disease results, and study extractions.
+
+Each trait, gene, or variant call have optional parameters:
+
+* `include_associations`: Whether to include associations (BETA, SE, P) of the variants in which it's colocalised in the output.
+* `group_threshold`: The threshold for coloc groups, can be 'strong' (h4 > 0.8) or 'moderate' (h4 > 0.6), defaults to 'strong'.
+* `include_coloc_pairs`: Whether to include coloc pairs in the output (which include h3 and h4), as opposed to just the coloc groups.
+* `h4_threshold`: The h4 threshold for coloc pairs.
+
+```{r trait-example}
+hemoglobin_trait <- trait(931)
+names(hemoglobin_trait)
+head(hemoglobin_trait$coloc_groups)
+```
+
+This returns a list of elements, which you can access by name.  More detailed explanations of the below are described in the API documentation.
+
+* `trait`: A list containing metadata about the trait, including common and rare studies associated with the trait
+* `coloc_groups`: a dataframe containing information about which studies have coloc results for this trait.
+* `study_extractions`: a list of dataframes containing the study extractions for this trait.
+* `rare_results`: (if they exist) a list of dataframes containing the rare results for this trait
+* `associations`: (optional) a dataframe containing the associations for the variants in which the trait is colocalised
+* `coloc_pairs`: (optional) a dataframe containing all pairwise coloc results for this trait.
+
+```{r gene-example}
+slc44a1 <- gene("SLC44A1", coloc_group_threshold = "moderate")
+names(slc44a1)
+nrow(slc44a1$coloc_groups)
+head(slc44a1$coloc_groups[, c("coloc_group_id", "group_threshold", "trait_name", "data_type", "tissue")])
+```
+
+# Accessing summary statistics
+
+You can only access the summary statistics via `variant()`, by including `include_summary_stats = TRUE` in the call.  This is to limit the amount of data that can be returned from the API for cost reasons.  If you attempt to download too many summary statistics, you may be blocked from the API.
+
+* `variant(1669064, include_summary_stats = TRUE)`
+
+Instead, if you are interested in accessing all the summary statistics, or the whole database of results, you can download all databases and summary statistics the [Google Cloud Storage Bucket](https://console.cloud.google.com/storage/browser/genotype-phenotype-map), and can find an [explanation of the files here](https://github.com/MRCIEU/genotype-phenotype-map/wiki/Public-Data-Bucket). Note that the bucket is 'requester pays', so you will need to have a Google Cloud account and be logged in to download the files.
