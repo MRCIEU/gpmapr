@@ -248,7 +248,7 @@ variant_summary_stats_api <- function(snp_id) {
   url <- paste0(getOption("gpmap_url"), "/v1/variants/", snp_id, "/summary-stats")
   response <- httr::GET(url, httr::timeout(60))
   writeBin(httr::content(response, "raw"), temp_zip)
-  unzip(temp_zip, exdir = tempdir())
+  utils::unzip(temp_zip, exdir = tempdir())
 
   tsv_files <- list.files(tempdir(), pattern = "\\.tsv\\.gz$", full.names = TRUE)
   dataframes <- list()

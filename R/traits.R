@@ -1,4 +1,5 @@
-#' Trait: a collection of studies that are associated with a particular phenotype.
+#' @title Trait
+#' @description A collection of studies that are associated with a particular phenotype.
 #' A trait will include a common study and occasionally a rare study.
 #' @param trait_id A numeric value specifying the trait id
 #' @param include_associations A logical value specifying whether to include associations

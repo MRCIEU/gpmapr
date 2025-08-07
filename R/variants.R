@@ -1,6 +1,5 @@
-#' @title Get GP Map Variant
-#'
-#' @description Get a variant from the API
+#' @title Variant
+#' @description A collection of studies that are associated with a particular variant.
 #' @param snp_id A character string specifying the SNP ID
 #' @param coloc_group_threshold A character value specifying the group threshold for coloc groups, defaults to 'strong'
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs

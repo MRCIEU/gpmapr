@@ -2,7 +2,7 @@
 % Please edit documentation in R/region.R
 \name{region}
 \alias{region}
-\title{Region: a collection of studies that are associated with a particular region.}
+\title{Region}
 \usage{
 region(
   region_id,
@@ -38,7 +38,7 @@ See below for details.
 See below for details.
 }
 \description{
-Region: a collection of studies that are associated with a particular region.
+A collection of studies that are associated with a particular region.
 }
 \details{
 The dataframes returned by this function are as follows:

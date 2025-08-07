@@ -2,8 +2,7 @@
 % Please edit documentation in R/traits.R
 \name{trait}
 \alias{trait}
-\title{Trait: a collection of studies that are associated with a particular phenotype.
-A trait will include a common study and occasionally a rare study.}
+\title{Trait}
 \usage{
 trait(
   trait_id,
@@ -39,7 +38,7 @@ See below for details.
 See below for details.
 }
 \description{
-Trait: a collection of studies that are associated with a particular phenotype.
+A collection of studies that are associated with a particular phenotype.
 A trait will include a common study and occasionally a rare study.
 }
 \details{

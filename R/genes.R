@@ -1,4 +1,5 @@
-#' Gene: a collection of studies that are associated with a particular gene.
+#' @title Gene
+#' @description A collection of studies that are associated with a particular gene.
 #' @param gene_id A numeric value specifying the gene id
 #' @param include_associations A logical value specifying whether to include associations
 #' (BETA, SE, P), defaults to FALSE

@@ -2,7 +2,7 @@
 % Please edit documentation in R/genes.R
 \name{gene}
 \alias{gene}
-\title{Gene: a collection of studies that are associated with a particular gene.}
+\title{Gene}
 \usage{
 gene(
   gene_id,
@@ -38,7 +38,7 @@ See below for details.
 See below for details.
 }
 \description{
-Gene: a collection of studies that are associated with a particular gene.
+A collection of studies that are associated with a particular gene.
 }
 \details{
 The dataframes returned by this function are as follows:

@@ -1,4 +1,5 @@
-#' Region: a collection of studies that are associated with a particular region.
+#' @title Region
+#' @description A collection of studies that are associated with a particular region.
 #' @param region_id A numeric value specifying the region id
 #' @param include_associations A logical value specifying whether to include associations
 #' (BETA, SE, P), defaults to FALSE

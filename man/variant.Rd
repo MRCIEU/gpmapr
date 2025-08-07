@@ -2,7 +2,7 @@
 % Please edit documentation in R/variants.R
 \name{variant}
 \alias{variant}
-\title{Get GP Map Variant}
+\title{Variant}
 \usage{
 variant(
   snp_id,
@@ -39,5 +39,5 @@ h4_threshold is the cutoff for included coloc pairs, defaults to 0.8
 }
 }
 \description{
-Get a variant from the API
+A collection of studies that are associated with a particular variant.
 }
