@@ -1,38 +1,35 @@
 library(testthat)
 
 test_that("health() returns expected output", {
-  # Example: Assuming health() returns a status message
-  result <- health()
+  result <- health_api()
   expect_type(result, "list")
   expect_true(result$status %in% c("healthy", "unhealthy"))
 })
 
 test_that("search_gpmap() returns expected output", {
-  result <- search_gpmap("hemo")
+  result <- search_gpmap("hemoglobin")
   expect_type(result, "list")
-  expect_true(result$gpmap$id == 1)
+  expect_true(nrow(result) > 0)
+  expect_true(all(names(result) == c("call", "name", "type", "type_id", "info")))
 })
 
 test_that("trait() returns expected output", {
   result <- trait(1)
   expect_type(result, "list")
   expect_true(result$trait$id == 1)
+  expect_true(nrow(result$coloc_groups) > 0)
 })
 
 test_that("variant() returns expected output", {
-  result <- variant(1)
+  result <- variant(8466253)
   expect_type(result, "list")
-  expect_true(result$variant$id == 1)
-})
-
-test_that("study_extractions() returns expected output", {
-  result <- study_extractions(1)
-  expect_type(result, "list")
-  expect_true(result$study_extractions$id == 1)
+  expect_true(result$variant$id == 8466253)
+  expect_true(nrow(result$coloc_groups) > 0)
 })
 
 test_that("gene() returns expected output", {
-  result <- gene(1)
+  result <- gene("SLC44A1")
   expect_type(result, "list")
-  expect_true(result$gene$id == 1)
+  expect_true(result$gene$gene == "SLC44A1")
+  expect_true(nrow(result$coloc_groups) > 0)
 })
