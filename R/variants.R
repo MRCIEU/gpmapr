@@ -29,6 +29,9 @@ variant <- function(snp_id,
                     include_coloc_pairs = FALSE,
                     h4_threshold = 0.8,
                     include_summary_stats = FALSE) {
+  if (is.null(snp_id)) {
+    stop("snp_id is required")
+  }
   if (!coloc_group_threshold %in% c("strong", "moderate")) {
     stop("coloc_group_threshold must be either 'strong' or 'moderate'")
   }
@@ -40,5 +43,9 @@ variant <- function(snp_id,
     summary_stats <- variant_summary_stats_api(snp_id)
     variant_info$summary_stats <- summary_stats
   }
+
+  variant_info <- merge_associations(variant_info)
+
+  variant_info <- variant_info[!sapply(variant_info, is.null)]
   return(variant_info)
 }

@@ -32,12 +32,18 @@ region <- function(region_id,
                    coloc_group_threshold = "strong",
                    include_coloc_pairs = FALSE,
                    h4_threshold = 0.8) {
+  if (is.null(region_id)) {
+    stop("region_id is required")
+  }
   if (!coloc_group_threshold %in% c("strong", "moderate")) {
     stop("coloc_group_threshold must be either 'strong' or 'moderate'")
   }
   region_info <- region_api(region_id, include_associations, include_coloc_pairs, h4_threshold)
-  region_info$tissues <- NULL
   region_info$coloc_groups <- dplyr::filter(region_info$coloc_groups, group_threshold == coloc_group_threshold)
+
+  region_info <- merge_associations(region_info)
+  region_info <- region_info[!sapply(region_info, is.null)]
+  region_info$tissues <- NULL
 
   return(region_info)
 }

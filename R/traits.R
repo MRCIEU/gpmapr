@@ -32,12 +32,18 @@ trait <- function(trait_id,
                   coloc_group_threshold = "strong",
                   include_coloc_pairs = FALSE,
                   h4_threshold = 0.8) {
-
+  if (is.null(trait_id)) {
+    stop("trait_id is required")
+  }
   if (!coloc_group_threshold %in% c("strong", "moderate")) {
     stop("coloc_group_threshold must be either 'strong' or 'moderate'")
   }
+
   trait_info <- trait_api(trait_id, include_associations, include_coloc_pairs, h4_threshold)
-  trait_info$upload_study_extractions <- NULL
   trait_info$coloc_groups <- dplyr::filter(trait_info$coloc_groups, group_threshold == coloc_group_threshold)
+
+  if (include_associations) trait_info <- merge_associations(trait_info)
+
+  trait_info <- trait_info[!sapply(trait_info, is.null)]
   return(trait_info)
 }
