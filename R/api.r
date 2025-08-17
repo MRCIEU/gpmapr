@@ -73,16 +73,13 @@ traits_api <- function() {
 #' @return A list containing the trait
 #' @export
 trait_api <- function(trait_id, include_associations = FALSE, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
-  url <- paste0(getOption("gpmap_url"), "/v1/traits/", trait_id)
-  if (include_associations) {
-    url <- paste0(url, "?include_associations=true")
-  }
-  if (include_coloc_pairs) {
-    url <- paste0(url, "?include_coloc_pairs=true")
-  }
-  if (include_coloc_pairs && !is.null(h4_threshold)) {
-    url <- paste0(url, "?h4_threshold=", h4_threshold)
-  }
+  url <- paste0(
+    getOption("gpmap_url"),
+    "/v1/traits/", trait_id,
+    "?include_associations=", include_associations,
+    "&include_coloc_pairs=", include_coloc_pairs,
+    "&h4_threshold=", h4_threshold
+  )
   trait <- httr::GET(url, httr::timeout(60))
   trait <- httr::content(trait, "text", encoding = "UTF-8")
   trait <- jsonlite::fromJSON(trait)
@@ -111,16 +108,14 @@ genes_api <- function() {
 #' @return A list containing the gene information
 #' @export
 gene_api <- function(gene_id, include_associations = FALSE, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
-  url <- paste0(getOption("gpmap_url"), "/v1/genes/", gene_id)
-  if (include_associations) {
-    url <- paste0(url, "?include_associations=true")
-  }
-  if (include_coloc_pairs) {
-    url <- paste0(url, "?include_coloc_pairs=true")
-  }
-  if (include_coloc_pairs && !is.null(h4_threshold)) {
-    url <- paste0(url, "?h4_threshold=", h4_threshold)
-  }
+  url <- paste0(
+    getOption("gpmap_url"),
+    "/v1/genes/", gene_id,
+    "?include_associations=", include_associations,
+    "&include_coloc_pairs=", include_coloc_pairs,
+    "&h4_threshold=", h4_threshold
+  )
+
   gene <- httr::GET(url, httr::timeout(60))
   gene <- httr::content(gene, "text", encoding = "UTF-8")
   gene <- jsonlite::fromJSON(gene)
@@ -136,16 +131,13 @@ gene_api <- function(gene_id, include_associations = FALSE, include_coloc_pairs 
 #' @return A list containing the region information
 #' @export
 region_api <- function(region_id, include_associations = FALSE, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
-  url <- paste0(getOption("gpmap_url"), "/v1/regions/", region_id)
-  if (include_associations) {
-    url <- paste0(url, "?include_associations=true")
-  }
-  if (include_coloc_pairs) {
-    url <- paste0(url, "?include_coloc_pairs=true")
-  }
-  if (include_coloc_pairs && !is.null(h4_threshold)) {
-    url <- paste0(url, "?h4_threshold=", h4_threshold)
-  }
+  url <- paste0(
+    getOption("gpmap_url"),
+    "/v1/regions/", region_id,
+    "?include_associations=", include_associations,
+    "&include_coloc_pairs=", include_coloc_pairs,
+    "&h4_threshold=", h4_threshold
+  )
   region <- httr::GET(url, httr::timeout(60))
   region <- httr::content(region, "text", encoding = "UTF-8")
   region <- jsonlite::fromJSON(region)
@@ -208,12 +200,9 @@ variants_by_grange_api <- function(chr, start, stop, include_associations = FALS
 }
 
 get_variants_with_options_api <- function(url, include_associations = FALSE, p_value_threshold = NULL) {
-  if (include_associations) {
-    url <- paste0(url, "&include_associations=true")
-  }
-  if (!is.null(p_value_threshold)) {
-    url <- paste0(url, "&p_value_threshold=", p_value_threshold)
-  }
+  url <- paste0(url, "&include_associations=", include_associations)
+  url <- paste0(url, "&p_value_threshold=", p_value_threshold)
+
   variants <- httr::GET(url, httr::timeout(60))
   variants <- httr::content(variants, "text", encoding = "UTF-8")
   variants <- jsonlite::fromJSON(variants)
@@ -228,13 +217,13 @@ get_variants_with_options_api <- function(url, include_associations = FALSE, p_v
 #' @return A list containing the variant
 #' @export
 variant_api <- function(snp_id, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
-  url <- paste0(getOption("gpmap_url"), "/v1/variants/", snp_id)
-  if (include_coloc_pairs) {
-    url <- paste0(url, "?include_coloc_pairs=true")
-  }
-  if (include_coloc_pairs && !is.null(h4_threshold)) {
-    url <- paste0(url, "?h4_threshold=", h4_threshold)
-  }
+  url <- paste0(
+    getOption("gpmap_url"),
+    "/v1/variants/", snp_id,
+    "?include_coloc_pairs=", include_coloc_pairs,
+    "&h4_threshold=", h4_threshold
+  )
+
   variant <- httr::GET(url, httr::timeout(60))
   variant <- httr::content(variant, "text", encoding = "UTF-8")
   variant <- jsonlite::fromJSON(variant)

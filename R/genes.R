@@ -31,14 +31,18 @@ gene <- function(gene_id,
                  coloc_group_threshold = "strong",
                  include_coloc_pairs = FALSE,
                  h4_threshold = 0.8) {
+  if (is.null(gene_id)) {
+    stop("gene_id is required")
+  }
   if (!coloc_group_threshold %in% c("strong", "moderate")) {
     stop("coloc_group_threshold must be either 'strong' or 'moderate'")
   }
   gene_info <- gene_api(gene_id, include_associations, include_coloc_pairs, h4_threshold)
   gene_info$coloc_groups <- dplyr::filter(gene_info$coloc_groups, group_threshold == coloc_group_threshold)
-  gene_info$upload_study_extractions <- NULL
   gene_info$tissues <- NULL
-  gene_info$coloc_groups <- dplyr::filter(gene_info$coloc_groups, group_threshold == group_threshold)
 
+  if (include_associations) gene_info <- merge_associations(gene_info)
+
+  gene_info <- gene_info[!sapply(gene_info, is.null)]
   return(gene_info)
 }
