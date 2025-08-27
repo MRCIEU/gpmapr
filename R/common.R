@@ -10,11 +10,6 @@ merge_associations <- function(coloc_info) {
     coloc_info$associations,
     by = c("study_id", "snp_id")
   )
-  coloc_info$study_extractions <- dplyr::left_join(
-    coloc_info$study_extractions,
-    coloc_info$associations,
-    by = c("study_id", "snp_id")
-  )
   coloc_info$associations <- NULL
   return(coloc_info)
 }
