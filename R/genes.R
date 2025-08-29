@@ -41,8 +41,8 @@ gene <- function(gene_id,
   gene_info$coloc_groups <- dplyr::filter(gene_info$coloc_groups, group_threshold == coloc_group_threshold)
   gene_info$tissues <- NULL
 
+  gene_info <- cleanup_api_object(gene_info)
   if (include_associations) gene_info <- merge_associations(gene_info)
 
-  gene_info <- gene_info[!sapply(gene_info, is.null)]
   return(gene_info)
 }
