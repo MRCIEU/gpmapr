@@ -1,3 +1,5 @@
+timeout_seconds <- 360
+
 #' @title Select API
 #' @description Select the API to use
 #' @param api A character string specifying the API to use. Default is "production".
@@ -32,7 +34,7 @@ health_api <- function() {
 #' @export
 search_options_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/search/options")
-  search_options <- httr::GET(url, httr::timeout(60))
+  search_options <- httr::GET(url, httr::timeout(timeout_seconds))
   search_options <- httr::content(search_options, "text", encoding = "UTF-8")
   search_options <- jsonlite::fromJSON(search_options)
   return(search_options)
@@ -45,7 +47,7 @@ search_options_api <- function() {
 #' @export
 search_variants_api <- function(query) {
   url <- paste0(getOption("gpmap_url"), "/v1/search/variant/", query)
-  search_variants <- httr::GET(url, httr::timeout(60))
+  search_variants <- httr::GET(url, httr::timeout(timeout_seconds))
   search_variants <- httr::content(search_variants, "text", encoding = "UTF-8")
   search_variants <- jsonlite::fromJSON(search_variants)
   return(search_variants)
@@ -58,7 +60,7 @@ search_variants_api <- function(query) {
 #' @export
 traits_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/traits")
-  traits <- httr::GET(url, httr::timeout(60))
+  traits <- httr::GET(url, httr::timeout(timeout_seconds))
   traits <- httr::content(traits, "text", encoding = "UTF-8")
   traits <- jsonlite::fromJSON(traits)
   return(traits)
@@ -80,7 +82,7 @@ trait_api <- function(trait_id, include_associations = FALSE, include_coloc_pair
     "&include_coloc_pairs=", include_coloc_pairs,
     "&h4_threshold=", h4_threshold
   )
-  trait <- httr::GET(url, httr::timeout(60))
+  trait <- httr::GET(url, httr::timeout(timeout_seconds))
   trait <- httr::content(trait, "text", encoding = "UTF-8")
   trait <- jsonlite::fromJSON(trait)
   return(trait)
@@ -93,7 +95,7 @@ trait_api <- function(trait_id, include_associations = FALSE, include_coloc_pair
 #' @export
 genes_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/genes")
-  genes <- httr::GET(url, httr::timeout(60))
+  genes <- httr::GET(url, httr::timeout(timeout_seconds))
   genes <- httr::content(genes, "text", encoding = "UTF-8")
   genes <- jsonlite::fromJSON(genes)
   return(genes)
@@ -116,7 +118,7 @@ gene_api <- function(gene_id, include_associations = FALSE, include_coloc_pairs 
     "&h4_threshold=", h4_threshold
   )
 
-  gene <- httr::GET(url, httr::timeout(60))
+  gene <- httr::GET(url, httr::timeout(timeout_seconds))
   gene <- httr::content(gene, "text", encoding = "UTF-8")
   gene <- jsonlite::fromJSON(gene)
   return(gene)
@@ -138,7 +140,7 @@ region_api <- function(region_id, include_associations = FALSE, include_coloc_pa
     "&include_coloc_pairs=", include_coloc_pairs,
     "&h4_threshold=", h4_threshold
   )
-  region <- httr::GET(url, httr::timeout(60))
+  region <- httr::GET(url, httr::timeout(timeout_seconds))
   region <- httr::content(region, "text", encoding = "UTF-8")
   region <- jsonlite::fromJSON(region)
   return(region)
@@ -153,7 +155,7 @@ region_api <- function(region_id, include_associations = FALSE, include_coloc_pa
 variants_by_rsid_api <- function(rsids) {
   rsids <- paste(rsids, collapse = "&rsids=")
   url <- paste0(getOption("gpmap_url"), "/v1/variants?rsids=", rsids)
-  variants <- httr::GET(url, httr::timeout(60))
+  variants <- httr::GET(url, httr::timeout(timeout_seconds))
   variants <- httr::content(variants, "text", encoding = "UTF-8")
   variants <- jsonlite::fromJSON(variants)
   return(variants)
@@ -203,7 +205,7 @@ get_variants_with_options_api <- function(url, include_associations = FALSE, p_v
   url <- paste0(url, "&include_associations=", include_associations)
   url <- paste0(url, "&p_value_threshold=", p_value_threshold)
 
-  variants <- httr::GET(url, httr::timeout(60))
+  variants <- httr::GET(url, httr::timeout(timeout_seconds))
   variants <- httr::content(variants, "text", encoding = "UTF-8")
   variants <- jsonlite::fromJSON(variants)
   return(variants)
@@ -224,7 +226,7 @@ variant_api <- function(snp_id, include_coloc_pairs = FALSE, h4_threshold = 0.8)
     "&h4_threshold=", h4_threshold
   )
 
-  variant <- httr::GET(url, httr::timeout(60))
+  variant <- httr::GET(url, httr::timeout(timeout_seconds))
   variant <- httr::content(variant, "text", encoding = "UTF-8")
   variant <- jsonlite::fromJSON(variant)
   return(variant)
@@ -239,7 +241,7 @@ variant_summary_stats_api <- function(snp_id) {
   temp_zip <- file.path(tempdir(), paste0("summary_stats_", snp_id, ".zip"))
 
   url <- paste0(getOption("gpmap_url"), "/v1/variants/", snp_id, "/summary-stats")
-  response <- httr::GET(url, httr::timeout(60))
+  response <- httr::GET(url, httr::timeout(timeout_seconds))
   writeBin(httr::content(response, "raw"), temp_zip)
   utils::unzip(temp_zip, exdir = tempdir())
 
@@ -263,7 +265,7 @@ variant_summary_stats_api <- function(snp_id) {
 ld_proxies_by_variant_api <- function(variants) {
   variants <- paste(variants, collapse = "&variants=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/proxies?variants=", variants)
-  ld_proxies <- httr::GET(url, httr::timeout(60))
+  ld_proxies <- httr::GET(url, httr::timeout(timeout_seconds))
   ld_proxies <- httr::content(ld_proxies, "text", encoding = "UTF-8")
   ld_proxies <- jsonlite::fromJSON(ld_proxies)
   return(ld_proxies)

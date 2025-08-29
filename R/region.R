@@ -41,8 +41,8 @@ region <- function(region_id,
   region_info <- region_api(region_id, include_associations, include_coloc_pairs, h4_threshold)
   region_info$coloc_groups <- dplyr::filter(region_info$coloc_groups, group_threshold == coloc_group_threshold)
 
+  region_info <- cleanup_api_object(region_info)
   region_info <- merge_associations(region_info)
-  region_info <- region_info[!sapply(region_info, is.null)]
   region_info$tissues <- NULL
 
   return(region_info)

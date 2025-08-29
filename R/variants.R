@@ -44,8 +44,8 @@ variant <- function(snp_id,
     variant_info$summary_stats <- summary_stats
   }
 
+  variant_info <- cleanup_api_object(variant_info)
   variant_info <- merge_associations(variant_info)
 
-  variant_info <- variant_info[!sapply(variant_info, is.null)]
   return(variant_info)
 }

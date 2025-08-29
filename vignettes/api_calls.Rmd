@@ -38,7 +38,7 @@ Returns a specific trait.
 ```{r get-specific-trait}
 specific_trait <- trait_api(first_trait$id)
 specific_trait$trait$trait_name
-nrow(specific_trait$colocs)
+nrow(specific_trait$coloc_groups)
 nrow(specific_trait$study_extractions)
 nrow(specific_trait$rare_results)
 ```
@@ -47,7 +47,7 @@ Returns a specific trait with associations.
 ```{r get-trait-with-associations}
 trait_with_associations <- trait_api(first_trait$id, include_associations = TRUE)
 trait_with_associations$trait$trait_name
-nrow(trait_with_associations$colocs)
+nrow(trait_with_associations$coloc_groups)
 nrow(trait_with_associations$associations)
 ```
 
@@ -64,7 +64,7 @@ Returns a specific gene.
 specific_gene <- gene_api(first_gene$gene)
 specific_gene$gene$gene
 nrow(specific_gene$genes_in_regions)
-nrow(specific_gene$colocs)
+nrow(specific_gene$coloc_groups)
 ```
 
 You can also include associations
@@ -72,7 +72,7 @@ You can also include associations
 gene_with_associations <- gene_api(first_gene$gene, include_associations = TRUE)
 gene_with_associations$gene$gene
 nrow(gene_with_associations$genes_in_regions)
-nrow(gene_with_associations$colocs)
+nrow(gene_with_associations$coloc_groups)
 nrow(gene_with_associations$associations)
 ```
 
@@ -104,7 +104,7 @@ To obtain all colocalizing and rare variant information for a variant, use the v
 ```{r get-variant-info}
 variant_info <- variant_api(snp_ids[1])
 variant_info$variant$snp
-nrow(variant_info$colocs)
+nrow(variant_info$coloc_groups)
 nrow(variant_info$associations)
 ```
 

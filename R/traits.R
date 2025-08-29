@@ -42,8 +42,8 @@ trait <- function(trait_id,
   trait_info <- trait_api(trait_id, include_associations, include_coloc_pairs, h4_threshold)
   trait_info$coloc_groups <- dplyr::filter(trait_info$coloc_groups, group_threshold == coloc_group_threshold)
 
+  trait_info <- cleanup_api_object(trait_info)
   if (include_associations) trait_info <- merge_associations(trait_info)
 
-  trait_info <- trait_info[!sapply(trait_info, is.null)]
   return(trait_info)
 }
