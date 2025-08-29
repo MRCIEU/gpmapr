@@ -10,6 +10,12 @@ merge_associations <- function(coloc_info) {
     coloc_info$associations,
     by = c("study_id", "snp_id")
   )
+  coloc_info$rare_results <- dplyr::left_join(
+    coloc_info$rare_results,
+    coloc_info$associations,
+    by = c("study_id", "snp_id")
+  )
+
   coloc_info$associations <- NULL
   return(coloc_info)
 }
