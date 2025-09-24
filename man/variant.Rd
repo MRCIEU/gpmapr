@@ -6,7 +6,6 @@
 \usage{
 variant(
   snp_id,
-  coloc_group_threshold = "strong",
   include_coloc_pairs = FALSE,
   h4_threshold = 0.8,
   include_summary_stats = FALSE
@@ -14,8 +13,6 @@ variant(
 }
 \arguments{
 \item{snp_id}{A character string specifying the SNP ID}
-
-\item{coloc_group_threshold}{A character value specifying the group threshold for coloc groups, defaults to 'strong'}
 
 \item{include_coloc_pairs}{A logical value specifying whether to include coloc pairs}
 

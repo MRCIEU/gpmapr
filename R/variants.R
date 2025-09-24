@@ -1,7 +1,6 @@
 #' @title Variant
 #' @description A collection of studies that are associated with a particular variant.
 #' @param snp_id A character string specifying the SNP ID
-#' @param coloc_group_threshold A character value specifying the group threshold for coloc groups, defaults to 'strong'
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs
 #' @param h4_threshold A numeric value specifying the cutoff for included coloc pairs, defaults to 0.8.
 #'      Only used if include_coloc_pairs is TRUE.
@@ -25,19 +24,14 @@
 #' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
 #' @export
 variant <- function(snp_id,
-                    coloc_group_threshold = "strong",
                     include_coloc_pairs = FALSE,
                     h4_threshold = 0.8,
                     include_summary_stats = FALSE) {
   if (is.null(snp_id)) {
     stop("snp_id is required")
   }
-  if (!coloc_group_threshold %in% c("strong", "moderate")) {
-    stop("coloc_group_threshold must be either 'strong' or 'moderate'")
-  }
 
   variant_info <- variant_api(snp_id, include_coloc_pairs = include_coloc_pairs, h4_threshold = h4_threshold)
-  variant_info$coloc_groups <- dplyr::filter(variant_info$coloc_groups, group_threshold == coloc_group_threshold)
 
   if (include_summary_stats) {
     summary_stats <- variant_summary_stats_api(snp_id)

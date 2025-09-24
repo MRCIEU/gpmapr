@@ -7,7 +7,6 @@
 region(
   region_id,
   include_associations = FALSE,
-  coloc_group_threshold = "strong",
   include_coloc_pairs = FALSE,
   h4_threshold = 0.8
 )
@@ -17,8 +16,6 @@ region(
 
 \item{include_associations}{A logical value specifying whether to include associations
 (BETA, SE, P), defaults to FALSE}
-
-\item{coloc_group_threshold}{A character value specifying the group threshold for coloc groups, defaults to 'strong'}
 
 \item{include_coloc_pairs}{A logical value specifying whether to include coloc pairs, defaults to FALSE}
 
