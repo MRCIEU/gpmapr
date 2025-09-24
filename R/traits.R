@@ -4,7 +4,6 @@
 #' @param trait_id A numeric value specifying the trait id
 #' @param include_associations A logical value specifying whether to include associations
 #' (BETA, SE, P), defaults to FALSE
-#' @param coloc_group_threshold A character value specifying the group threshold for coloc groups, defaults to 'strong'
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8
 #' @return A list which contains the following elements:
@@ -29,18 +28,13 @@
 #' @export
 trait <- function(trait_id,
                   include_associations = FALSE,
-                  coloc_group_threshold = "strong",
                   include_coloc_pairs = FALSE,
                   h4_threshold = 0.8) {
   if (is.null(trait_id)) {
     stop("trait_id is required")
   }
-  if (!coloc_group_threshold %in% c("strong", "moderate")) {
-    stop("coloc_group_threshold must be either 'strong' or 'moderate'")
-  }
 
   trait_info <- trait_api(trait_id, include_associations, include_coloc_pairs, h4_threshold)
-  trait_info$coloc_groups <- dplyr::filter(trait_info$coloc_groups, group_threshold == coloc_group_threshold)
 
   trait_info <- cleanup_api_object(trait_info)
   if (include_associations) trait_info <- merge_associations(trait_info)

@@ -65,7 +65,6 @@ You can get more information about a trait by subsequently calling the `trait()`
 Each trait, gene, or variant call have optional parameters:
 
 * `include_associations`: Whether to include associations (BETA, SE, P) of the variants in which it's colocalised in the output.
-* `group_threshold`: The threshold for coloc groups, can be 'strong' (h4 > 0.8) or 'moderate' (h4 > 0.6), defaults to 'strong'.
 * `include_coloc_pairs`: Whether to include coloc pairs in the output (which include h3 and h4), as opposed to just the coloc groups.
 * `h4_threshold`: The h4 threshold for coloc pairs.
 
@@ -85,10 +84,10 @@ This returns a list of elements, which you can access by name.  More detailed ex
 * `coloc_pairs`: (optional) a dataframe containing all pairwise coloc results for this trait.
 
 ```{r gene-example}
-slc44a1 <- gene("SLC44A1", coloc_group_threshold = "moderate")
+slc44a1 <- gene("SLC44A1")
 names(slc44a1)
 nrow(slc44a1$coloc_groups)
-head(slc44a1$coloc_groups[, c("coloc_group_id", "group_threshold", "trait_name", "data_type", "tissue")])
+head(slc44a1$coloc_groups[, c("coloc_group_id", "trait_name", "data_type", "tissue")])
 ```
 
 # Accessing summary statistics
