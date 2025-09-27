@@ -34,7 +34,7 @@ gene <- function(gene_id,
   if (is.null(gene_id)) {
     stop("gene_id is required")
   }
-  gene_info <- gene_api(gene_id, include_associations, include_coloc_pairs, h4_threshold)
+  gene_info <- gene_api(gene_id, include_associations, include_coloc_pairs, include_trans, h4_threshold)
   gene_info$tissues <- NULL
 
   gene_info <- cleanup_api_object(gene_info)
