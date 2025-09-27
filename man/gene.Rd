@@ -8,6 +8,7 @@ gene(
   gene_id,
   include_associations = FALSE,
   include_coloc_pairs = FALSE,
+  include_trans = TRUE,
   h4_threshold = 0.8
 )
 }
@@ -18,6 +19,8 @@ gene(
 (BETA, SE, P), defaults to FALSE}
 
 \item{include_coloc_pairs}{A logical value specifying whether to include coloc pairs, defaults to FALSE}
+
+\item{include_trans}{A logical value specifying whether to include trans genetic effects, defaults to TRUE}
 
 \item{h4_threshold}{A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8}
 }
@@ -51,8 +54,6 @@ It has the following columns:
 \item study_extraction_id: the id of the study extraction
 \item snp_id: the id of the SNP
 \item ld_block_id: the id of the LD block
-\item group_threshold: the threshold for this group of colocalised results.
-'strong' signifies h4 > 0.8, 'moderate' signifies h4 > 0.6
 \item chr: the chromosome of the SNP
 \item bp: the base pair position of the SNP
 \item min_p: the minimum p-value related to the study_extraction_id
