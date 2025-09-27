@@ -9,8 +9,6 @@
 #'   \item study_extraction_id: the id of the study extraction
 #'   \item snp_id: the id of the SNP
 #'   \item ld_block_id: the id of the LD block
-#'   \item group_threshold: the threshold for this group of colocalised results.
-#'     'strong' signifies h4 > 0.8, 'moderate' signifies h4 > 0.6
 #'   \item chr: the chromosome of the SNP
 #'   \item bp: the base pair position of the SNP
 #'   \item min_p: the minimum p-value related to the study_extraction_id

@@ -8,6 +8,7 @@ gene_api(
   gene_id,
   include_associations = FALSE,
   include_coloc_pairs = FALSE,
+  include_trans = TRUE,
   h4_threshold = 0.8
 )
 }
@@ -17,6 +18,8 @@ gene_api(
 \item{include_associations}{A logical value specifying whether to include associations}
 
 \item{include_coloc_pairs}{A logical value specifying whether to include coloc pairs}
+
+\item{include_trans}{A logical value specifying whether to include trans genetic effects}
 
 \item{h4_threshold}{A numeric value specifying the h4 threshold for coloc pairs}
 }

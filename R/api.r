@@ -106,15 +106,21 @@ genes_api <- function() {
 #' @param gene_id A character string specifying the gene ID
 #' @param include_associations A logical value specifying whether to include associations
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs
+#' @param include_trans A logical value specifying whether to include trans genetic effects
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs
 #' @return A list containing the gene information
 #' @export
-gene_api <- function(gene_id, include_associations = FALSE, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
+gene_api <- function(gene_id,
+                     include_associations = FALSE,
+                     include_coloc_pairs = FALSE,
+                     include_trans = TRUE,
+                     h4_threshold = 0.8) {
   url <- paste0(
     getOption("gpmap_url"),
     "/v1/genes/", gene_id,
     "?include_associations=", include_associations,
     "&include_coloc_pairs=", include_coloc_pairs,
+    "&include_trans=", include_trans,
     "&h4_threshold=", h4_threshold
   )
 

@@ -4,6 +4,7 @@
 #' @param include_associations A logical value specifying whether to include associations
 #' (BETA, SE, P), defaults to FALSE
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
+#' @param include_trans A logical value specifying whether to include trans genetic effects, defaults to TRUE
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8
 #' @return A list which contains the following elements:
 #' \itemize{
@@ -28,6 +29,7 @@
 gene <- function(gene_id,
                  include_associations = FALSE,
                  include_coloc_pairs = FALSE,
+                 include_trans = TRUE,
                  h4_threshold = 0.8) {
   if (is.null(gene_id)) {
     stop("gene_id is required")
