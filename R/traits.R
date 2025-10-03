@@ -34,7 +34,12 @@ trait <- function(trait_id,
     stop("trait_id is required")
   }
 
-  trait_info <- trait_api(trait_id, include_associations, include_coloc_pairs, h4_threshold)
+  trait_info <- trait_api(trait_id, include_associations, h4_threshold)
+
+  if (include_coloc_pairs) {
+    response <- trait_coloc_pairs_api(trait_id, h4_threshold)
+    trait_info$coloc_pairs <- response$coloc_pairs
+  }
 
   trait_info <- cleanup_api_object(trait_info)
   if (include_associations) trait_info <- merge_associations(trait_info)

@@ -1,3 +1,8 @@
+api_to_package_version <- list(
+  "1.0.0" = c("0.0.0.9000")
+)
+
+
 #' Merge associations into coloc info
 #'
 #' @param coloc_info A list of coloc info, as returned by the api

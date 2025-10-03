@@ -28,6 +28,19 @@ health_api <- function() {
   return(health)
 }
 
+
+#' @title Get API Version
+#' @description Get the version of the API
+#' @return A list containing the version
+#' @export
+version_api <- function() {
+  url <- paste0(getOption("gpmap_url"), "/v1/info/version")
+  version <- httr::GET(url)
+  version <- httr::content(version, "text", encoding = "UTF-8")
+  version <- jsonlite::fromJSON(version)
+  return(version$version)
+}
+
 #' @title Search Options API
 #' @description Search options from the API
 #' @return A list containing the search options
@@ -86,6 +99,18 @@ trait_api <- function(trait_id, include_associations = FALSE, include_coloc_pair
   trait <- httr::content(trait, "text", encoding = "UTF-8")
   trait <- jsonlite::fromJSON(trait)
   return(trait)
+}
+
+trait_coloc_pairs_api <- function(trait_id, h4_threshold = 0.8) {
+  url <- paste0(
+    getOption("gpmap_url"),
+    "/v1/traits/", trait_id, "/coloc-pairs",
+    "?h4_threshold=", h4_threshold
+  )
+  trait_coloc_pairs <- httr::GET(url, httr::timeout(timeout_seconds))
+  trait_coloc_pairs <- httr::content(trait_coloc_pairs, "text", encoding = "UTF-8")
+  trait_coloc_pairs <- jsonlite::fromJSON(trait_coloc_pairs)
+  return(trait_coloc_pairs)
 }
 
 
