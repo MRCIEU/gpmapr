@@ -32,6 +32,7 @@ search_gpmap <- function(search_text) {
     search_results <- get(cache_key, envir = .search_cache)
   } else {
     search_results <- search_options_api()
+    search_results <- search_results$search_terms
     search_results$name_lower <- tolower(search_results$name)
     search_results$alt_name_lower <- tolower(search_results$alt_name)
     assign(cache_key, search_results, envir = .search_cache)
