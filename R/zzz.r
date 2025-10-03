@@ -1,5 +1,5 @@
 .onLoad <- function(libname, pkgname) {
-  select_api("dev")
+  select_api("production")
   api_version <- version_api()
   package_version <- utils::packageVersion("gpmapr")
 
