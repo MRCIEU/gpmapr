@@ -28,6 +28,28 @@ merge_associations <- function(coloc_info) {
   return(coloc_info)
 }
 
+#' Create a source url for a study
+#'
+#' @param study_name character string specifying the study name
+#' @return A character string specifying the source url
+create_source_url <- function(study_name) {
+  replace_except_first_two <- function(x) {
+    dash_positions <- gregexpr("-", x)[[1]]
+    if (length(dash_positions) <= 2) {
+      return(x)
+    }
+    result <- x
+    for (i in 3:length(dash_positions)) {
+      pos <- dash_positions[i]
+      substr(result, pos, pos) <- "_"
+    }
+    return(result)
+  }
+  study_name <- replace_except_first_two(study_name)
+
+  return(paste0("https://opengwas.io/datasets/", study_name))
+}
+
 #' Clean up an api object
 #'
 #' @param api_object A list of api info, as returned by the api
