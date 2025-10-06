@@ -4,21 +4,12 @@
 \alias{trait_api}
 \title{Get a Trait API}
 \usage{
-trait_api(
-  trait_id,
-  include_associations = FALSE,
-  include_coloc_pairs = FALSE,
-  h4_threshold = 0.8
-)
+trait_api(trait_id, include_associations = FALSE)
 }
 \arguments{
 \item{trait_id}{A character string specifying the trait ID}
 
 \item{include_associations}{A logical value specifying whether to include associations}
-
-\item{include_coloc_pairs}{A logical value specifying whether to include coloc pairs}
-
-\item{h4_threshold}{A numeric value specifying the h4 threshold for coloc pairs}
 }
 \value{
 A list containing the trait
