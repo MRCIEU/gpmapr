@@ -83,17 +83,13 @@ traits_api <- function() {
 #' @description Get a trait from the API
 #' @param trait_id A character string specifying the trait ID
 #' @param include_associations A logical value specifying whether to include associations
-#' @param include_coloc_pairs A logical value specifying whether to include coloc pairs
-#' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs
 #' @return A list containing the trait
 #' @export
-trait_api <- function(trait_id, include_associations = FALSE, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
+trait_api <- function(trait_id, include_associations = FALSE) {
   url <- paste0(
     getOption("gpmap_url"),
     "/v1/traits/", trait_id,
-    "?include_associations=", include_associations,
-    "&include_coloc_pairs=", include_coloc_pairs,
-    "&h4_threshold=", h4_threshold
+    "?include_associations=", include_associations
   )
   trait <- httr::GET(url, httr::timeout(timeout_seconds))
   trait <- httr::content(trait, "text", encoding = "UTF-8")
@@ -110,7 +106,9 @@ trait_coloc_pairs_api <- function(trait_id, h4_threshold = 0.8) {
   trait_coloc_pairs <- httr::GET(url, httr::timeout(timeout_seconds))
   trait_coloc_pairs <- httr::content(trait_coloc_pairs, "text", encoding = "UTF-8")
   trait_coloc_pairs <- jsonlite::fromJSON(trait_coloc_pairs)
-  return(trait_coloc_pairs)
+  to_dataframe <- as.data.frame(trait_coloc_pairs$coloc_pair_rows)
+  names(to_dataframe) <- trait_coloc_pairs$coloc_pair_column_names
+  return(to_dataframe)
 }
 
 
