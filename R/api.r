@@ -341,3 +341,20 @@ ld_matrix_by_snp_id_api <- function(snp_ids) {
   ld_matrix <- jsonlite::fromJSON(ld_matrix)
   return(ld_matrix)
 }
+
+#' @title Get Associations by SNP ID and Study ID API
+#' @description Get associations from the API by SNP id and study id
+#' @param snp_ids A vector of numeric values specifying the SNP IDs
+#' @param study_ids A vector of numeric values specifying the Study IDs
+#' @return A list containing the associations
+#' @export
+associations_api <- function(snp_ids, study_ids) {
+  snp_ids <- paste(snp_ids, collapse = "&snp_ids=")
+  study_ids <- paste(study_ids, collapse = "&study_ids=")
+  url <- paste0(getOption("gpmap_url"), "/v1/associations?snp_ids=", snp_ids, "&study_ids=", study_ids)
+
+  associations <- httr::GET(url, httr::timeout(timeout_seconds))
+  associations <- httr::content(associations, "text", encoding = "UTF-8")
+  associations <- jsonlite::fromJSON(associations)
+  return(associations)
+}

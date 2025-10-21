@@ -5,7 +5,7 @@ get_gwas <- function(gwas_id) {
 
 #' @title Upload a GWAS to the API
 #' @description Upload a GWAS to the API
-#' @param gwas_file The path to the GWAS file
+#' @param gwas_file The path to the GWAS file, maximum size is 1GB
 #' @param gwas_name The name of the GWAS
 #' @param p_value_threshold The p-value threshold for the GWAS
 #' @param header_map A list of header mappings
@@ -16,7 +16,7 @@ get_gwas <- function(gwas_id) {
 #' @param should_be_added Whether the GWAS should be added to the API
 #' @param ancestry The ancestry of the GWAS.  Currently only "EUR" is accepted.
 #' @param sample_size The sample size of the GWAS
-#' @param reference_build The reference build of the GWAS.  "GRCh37" and "GRCh38" are accepted.
+#' @param reference_build The reference build of the GWAS.  Only "GRCh37" and "GRCh38" are accepted.
 #' @return A list containing the GWAS information
 #' @export
 upload_gwas <- function(gwas_file,
