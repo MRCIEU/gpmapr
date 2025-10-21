@@ -36,3 +36,12 @@ test_that("gene() returns expected output", {
   expect_true(result$gene$gene == gene_id)
   expect_true(nrow(result$coloc_groups) > 0)
 })
+
+test_that("associations() returns expected output", {
+  snp_ids <- c(80750)
+  study_ids <- c(5020, 4870)
+  result <- associations(snp_ids, study_ids)
+  expect_type(result, "list")
+  expect_true(all(result$snp_id %in% snp_ids))
+  expect_true(all(result$study_id %in% study_ids))
+})

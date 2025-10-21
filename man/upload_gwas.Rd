@@ -20,7 +20,7 @@ upload_gwas(
 )
 }
 \arguments{
-\item{gwas_file}{The path to the GWAS file}
+\item{gwas_file}{The path to the GWAS file, maximum size is 1GB}
 
 \item{gwas_name}{The name of the GWAS}
 
@@ -42,7 +42,7 @@ upload_gwas(
 
 \item{sample_size}{The sample size of the GWAS}
 
-\item{reference_build}{The reference build of the GWAS.  "GRCh37" and "GRCh38" are accepted.}
+\item{reference_build}{The reference build of the GWAS.  Only "GRCh37" and "GRCh38" are accepted.}
 }
 \value{
 A list containing the GWAS information
