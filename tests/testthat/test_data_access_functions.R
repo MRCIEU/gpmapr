@@ -22,7 +22,7 @@ test_that("trait() returns expected output", {
 })
 
 test_that("variant() returns expected output", {
-  variant_id <- 8466253
+  variant_id <- 5553693 
   result <- variant(variant_id)
   expect_type(result, "list")
   expect_true(result$variant$id == variant_id)
@@ -44,4 +44,16 @@ test_that("associations() returns expected output", {
   expect_type(result, "list")
   expect_true(all(result$snp_id %in% snp_ids))
   expect_true(all(result$study_id %in% study_ids))
+})
+
+test_that("get_all_gene_pleiotropies() returns expected output", {
+  result <- get_all_gene_pleiotropies()
+  expect_type(result$genes, "list")
+  expect_true(nrow(result$genes) > 0)
+})
+
+test_that("get_all_snp_pleiotropies() returns expected output", {
+  result <- get_all_snp_pleiotropies()
+  expect_type(result$snps, "list")
+  expect_true(nrow(result$snps) > 0)
 })

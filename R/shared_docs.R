@@ -189,3 +189,31 @@ genes_in_region_doc <- function() {}
 #' }
 #' @keywords internal
 ld_doc <- function() {}
+
+#' @title Gene Pleiotropies Dataframe Documentation
+#' @description Shared documentation for gene_pleiotropies dataframe columns
+#' @section gene_pleiotropies_dataframe:
+#' The gene_pleiotropies dataframe contains information about which genes are pleiotropic.
+#' It has the following columns:
+#' \itemize{
+#'   \item gene_id: the id of the gene
+#'   \item gene: the name of the gene
+#'   \item : distinct_trait_categories the number of trait categories that the gene is associated with via coloc groups
+#'   \item : distinct_protein_coding_genes the number of genes that the gene is associated with via coloc groups
+#' }
+#' @keywords internal
+gene_pleiotropies_doc <- function() {}
+
+#' @title SNP Pleiotropies Dataframe Documentation
+#' @description Shared documentation for snp_pleiotropies dataframe columns
+#' @section snp_pleiotropies_dataframe:
+#' The snp_pleiotropies dataframe contains information about which SNPs are pleiotropic.
+#' It has the following columns:
+#' \itemize{
+#'   \item snp_id: the id of the SNP
+#'   \item snp: the name of the SNP
+#'   \item : distinct_trait_categories the number of trait categories that the SNP is associated with via coloc groups
+#'   \item : distinct_protein_coding_genes the number of genes that the SNP is associated with via coloc groups
+#' }
+#' @keywords internal
+snp_pleiotropies_doc <- function() {}

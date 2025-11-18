@@ -358,3 +358,26 @@ associations_api <- function(snp_ids, study_ids) {
   associations <- jsonlite::fromJSON(associations)
   return(associations)
 }
+
+
+#' @title Get All Gene Pleiotropies API
+#' @description Get all gene pleiotropies from the API
+#' @return A list containing the gene pleiotropies
+gene_pleiotropies_api <- function() {
+  url <- paste0(getOption("gpmap_url"), "/v1/pleiotropy/genes")
+  gene_pleiotropies <- httr::GET(url, httr::timeout(timeout_seconds))
+  gene_pleiotropies <- httr::content(gene_pleiotropies, "text", encoding = "UTF-8")
+  gene_pleiotropies <- jsonlite::fromJSON(gene_pleiotropies)
+  return(gene_pleiotropies)
+}
+
+#' @title Get All SNP Pleiotropies API
+#' @description Get all SNP pleiotropies from the API
+#' @return A list containing the SNP pleiotropies
+snp_pleiotropies_api <- function() {
+  url <- paste0(getOption("gpmap_url"), "/v1/pleiotropy/snps")
+  snp_pleiotropies <- httr::GET(url, httr::timeout(timeout_seconds))
+  snp_pleiotropies <- httr::content(snp_pleiotropies, "text", encoding = "UTF-8")
+  snp_pleiotropies <- jsonlite::fromJSON(snp_pleiotropies)
+  return(snp_pleiotropies)
+}
