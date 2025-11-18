@@ -6,9 +6,6 @@
 \usage{
 get_all_gene_pleiotropies()
 }
-\arguments{
-\item{gene_id}{A character string specifying the gene id}
-}
 \value{
 A list containing the gene pleiotropy
 }
