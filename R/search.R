@@ -114,16 +114,8 @@ search_gpmap <- function(search_text) {
       TRUE ~ NA_character_
     )
 
-    search_results$info <- paste0(
-      ifelse(search_results$num_extractions > 0, paste0("Extractions: ", search_results$num_extractions, ", "), ""),
-      "Colocalisation Groups: ", search_results$num_coloc_groups, ", ",
-      "Colocalising Traits: ", search_results$num_coloc_studies, ", ",
-      "Rare Results: ", search_results$num_rare_results,
-      ifelse(search_results$type == "proxy_variant", paste0(", Rsquared: ", search_results$rsq), "")
-    )
-    search_results$rsq <- NULL
-
-    search_results <- dplyr::select(search_results, call, name, type, type_id, info)
+    columns_to_remove <- c("rsq", "name_lower", "alt_name", "alt_name_lower")
+    search_results <- dplyr::select(search_results, -dplyr::any_of(columns_to_remove))
   }
   return(search_results)
 }

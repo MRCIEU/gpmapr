@@ -8,6 +8,12 @@ get_all_snp_pleiotropies()
 }
 \value{
 A list containing the SNP pleiotropies
+\itemize{
+\item snp_id: the id of the SNP
+\item display_snp: the name of the SNP
+\item distinct_trait_categories: the number of trait categories that the SNP is associated with via coloc groups
+\item distinct_protein_coding_genes: the number of genes that the SNP is associated with via coloc groups
+}
 }
 \description{
 Get all SNP pleiotropies from the API

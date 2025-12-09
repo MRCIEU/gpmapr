@@ -1,3 +1,29 @@
+#' @title Traits
+#' @description Get all traits from the API
+#' @return A dataframe containing all traits with the following columns:
+#'   \itemize{
+#'     \item id: the id of the trait
+#'     \item data_type: the data type of the trait
+#'     \item trait: the internal string id of the trait
+#'     \item trait_name: the name of the trait
+#'     \item trait_category: the trait category of the trait
+#'     \item variant_type: the type of variant
+#'     \item sample_size: the sample size of the trait
+#'     \item category: the category of the trait (continuous, categorical)
+#'     \item ancestry: the ancestry of the trait
+#'     \item heritability: the LDSC heritability score of the trait
+#'     \item heritability_se: the standard error of the LDSC heritability score of the trait
+#'     \item num_study_extractions: the number of study extractions for this trait
+#'     \item num_coloc_groups: the number of coloc groups for this trait
+#'     \item num_coloc_studies: the number of studies that have coloc results for this trait
+#'     \item num_rare_results: the number of rare results for this trait
+#'   }
+#' @export
+traits <- function() {
+  traits <- traits_api()
+  return(traits$traits)
+}
+
 #' @title Trait
 #' @description A collection of studies that are associated with a particular phenotype.
 #' A trait will include a common study and occasionally a rare study.
@@ -48,3 +74,4 @@ trait <- function(trait_id,
 
   return(trait_info)
 }
+

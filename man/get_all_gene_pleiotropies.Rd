@@ -8,6 +8,12 @@ get_all_gene_pleiotropies()
 }
 \value{
 A list containing the gene pleiotropy
+\itemize{
+\item gene_id: the id of the gene
+\item gene: the name of the gene
+\item distinct_trait_categories: the number of trait categories that the gene is associated with via coloc groups
+\item distinct_protein_coding_genes: the number of genes that the gene is associated with via coloc groups
+}
 }
 \description{
 Get gene pleiotropy from the API by gene id
