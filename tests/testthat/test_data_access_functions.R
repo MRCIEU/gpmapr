@@ -7,10 +7,15 @@ test_that("health() returns expected output", {
 })
 
 test_that("search_gpmap() returns expected output", {
-  result <- search_gpmap("hemoglobin")
+  result <- search_gpmap("haemoglobin")
   expect_type(result, "list")
+  print(result)
   expect_true(nrow(result) > 0)
-  expect_true(all(names(result) == c("call", "name", "type", "type_id", "info")))
+  expected_names <- c(
+    "call", "name", "type", "type_id", "num_coloc_groups",
+    "num_coloc_studies", "num_rare_results", "num_study_extractions"
+  )
+  expect_true(all(expected_names %in% names(result)))
 })
 
 test_that("trait() returns expected output", {
@@ -22,7 +27,7 @@ test_that("trait() returns expected output", {
 })
 
 test_that("variant() returns expected output", {
-  variant_id <- 5553693 
+  variant_id <- 5553693
   result <- variant(variant_id)
   expect_type(result, "list")
   expect_true(result$variant$id == variant_id)
@@ -48,12 +53,24 @@ test_that("associations() returns expected output", {
 
 test_that("get_all_gene_pleiotropies() returns expected output", {
   result <- get_all_gene_pleiotropies()
-  expect_type(result$genes, "list")
-  expect_true(nrow(result$genes) > 0)
+  expect_type(result, "list")
+  expect_true(nrow(result) > 0)
 })
 
 test_that("get_all_snp_pleiotropies() returns expected output", {
   result <- get_all_snp_pleiotropies()
-  expect_type(result$snps, "list")
-  expect_true(nrow(result$snps) > 0)
+  expect_type(result, "list")
+  expect_true(nrow(result) > 0)
+})
+
+test_that("genes() returns expected output", {
+  result <- genes()
+  expect_type(result, "list")
+  expect_true(nrow(result) > 0)
+})
+
+test_that("traits() returns expected output", {
+  result <- traits()
+  expect_type(result, "list")
+  expect_true(nrow(result) > 0)
 })

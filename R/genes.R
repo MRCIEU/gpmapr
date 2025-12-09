@@ -1,3 +1,29 @@
+#' @title Genes
+#' @description Get all genes from the API
+#' @return A dataframe containing all genes with the following columns:
+#'   \itemize{
+#'     \item id: the id of the gene
+#'     \item gene: the name of the gene
+#'     \item description: the description of the gene
+#'     \item gene_biotype: the gene biotype
+#'     \item chr: the chromosome of the gene
+#'     \item start: the start position of the gene
+#'     \item stop: the end position of the gene
+#'     \item strand: the strand of the gene
+#'     \item source: the source of the gene
+#'     \item distinct_trait_categories: the number of trait categories that the gene is associated with via coloc groups
+#'     \item distinct_protein_coding_genes: the number of genes that the gene is associated with via coloc groups
+#'     \item num_study_extractions: the number of study extractions for this gene
+#'     \item num_coloc_groups: the number of coloc groups for this gene
+#'     \item num_coloc_studies: the number of studies that have coloc results for this gene
+#'     \item num_rare_groups: the number of rare groups for this gene
+#'   }
+#' @export
+genes <- function() {
+  genes <- genes_api()
+  return(genes$genes)
+}
+
 #' @title Gene
 #' @description A collection of studies that are associated with a particular gene.
 #' @param gene_id A numeric value specifying the gene id
