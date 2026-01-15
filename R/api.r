@@ -381,3 +381,91 @@ snp_pleiotropies_api <- function() {
   snp_pleiotropies <- jsonlite::fromJSON(snp_pleiotropies)
   return(snp_pleiotropies)
 }
+
+#' @title Get a GWAS from the API
+#' @description Get a GWAS from the API
+#' @param gwas_id The ID of the GWAS
+#' @param include_summary_stats Whether to include summary statistics
+#' @return A list containing the GWAS information
+#' @export
+get_gwas_api <- function(gwas_id, include_summary_stats = FALSE) {
+  url <- paste0(getOption("gpmap_url"), "/v1/gwas/", gwas_id)
+  gwas <- httr::GET(url, httr::timeout(timeout_seconds))
+  gwas <- httr::content(gwas, "text", encoding = "UTF-8")
+  gwas <- jsonlite::fromJSON(gwas)
+  if (include_summary_stats) {
+    summary_stats_df <- get_gwas_summary_stats_api(gwas_id)
+    gwas$summary_stats <- summary_stats_df
+  }
+  return(gwas)
+}
+
+get_gwas_summary_stats_api <- function(gwas_id) {
+  url <- paste0(getOption("gpmap_url"), "/v1/gwas/", gwas_id, "/summary-stats")
+  summary_stats <- httr::GET(url, httr::timeout(timeout_seconds))
+  summary_stats <- httr::content(summary_stats, "text", encoding = "UTF-8")
+  summary_stats_url <- jsonlite::fromJSON(summary_stats)
+
+  temp_file <- file.path(tempdir(), paste0("gwas_summary_stats_", gwas_id, ".tsv.gz"))
+  response <- httr::GET(summary_stats_url, httr::timeout(timeout_seconds))
+  writeBin(httr::content(response, "raw"), temp_file)
+
+  summary_stats_df <- readr::read_tsv(temp_file, show_col_types = FALSE)
+  unlink(temp_file)
+
+  return(summary_stats_df)
+}
+
+#' @title Upload a GWAS to the API
+#' @description Upload a GWAS to the API
+#' @param file The path to the GWAS file, maximum size is 1GB
+#' @param name The name of the GWAS
+#' @param p_value_threshold The p-value threshold for the GWAS
+#' @param column_names A list of column names in the format of: list(CHR = "chr", BP = "pos"...)
+#' @param email The email of the user
+#' @param category The category of the GWAS.  Only "continuous" and "categorical" are accepted.
+#' @param is_published Whether the GWAS is published
+#' @param doi The DOI of the GWAS
+#' @param should_be_added Whether the GWAS should be added to the API
+#' @param ancestry The ancestry of the GWAS.  Currently only "EUR" is accepted.
+#' @param sample_size The sample size of the GWAS
+#' @param reference_build The reference build of the GWAS.  Only "GRCh37" and "GRCh38" are accepted.
+#' @return A list containing the GWAS information
+upload_gwas_api <- function(file,
+                            name,
+                            p_value_threshold,
+                            column_names,
+                            email,
+                            category,
+                            is_published = FALSE,
+                            doi = NA,
+                            should_be_added = FALSE,
+                            ancestry = "EUR",
+                            sample_size,
+                            reference_build = "GRCh38") {
+  url <- paste0(getOption("gpmap_url"), "/v1/gwas")
+
+  gwas_request <- list(
+    reference_build = reference_build,
+    email = email,
+    name = name,
+    category = category,
+    is_published = is_published,
+    doi = doi,
+    should_be_added = should_be_added,
+    ancestry = ancestry,
+    sample_size = sample_size,
+    p_value_threshold = p_value_threshold,
+    column_names = column_names
+  )
+  request_json <- jsonlite::toJSON(gwas_request, auto_unbox = TRUE)
+
+  gwas <- httr::POST(url, body = list(
+    file = httr::upload_file(file),
+    request = request_json
+  ), httr::timeout(timeout_seconds))
+
+  gwas <- httr::content(gwas, "text", encoding = "UTF-8")
+  gwas <- jsonlite::fromJSON(gwas)
+  return(gwas)
+}
