@@ -10,11 +10,13 @@ api_to_package_version <- list(
 merge_associations <- function(coloc_info) {
   if (is.null(coloc_info$associations)) return(coloc_info)
 
-  coloc_info$coloc_groups <- dplyr::left_join(
-    coloc_info$coloc_groups,
-    coloc_info$associations,
-    by = c("study_id", "snp_id")
-  )
+  if (!is.null(coloc_info$coloc_groups) && nrow(coloc_info$coloc_groups) > 0) {
+    coloc_info$coloc_groups <- dplyr::left_join(
+      coloc_info$coloc_groups,
+      coloc_info$associations,
+      by = c("study_id", "snp_id")
+    )
+  }
 
   if (!is.null(coloc_info$rare_results) && nrow(coloc_info$rare_results) > 0) {
     coloc_info$rare_results <- dplyr::left_join(

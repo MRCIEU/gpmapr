@@ -5,11 +5,11 @@
 \title{Upload a GWAS to the API}
 \usage{
 upload_gwas(
-  gwas_file,
-  gwas_name,
+  file,
+  name,
   p_value_threshold = 5e-08,
-  header_map = list(),
-  email = "",
+  column_names = list(),
+  email = NA,
   category = "continuous",
   is_published = FALSE,
   doi = NA,
@@ -20,13 +20,27 @@ upload_gwas(
 )
 }
 \arguments{
-\item{gwas_file}{The path to the GWAS file, maximum size is 1GB}
+\item{file}{The path to the GWAS file, maximum size is 1GB}
 
-\item{gwas_name}{The name of the GWAS}
+\item{name}{The name of the GWAS}
 
 \item{p_value_threshold}{The p-value threshold for the GWAS}
 
-\item{header_map}{A list of header mappings}
+\item{column_names}{A list of column names in the format of: list(CHR = "chr", BP = "pos"...)
+\itemize{
+\item CHR: chromosome
+\item BP: base pair position
+\item P: p-value
+\item EA: allele 1
+\item OA: allele 2
+\item EAF: allele frequency
+And either BETA and SE, or OR, LB, and UB
+\item BETA: beta
+\item SE: standard error
+\item OR: odds ratio
+\item LB: lower bound of the confidence interval
+\item UB: upper bound of the confidence interval
+}}
 
 \item{email}{The email of the user}
 
