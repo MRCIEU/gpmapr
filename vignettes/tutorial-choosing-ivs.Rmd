@@ -1,0 +1,10 @@
+---
+title: "Choosing Instrumental Variables tutorial"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{tutorial-choosing-ivs}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+Coming soon.
