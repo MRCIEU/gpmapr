@@ -32,7 +32,7 @@ health_api <- function() {
 #' @title Get API Version
 #' @description Get the version of the API
 #' @return A list containing the version
-#' @export
+#' @export 
 version_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/info/version")
   version <- httr::GET(url)
@@ -44,7 +44,6 @@ version_api <- function() {
 #' @title Search Options API
 #' @description Search options from the API
 #' @return A list containing the search options
-#' @export
 search_options_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/search/options")
   search_options <- httr::GET(url, httr::timeout(timeout_seconds))
@@ -57,7 +56,6 @@ search_options_api <- function() {
 #' @description Search variants from the API
 #' @param query A character string specifying the query
 #' @return A list containing the variants
-#' @export
 search_variants_api <- function(query) {
   url <- paste0(getOption("gpmap_url"), "/v1/search/variant/", query)
   search_variants <- httr::GET(url, httr::timeout(timeout_seconds))
@@ -66,11 +64,9 @@ search_variants_api <- function(query) {
   return(search_variants)
 }
 
-
 #' @title Get All Traits API
 #' @description Get all traits from the API
 #' @return A list containing all traits
-#' @export
 traits_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/traits")
   traits <- httr::GET(url, httr::timeout(timeout_seconds))
@@ -84,7 +80,6 @@ traits_api <- function() {
 #' @param trait_id A character string specifying the trait ID
 #' @param include_associations A logical value specifying whether to include associations
 #' @return A list containing the trait
-#' @export
 trait_api <- function(trait_id, include_associations = FALSE) {
   url <- paste0(
     getOption("gpmap_url"),
@@ -111,11 +106,9 @@ trait_coloc_pairs_api <- function(trait_id, h4_threshold = 0.8) {
   return(to_dataframe)
 }
 
-
 #' @title Get Gene Information
 #' @description Get gene information from the API
 #' @return A list containing the gene information
-#' @export
 genes_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/genes")
   genes <- httr::GET(url, httr::timeout(timeout_seconds))
@@ -132,7 +125,6 @@ genes_api <- function() {
 #' @param include_trans A logical value specifying whether to include trans genetic effects
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs
 #' @return A list containing the gene information
-#' @export
 gene_api <- function(gene_id,
                      include_associations = FALSE,
                      include_coloc_pairs = FALSE,
@@ -160,7 +152,6 @@ gene_api <- function(gene_id,
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs
 #' @return A list containing the region information
-#' @export
 region_api <- function(region_id, include_associations = FALSE, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
   url <- paste0(
     getOption("gpmap_url"),
@@ -175,12 +166,10 @@ region_api <- function(region_id, include_associations = FALSE, include_coloc_pa
   return(region)
 }
 
-
 #' @title Get Variants by RSID
 #' @description Get variants from the API by RSID
 #' @param rsids A character string specifying the RSID
 #' @return A list containing the variants
-#' @export
 variants_by_rsid_api <- function(rsids) {
   rsids <- paste(rsids, collapse = "&rsids=")
   url <- paste0(getOption("gpmap_url"), "/v1/variants?rsids=", rsids)
@@ -196,7 +185,6 @@ variants_by_rsid_api <- function(rsids) {
 #' @param include_associations A logical value specifying whether to include associations
 #' @param p_value_threshold A numeric value specifying the p-value threshold
 #' @return A list containing the variants
-#' @export
 variants_by_snp_id_api <- function(snp_ids, include_associations = FALSE, p_value_threshold = NULL) {
   snp_ids <- paste(snp_ids, collapse = "&snp_ids=")
   url <- paste0(getOption("gpmap_url"), "/v1/variants?snp_ids=", snp_ids)
@@ -209,7 +197,6 @@ variants_by_snp_id_api <- function(snp_ids, include_associations = FALSE, p_valu
 #' @param include_associations A logical value specifying whether to include associations
 #' @param p_value_threshold A numeric value specifying the p-value threshold
 #' @return A list containing the variants
-#' @export
 variants_by_variant_api <- function(variants, include_associations = FALSE, p_value_threshold = NULL) {
   variants <- paste(variants, collapse = "&variants=")
   url <- paste0(getOption("gpmap_url"), "/v1/variants?variants=", variants)
@@ -224,7 +211,6 @@ variants_by_variant_api <- function(variants, include_associations = FALSE, p_va
 #' @param include_associations A logical value specifying whether to include associations
 #' @param p_value_threshold A numeric value specifying the p-value threshold
 #' @return A list containing the variants
-#' @export
 variants_by_grange_api <- function(chr, start, stop, include_associations = FALSE, p_value_threshold = NULL) {
   url <- paste0(getOption("gpmap_url"), "/v1/variants?grange=", chr, ":", start, "-", stop)
   return(get_variants_with_options_api(url, include_associations, p_value_threshold))
@@ -246,7 +232,6 @@ get_variants_with_options_api <- function(url, include_associations = FALSE, p_v
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs
 #' @return A list containing the variant
-#' @export
 variant_api <- function(snp_id, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
   url <- paste0(
     getOption("gpmap_url"),
@@ -265,7 +250,6 @@ variant_api <- function(snp_id, include_coloc_pairs = FALSE, h4_threshold = 0.8)
 #' @description Get variant summary statistics from the API
 #' @param snp_id A character string specifying the SNP ID
 #' @return A list containing dataframes from the TSV files
-#' @export
 variant_summary_stats_api <- function(snp_id) {
   temp_zip <- file.path(tempdir(), paste0("summary_stats_", snp_id, ".zip"))
 
@@ -290,7 +274,6 @@ variant_summary_stats_api <- function(snp_id) {
 #' @description Get LD proxies from the API by Variant ID
 #' @param variants A character string specifying the Variant ID
 #' @return A list containing the LD proxies
-#' @export
 ld_proxies_by_variant_api <- function(variants) {
   variants <- paste(variants, collapse = "&variants=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/proxies?variants=", variants)
@@ -304,7 +287,6 @@ ld_proxies_by_variant_api <- function(variants) {
 #' @description Get LD proxies from the API by SNP ID
 #' @param snp_ids A character string specifying the SNP ID
 #' @return A list containing the LD proxies
-#' @export
 ld_proxies_by_snp_id_api <- function(snp_ids) {
   snp_ids <- paste(snp_ids, collapse = "&snp_ids=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/proxies?snp_ids=", snp_ids)
@@ -318,7 +300,6 @@ ld_proxies_by_snp_id_api <- function(snp_ids) {
 #' @description Get LD matrix from the API by Variant ID
 #' @param variants A character string specifying the Variant ID
 #' @return A list containing the LD matrix
-#' @export
 ld_matrix_by_variant_api <- function(variants) {
   variants <- paste(variants, collapse = "&variants=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/matrix?variants=", variants)
@@ -332,7 +313,6 @@ ld_matrix_by_variant_api <- function(variants) {
 #' @description Get LD matrix from the API by SNP ID
 #' @param snp_ids A character string specifying the SNP ID
 #' @return A list containing the LD matrix
-#' @export
 ld_matrix_by_snp_id_api <- function(snp_ids) {
   snp_ids <- paste(snp_ids, collapse = "&snp_ids=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/matrix?snp_ids=", snp_ids)
@@ -347,7 +327,6 @@ ld_matrix_by_snp_id_api <- function(snp_ids) {
 #' @param snp_ids A vector of numeric values specifying the SNP IDs
 #' @param study_ids A vector of numeric values specifying the Study IDs
 #' @return A list containing the associations
-#' @export
 associations_api <- function(snp_ids, study_ids) {
   snp_ids <- paste(snp_ids, collapse = "&snp_ids=")
   study_ids <- paste(study_ids, collapse = "&study_ids=")
@@ -358,7 +337,6 @@ associations_api <- function(snp_ids, study_ids) {
   associations <- jsonlite::fromJSON(associations)
   return(associations)
 }
-
 
 #' @title Get All Gene Pleiotropies API
 #' @description Get all gene pleiotropies from the API

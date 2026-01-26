@@ -7,6 +7,9 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
+Coming soon.
+
+<!--
 
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
@@ -38,3 +41,4 @@ bmi_colocs <- coloc_search(variants = bmi_instruments$variants)
 
 ...
 
+-->
