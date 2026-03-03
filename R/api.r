@@ -55,9 +55,10 @@ search_options_api <- function() {
 #' @title Search Variants API
 #' @description Search variants from the API
 #' @param query A character string specifying the query
+#' @param rsquared_threshold A numeric value specifying the rsquared threshold for the proxy variants
 #' @return A list containing the variants
-search_variants_api <- function(query) {
-  url <- paste0(getOption("gpmap_url"), "/v1/search/variant/", query)
+search_variants_api <- function(query, rsquared_threshold = 0.8) {
+  url <- paste0(getOption("gpmap_url"), "/v1/search/variant/", query, "?rsquared_threshold=", rsquared_threshold)
   search_variants <- httr::GET(url, httr::timeout(timeout_seconds))
   search_variants <- httr::content(search_variants, "text", encoding = "UTF-8")
   search_variants <- jsonlite::fromJSON(search_variants)
@@ -69,6 +70,31 @@ search_variants_api <- function(query) {
 #' @return A list containing all traits
 traits_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/traits")
+  traits <- httr::GET(url, httr::timeout(timeout_seconds))
+  traits <- httr::content(traits, "text", encoding = "UTF-8")
+  traits <- jsonlite::fromJSON(traits)
+  return(traits)
+}
+
+#' @title Get Specific Traits API
+#' @description Get specific traits from the API
+#' @param trait_ids A vector of trait ids
+#' @param include_associations A logical value specifying whether to include associations
+#' @param include_coloc_pairs A logical value specifying whether to include coloc pairs
+#' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs
+#' @return A list containing the traits
+specific_traits_api <- function(
+  trait_ids,
+  include_associations = FALSE,
+  include_coloc_pairs = FALSE,
+  h4_threshold = 0.8
+) {
+  trait_ids <- paste(trait_ids, collapse = "&ids=")
+  url <- paste0(
+    getOption("gpmap_url"),
+    "/v1/traits?ids=", trait_ids,
+    "&include_associations=", include_associations
+  )
   traits <- httr::GET(url, httr::timeout(timeout_seconds))
   traits <- httr::content(traits, "text", encoding = "UTF-8")
   traits <- jsonlite::fromJSON(traits)

@@ -70,8 +70,91 @@ trait <- function(trait_id,
   trait_info$trait$source_url <- create_source_url(trait_info$trait$trait)
 
   trait_info <- cleanup_api_object(trait_info)
-  if (include_associations) trait_info <- merge_associations(trait_info)
+  if (include_associations) {
+    new_groups <- merge_associations(trait_info$coloc_groups, trait_info$rare_results, trait_info$associations)
+    trait_info$coloc_groups <- new_groups$coloc_groups
+    trait_info$rare_results <- new_groups$rare_results
+  }
 
   return(trait_info)
 }
 
+
+#' @title Combine traits
+#' @description Combine traits into a single object, merging sub-lists and deduplicating results.
+#' @param trait_ids A vector of trait ids
+#' @param include_associations A logical value specifying whether to include associations
+#' (BETA, SE, P), defaults to TRUE
+#' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
+#' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8
+#' @return A list which contains the following elements:
+#' \itemize{
+#'   \item traits: A list of traits keyed by trait id
+#'   \item coloc_groups: a dataframe containing information about which studies have coloc results for all traits.
+#' See below for details.
+#'   \item study_extractions: a list of dataframes containing the study extractions for all traits.
+#' See below for details.
+#'   \item rare_results: (optional) a list of dataframes containing the rare results for all traits
+#'   \item coloc_pairs: (optional) a dataframe containing all pairwise coloc results for all traits.
+#' }
+#' @details
+#' The dataframes returned by this function are as follows:
+#' @inheritSection coloc_groups_doc coloc_groups_dataframe
+#' @inheritSection study_extractions_doc study_extractions_dataframe
+#' @inheritSection rare_results_doc rare_results_dataframe
+#' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
+#' @export
+combine_traits <- function(trait_ids, include_associations = FALSE, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
+  if (length(trait_ids) < 2) stop("trait_ids must contain at least 2 trait ids")
+  if (any(is.na(trait_ids))) stop("trait_ids must not contain NA values")
+  if (length(trait_ids) > 10) stop("trait_ids must contain at most 10 trait ids, lets not get carried away here")
+
+  trait_ids <- unique(trait_ids)
+
+  result <- specific_traits_api(
+    trait_ids,
+    include_associations = include_associations,
+    h4_threshold = h4_threshold
+  )
+
+  combined <- list(
+    coloc_groups = NULL,
+    coloc_pairs = NULL,
+    study_extractions = NULL,
+    rare_results = NULL
+  )
+
+  combined$coloc_groups <- result$traits |>
+    dplyr::select(coloc_groups) |>
+    tidyr::unnest(coloc_groups) |>
+    dplyr::distinct()
+
+  combined$study_extractions <- result$traits |>
+    dplyr::select(study_extractions) |>
+    tidyr::unnest(study_extractions) |>
+    dplyr::distinct()
+
+  combined$rare_results <- result$traits |>
+    dplyr::select(rare_results) |>
+    tidyr::unnest(rare_results) |>
+    dplyr::distinct()
+
+  if (include_associations) {
+    associations <- result$traits |>
+      dplyr::select(associations) |>
+      tidyr::unnest(associations) |>
+      dplyr::distinct()
+    new_groups <- merge_associations(combined$coloc_groups, combined$rare_results, associations)
+    combined$coloc_groups <- new_groups$coloc_groups
+    combined$rare_results <- new_groups$rare_results
+  }
+
+  if (include_coloc_pairs) {
+    combined$coloc_pairs <- lapply(trait_ids, trait_coloc_pairs_api, h4_threshold = h4_threshold) |>
+      dplyr::bind_rows() |>
+      dplyr::distinct()
+  }
+  combined$traits <- result$traits
+
+  return(combined)
+}

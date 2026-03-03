@@ -64,7 +64,64 @@ gene <- function(gene_id,
   gene_info$tissues <- NULL
 
   gene_info <- cleanup_api_object(gene_info)
-  if (include_associations) gene_info <- merge_associations(gene_info)
+  if (include_associations) {
+    new_groups <- merge_associations(gene_info$coloc_groups, gene_info$rare_results, gene_info$associations)
+    gene_info$coloc_groups <- new_groups$coloc_groups
+    gene_info$rare_results <- new_groups$rare_results
+  }
 
   return(gene_info)
+}
+
+#' @title Combine genes
+#' @description Combine genes into a single object, merging sub-lists and deduplicating results.
+#' @param gene_ids A vector of gene ids
+#' @param include_associations A logical value specifying whether to include associations
+#' (BETA, SE, P), defaults to FALSE
+#' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
+#' @param include_trans A logical value specifying whether to include trans genetic effects, defaults to TRUE
+#' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8
+#' @return A list which contains the following elements:
+#' \itemize{
+#'   \item genes: A list of genes keyed by gene id
+#' }
+#' @export
+combine_genes <- function(gene_ids,
+                          include_associations = FALSE,
+                          include_coloc_pairs = FALSE,
+                          include_trans = TRUE,
+                          h4_threshold = 0.8) {
+  if (length(gene_ids) < 2) stop("gene_ids must contain at least 2 gene ids")
+  if (any(is.na(gene_ids))) stop("gene_ids must not contain NA values")
+  if (length(gene_ids) > 10) stop("gene_ids must contain at most 10 gene ids, lets not get carried away here")
+
+  gene_ids <- unique(gene_ids)
+
+  gene_list <- lapply(
+    gene_ids,
+    gene,
+    include_associations = include_associations,
+    include_coloc_pairs = include_coloc_pairs,
+    include_trans = include_trans,
+    h4_threshold = h4_threshold
+  )
+  names(gene_list) <- gene_ids
+
+  combined <- list()
+  for (i in seq_along(gene_list)) {
+    current <- gene_list[[i]]
+    combined$coloc_groups <- dplyr::bind_rows(combined$coloc_groups, current$coloc_groups)
+    combined$coloc_groups <- dplyr::distinct(combined$coloc_groups)
+
+    if (!is.null(current$study_extractions)) {
+      combined$study_extractions <- c(combined$study_extractions, current$study_extractions)
+      combined$study_extractions <- combined$study_extractions[!duplicated(names(combined$study_extractions))]
+    }
+
+    if (!is.null(current$rare_results)) {
+      combined$rare_results <- c(combined$rare_results, current$rare_results)
+      combined$rare_results <- combined$rare_results[!duplicated(names(combined$rare_results))]
+    }
+  }
+  return(combined)
 }

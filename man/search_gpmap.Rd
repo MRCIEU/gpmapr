@@ -4,10 +4,12 @@
 \alias{search_gpmap}
 \title{Search the Genotype-Phenotype Map}
 \usage{
-search_gpmap(search_text)
+search_gpmap(search_text, rsquared_threshold = 0.8)
 }
 \arguments{
 \item{search_text}{A character string specifying the search text}
+
+\item{rsquared_threshold}{A numeric value specifying the rsquared threshold for proxy variants, defaults to 0.8}
 }
 \value{
 A dataframe containing the search results with the following columns:

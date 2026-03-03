@@ -4,10 +4,14 @@
 \alias{merge_associations}
 \title{Merge associations into coloc info}
 \usage{
-merge_associations(coloc_info)
+merge_associations(coloc_groups, rare_results, associations)
 }
 \arguments{
-\item{coloc_info}{A list of coloc info, as returned by the api}
+\item{coloc_groups}{A dataframe of coloc groups}
+
+\item{rare_results}{A dataframe of rare results}
+
+\item{associations}{A dataframe of associations}
 }
 \value{
 An updated list of coloc info with associations merged in

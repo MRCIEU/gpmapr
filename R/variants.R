@@ -39,7 +39,9 @@ variant <- function(snp_id,
   }
 
   variant_info <- cleanup_api_object(variant_info)
-  variant_info <- merge_associations(variant_info)
+  new_groups <- merge_associations(variant_info$coloc_groups, variant_info$rare_results, variant_info$associations)
+  variant_info$coloc_groups <- new_groups$coloc_groups
+  variant_info$rare_results <- new_groups$rare_results
 
   return(variant_info)
 }

@@ -1,0 +1,46 @@
+cff-version: 1.0.0
+message: "If you use this software, please cite the paper."
+title: "Building The Human Genotype-Phenotype Map to Harness Pleiotropy and Refine Disease Mechanisms"
+type: software
+authors:
+  - family-names: Elmore
+    given-names: Andrew R.
+    email: andrew.elmore@bristol.ac.uk
+    orcid: "https://orcid.org/0000-0003-0292-447X"
+    affiliation: "MRC Integrative Epidemiology Unit, University of Bristol"
+  - family-names: Hemani
+    given-names: Gibran
+    email: g.hemani@bristol.ac.uk
+    orcid: "https://orcid.org/0000-0003-0920-1055"
+    affiliation: "MRC Integrative Epidemiology Unit, University of Bristol"
+repository-code: "https://github.com/MRCIEU/gpmapr"
+url: "https://gpmap.opengwas.io/"
+license: MIT
+version: 0.0.0.9000
+preferred-citation:
+  type: article
+  title: "Building The Human Genotype-Phenotype Map to Harness Pleiotropy and Refine Disease Mechanisms"
+  authors:
+    - family-names: Elmore
+      given-names: Andrew R.
+      orcid: "https://orcid.org/0000-0003-0292-447X"
+    - family-names: Hanson
+      given-names: Aimee L.
+    - family-names: Leyden
+      given-names: Genevieve M.
+    - family-names: Paternoster
+    - family-names: Johnson
+      given-names: James
+      given-names: Lavinia
+    - family-names: Davey Smith
+      given-names: George
+    - family-names: Gaunt
+      given-names: Tom R.
+    - family-names: Hemani
+      given-names: Gibran
+      orcid: "https://orcid.org/0000-0003-0920-1055"
+  doi: "10.64898/2026.02.19.26346618"
+  url: "https://www.medrxiv.org/content/10.64898/2026.02.19.26346618"
+  year: 2026
+  journal: "medRxiv"
+  date-published: "2026-02-20"

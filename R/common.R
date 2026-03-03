@@ -5,29 +5,30 @@ api_to_package_version <- list(
 
 #' Merge associations into coloc info
 #'
-#' @param coloc_info A list of coloc info, as returned by the api
+#' @param coloc_groups A dataframe of coloc groups
+#' @param rare_results A dataframe of rare results
+#' @param associations A dataframe of associations
 #' @return An updated list of coloc info with associations merged in
-merge_associations <- function(coloc_info) {
-  if (is.null(coloc_info$associations)) return(coloc_info)
+merge_associations <- function(coloc_groups, rare_results, associations) {
+  if (is.null(associations)) return(coloc_groups = coloc_groups, rare_results = rare_results)
 
-  if (!is.null(coloc_info$coloc_groups) && nrow(coloc_info$coloc_groups) > 0) {
-    coloc_info$coloc_groups <- dplyr::left_join(
-      coloc_info$coloc_groups,
-      coloc_info$associations,
+  if (!is.null(coloc_groups) && nrow(coloc_groups) > 0) {
+    coloc_groups <- dplyr::left_join(
+      coloc_groups,
+      associations,
       by = c("study_id", "snp_id")
     )
   }
 
-  if (!is.null(coloc_info$rare_results) && nrow(coloc_info$rare_results) > 0) {
-    coloc_info$rare_results <- dplyr::left_join(
-      coloc_info$rare_results,
-      coloc_info$associations,
+  if (!is.null(rare_results) && nrow(rare_results) > 0) {
+    rare_results <- dplyr::left_join(
+      rare_results,
+      associations,
       by = c("study_id", "snp_id")
     )
   }
 
-  coloc_info$associations <- NULL
-  return(coloc_info)
+  return(list(coloc_groups = coloc_groups, rare_results = rare_results))
 }
 
 #' Create a source url for a study
