@@ -4,10 +4,21 @@
 \alias{variants_by_rsid_api}
 \title{Get Variants by RSID}
 \usage{
-variants_by_rsid_api(rsids)
+variants_by_rsid_api(
+  rsids,
+  include_associations = FALSE,
+  p_value_threshold = NULL,
+  expand = FALSE
+)
 }
 \arguments{
 \item{rsids}{A character string specifying the RSID}
+
+\item{include_associations}{A logical value specifying whether to include associations}
+
+\item{p_value_threshold}{A numeric value specifying the p-value threshold}
+
+\item{expand}{A logical value specifying whether to expand the data to all fields}
 }
 \value{
 A list containing the variants

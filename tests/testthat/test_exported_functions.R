@@ -62,24 +62,24 @@ test_that("get_all_snp_pleiotropies() returns expected output", {
   expect_true(nrow(result) > 0)
 })
 
-test_that("genes() returns expected output", {
-  result <- genes()
+test_that("all_genes() returns expected output", {
+  result <- all_genes()
   expect_type(result, "list")
   expect_true(nrow(result) > 0)
 })
 
-test_that("traits() returns expected output", {
-  result <- traits()
+test_that("all_traits() returns expected output", {
+  result <- all_traits()
   expect_type(result, "list")
   expect_true(nrow(result) > 0)
 })
 
-test_that("combine_traits(specific_trait_ids) returns expected output", {
+test_that("traits(trait_ids) returns expected output", {
   trait_ids <- c(4405, 4872)
-  result <- combine_traits(trait_ids = trait_ids, include_associations = TRUE)
+  result <- traits(trait_ids = trait_ids, include_associations = TRUE)
   expect_type(result, "list")
   expect_true(all(result$traits$id %in% trait_ids))
   expect_true(nrow(result$coloc_groups) > 0)
-  expect_true(length(result$study_extractions) > 0)
-  expect_true(length(result$rare_results) > 0)
+  expect_true(!is.null(result$study_extractions))
+  expect_true(!is.null(result$rare_results))
 })

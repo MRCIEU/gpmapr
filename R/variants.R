@@ -45,3 +45,44 @@ variant <- function(snp_id,
 
   return(variant_info)
 }
+
+#' @title Variants
+#' @description Get specific variants from the API. The API returns collapsed/combined data for all requested variants.
+#' @param snp_ids A vector of SNP ids
+#' @param include_associations A logical value specifying whether to include associations (BETA, SE, P)
+#' @param p_value_threshold A numeric value specifying the p-value threshold for associations
+#' @param expand Logical or character vector. FALSE (default) returns minimal data. TRUE for expanded data.
+#' @return A list which contains the following elements:
+#' \itemize{
+#'   \item variants: a dataframe containing the variants for all requested SNPs
+#'   \item coloc_groups: (if expanded) a dataframe containing the coloc groups for all variants
+#'   \item study_extractions: (if expanded) a dataframe containing the study extractions for all variants
+#'   \item rare_results: (if expanded) a dataframe containing the rare results for all variants
+#' }
+#' @details
+#' The dataframes returned by this function are as follows:
+#' @inheritSection coloc_groups_doc coloc_groups_dataframe
+#' @inheritSection study_extractions_doc study_extractions_dataframe
+#' @inheritSection rare_results_doc rare_results_dataframe
+#' @inheritSection summary_statistics_doc summary_statistics_dataframe
+#' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
+#' @export
+variants <- function(snp_ids,
+  include_associations = FALSE,
+  p_value_threshold = NULL,
+  expand = FALSE
+) {
+  if (is.null(snp_ids) || length(snp_ids) == 0) stop("snp_ids is required")
+  if (any(is.na(snp_ids))) stop("snp_ids must not contain NA values")
+  if (length(snp_ids) > 50) stop("snp_ids must contain at most 50 SNP ids")
+
+  snp_ids <- unique(snp_ids)
+
+  result <- variants_by_snp_id_api(
+    snp_ids,
+    include_associations = include_associations,
+    p_value_threshold = p_value_threshold,
+    expand = expand
+  )
+  return(result)
+}

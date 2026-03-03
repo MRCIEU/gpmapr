@@ -12,7 +12,7 @@ api_to_package_version <- list(
 merge_associations <- function(coloc_groups, rare_results, associations) {
   if (is.null(associations)) return(coloc_groups = coloc_groups, rare_results = rare_results)
 
-  if (!is.null(coloc_groups) && nrow(coloc_groups) > 0) {
+  if (is.data.frame(coloc_groups) && nrow(coloc_groups) > 0) {
     coloc_groups <- dplyr::left_join(
       coloc_groups,
       associations,
@@ -20,7 +20,7 @@ merge_associations <- function(coloc_groups, rare_results, associations) {
     )
   }
 
-  if (!is.null(rare_results) && nrow(rare_results) > 0) {
+  if (is.data.frame(rare_results) && nrow(rare_results) > 0) {
     rare_results <- dplyr::left_join(
       rare_results,
       associations,

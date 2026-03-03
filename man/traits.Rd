@@ -4,28 +4,134 @@
 \alias{traits}
 \title{Traits}
 \usage{
-traits()
+traits(
+  trait_ids,
+  include_associations = FALSE,
+  include_coloc_pairs = FALSE,
+  h4_threshold = 0.8
+)
+}
+\arguments{
+\item{trait_ids}{A vector of trait ids (1 or more)}
+
+\item{include_associations}{A logical value specifying whether to include associations
+(BETA, SE, P), defaults to FALSE}
+
+\item{include_coloc_pairs}{A logical value specifying whether to include coloc pairs, defaults to FALSE.
+Coloc pairs are fetched from a separate endpoint per trait.}
+
+\item{h4_threshold}{A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8}
 }
 \value{
-A dataframe containing all traits with the following columns:
+A list which contains the following elements:
 \itemize{
-\item id: the id of the trait
-\item data_type: the data type of the trait
-\item trait: the internal string id of the trait
-\item trait_name: the name of the trait
-\item trait_category: the trait category of the trait
-\item variant_type: the type of variant
-\item sample_size: the sample size of the trait
-\item category: the category of the trait (continuous, categorical)
-\item ancestry: the ancestry of the trait
-\item heritability: the LDSC heritability score of the trait
-\item heritability_se: the standard error of the LDSC heritability score of the trait
-\item num_study_extractions: the number of study extractions for this trait
-\item num_coloc_groups: the number of coloc groups for this trait
-\item num_coloc_studies: the number of studies that have coloc results for this trait
-\item num_rare_results: the number of rare results for this trait
+\item traits: trait metadata for the requested traits
+\item coloc_groups: a dataframe containing information about which studies have coloc results for all traits.
+See below for details.
+\item study_extractions: a dataframe containing the study extractions for all traits.
+See below for details.
+\item rare_results: a dataframe containing the rare results for all traits
+\item coloc_pairs: (optional) a dataframe containing all pairwise coloc results for all traits.
 }
 }
 \description{
-Get all traits from the API
+Get specific traits from the API. The API returns collapsed/combined data for all requested traits.
 }
+\details{
+The dataframes returned by this function are as follows:
+}
+\section{coloc_groups_dataframe}{
+
+The coloc_groups dataframe contains information about which studies have coloc results.
+It has the following columns:
+\itemize{
+\item coloc_group_id: the unique id for this group of colocalised results
+\item study_id: the id of the study
+\item study_extraction_id: the id of the study extraction
+\item snp_id: the id of the SNP
+\item ld_block_id: the id of the LD block
+\item chr: the chromosome of the SNP
+\item bp: the base pair position of the SNP
+\item min_p: the minimum p-value related to the study_extraction_id
+\item cis_trans: the cis/trans status of the SNP
+\item ld_block: the LD block of the SNP
+\item display_snp: the display SNP name
+\item gene: the gene associated with the SNP
+\item gene_id: the id of the gene
+\item trait_id: the id of the trait
+\item trait_name: the name of the trait
+\item trait_category: the category of the trait
+\item data_type: the data type of the trait
+\item tissue: the tissue of the trait
+}
+}
+
+\section{study_extractions_dataframe}{
+
+The study_extractions dataframe contains information about which studies have coloc results.
+It has the following columns:
+\itemize{
+\item id: the unique id for this study extraction
+\item study_id: the id of the study associated with this study extraction
+\item snp_id: the id of the SNP
+\item snp: the SNP name
+\item ld_block_id: the id of the LD block
+\item unique_study_id: the unique id for this study
+\item study: the study name
+\item file: the file name
+\item svg_file: the SVG file name
+\item file_with_lbfs: the file name with lbfs
+\item chr: the chromosome of the SNP
+\item bp: the base pair position of the SNP
+\item min_p: the minimum p-value related to the study_extraction_id
+\item cis_trans: the cis/trans status of the SNP
+\item ld_block: the LD block of the SNP
+\item gene: the gene associated with the SNP
+\item gene_id: the id of the gene
+\item trait_id: the id of the trait
+\item trait_name: the name of the trait
+\item trait_category: the category of the trait
+\item data_type: the data type of the trait
+\item tissue: the tissue of the trait
+}
+}
+
+\section{rare_results_dataframe}{
+
+The rare_results dataframe contains information about which studies have coloc results.
+It has the following columns:
+\itemize{
+\item rare_result_group_id: the unique id for this rare result group
+\item study_id: the id of the study associated with this rare result
+\item study_extraction_id: the id of the study extraction associated with this rare result
+\item snp_id: the id of the SNP
+\item ld_block_id: the id of the LD block
+\item chr: the chromosome of the SNP
+\item bp: the base pair position of the SNP
+\item min_p: the minimum p-value related to the study_extraction_id
+\item display_snp: the display SNP name
+\item gene: the gene associated with the SNP
+\item gene_id: the id of the gene
+\item trait_id: the id of the trait
+\item trait_name: the name of the trait
+\item trait_category: the category of the trait
+\item data_type: the data type of the trait
+\item tissue: the tissue of the trait
+\item ld_block: the LD block of the SNP
+}
+}
+
+\section{coloc_pairs_dataframe}{
+
+The coloc_pairs dataframe contains information about which studies have coloc pairs.
+It has the following columns:
+\itemize{
+\item study_extraction_a_id: the id of the study extraction associated with this coloc pair
+\item study_extraction_b_id: the id of the study extraction associated with this coloc pair
+\item ld_block_id: the id of the LD block
+\item h3: the h3 value for this coloc pair
+\item h4: the h4 value for this coloc pair
+\item spurious: whether this coloc pair is spurious
+}
+}
+

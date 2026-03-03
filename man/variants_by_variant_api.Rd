@@ -7,7 +7,8 @@
 variants_by_variant_api(
   variants,
   include_associations = FALSE,
-  p_value_threshold = NULL
+  p_value_threshold = NULL,
+  expand = FALSE
 )
 }
 \arguments{
@@ -16,6 +17,8 @@ variants_by_variant_api(
 \item{include_associations}{A logical value specifying whether to include associations}
 
 \item{p_value_threshold}{A numeric value specifying the p-value threshold}
+
+\item{expand}{A logical value specifying whether to expand the data to all fields}
 }
 \value{
 A list containing the variants
