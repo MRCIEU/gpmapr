@@ -3,6 +3,7 @@
 #' @title Search the Genotype-Phenotype Map
 #' @description Search the GP Map for Traits, Genes or Variants
 #' @param search_text A character string specifying the search text
+#' @param rsquared_threshold A numeric value specifying the rsquared threshold for proxy variants, defaults to 0.8
 #' @details After calling search, you can use call the subsequent data as described in the `call` column of the
 #' search results.
 #' @return A dataframe containing the search results with the following columns:
@@ -21,7 +22,7 @@
 #'     }
 #' }
 #' @export
-search_gpmap <- function(search_text) {
+search_gpmap <- function(search_text, rsquared_threshold = 0.8) {
   if (is.null(search_text) || is.na(search_text) || search_text == "") {
     stop("search_text is required")
   }
@@ -42,7 +43,7 @@ search_gpmap <- function(search_text) {
 
   # if the search text is a variant, get the variant results
   if (grepl("^rs", search_text) || grepl("^\\d+:\\d+", search_text)) {
-    variant_results <- search_variants_api(search_text)
+    variant_results <- search_variants_api(search_text, rsquared_threshold)
 
     if (length(variant_results$original_variants) > 0) {
       original_variant <- variant_results$original_variants |>

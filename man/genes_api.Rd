@@ -7,7 +7,7 @@
 genes_api()
 }
 \value{
-A list containing the gene information
+A list containing the genes
 }
 \description{
 Get gene information from the API

@@ -9,7 +9,6 @@ test_that("health() returns expected output", {
 test_that("search_gpmap() returns expected output", {
   result <- search_gpmap("haemoglobin")
   expect_type(result, "list")
-  print(result)
   expect_true(nrow(result) > 0)
   expected_names <- c(
     "call", "name", "type", "type_id", "num_coloc_groups",
@@ -63,14 +62,44 @@ test_that("get_all_snp_pleiotropies() returns expected output", {
   expect_true(nrow(result) > 0)
 })
 
-test_that("genes() returns expected output", {
-  result <- genes()
+test_that("all_genes() returns expected output", {
+  result <- all_genes()
   expect_type(result, "list")
   expect_true(nrow(result) > 0)
 })
 
-test_that("traits() returns expected output", {
-  result <- traits()
+test_that("all_traits() returns expected output", {
+  result <- all_traits()
   expect_type(result, "list")
   expect_true(nrow(result) > 0)
+})
+
+test_that("traits(trait_ids) returns expected output", {
+  trait_ids <- c(4405, 4872)
+  result <- traits(trait_ids = trait_ids, include_associations = TRUE)
+  expect_type(result, "list")
+  expect_true(all(result$traits$id %in% trait_ids))
+  expect_true(nrow(result$coloc_groups) > 0)
+  expect_true(!is.null(result$study_extractions))
+  expect_true(nrow(result$study_extractions) > 0)
+})
+
+test_that("genes(gene_ids) returns expected output", {
+  gene_ids <- c("WNT7B", "WNT7A")
+  result <- genes(gene_ids = gene_ids, include_associations = TRUE)
+  expect_type(result, "list")
+  expect_true(all(result$genes$gene %in% gene_ids))
+  expect_true(nrow(result$coloc_groups) > 0)
+  expect_true(!is.null(result$study_extractions))
+  expect_true(nrow(result$study_extractions) > 0)
+})
+
+test_that("variants() returns expected output", {
+  variant_ids <- c(5553693, 5553694)
+  result <- variants(variants = variant_ids, include_associations = TRUE, expand = TRUE)
+  expect_type(result, "list")
+  expect_true(all(result$variants$snp_id %in% variant_ids))
+  expect_true(nrow(result$coloc_groups) > 0)
+  expect_true(!is.null(result$study_extractions))
+  expect_true(nrow(result$study_extractions) > 0)
 })

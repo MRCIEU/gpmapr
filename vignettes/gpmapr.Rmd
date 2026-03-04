@@ -1,5 +1,3 @@
-LC
-
 ---
 title: "Using gpmapr"
 output: rmarkdown::html_vignette

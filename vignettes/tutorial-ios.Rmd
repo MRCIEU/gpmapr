@@ -7,6 +7,9 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
+Coming soon.
+
+<!--
 
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
@@ -64,4 +67,4 @@ The weights in MR are usually based on the variance of the SNP-outcome associati
 crp_phewas <- crp_phewas %>%
   ios_weights()
 ```
-
+-->

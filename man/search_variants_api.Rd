@@ -4,10 +4,12 @@
 \alias{search_variants_api}
 \title{Search Variants API}
 \usage{
-search_variants_api(query)
+search_variants_api(query, rsquared_threshold = 0.8)
 }
 \arguments{
 \item{query}{A character string specifying the query}
+
+\item{rsquared_threshold}{A numeric value specifying the rsquared threshold for the proxy variants}
 }
 \value{
 A list containing the variants

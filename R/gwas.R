@@ -58,7 +58,7 @@ upload_gwas <- function(file,
   if (is.na(category) || !category %in% c("continuous", "categorical")) stop("category is required")
   if (is.na(ancestry) || !ancestry %in% c("EUR")) stop("ancestry is required")
   if (is.na(reference_build) || !reference_build %in% c("GRCh37", "GRCh38")) stop("reference_build is required")
-  if (is.na(p_value_threshold) || !is.numeric(p_value_threshold) || p_value_threshold >= 1e-5) {
+  if (is.na(p_value_threshold) || !is.numeric(p_value_threshold) || p_value_threshold > 1e-5) {
     stop("p_value_threshold must be a number between 0 and 1e-5")
   }
   if (is.na(sample_size) || !is.numeric(sample_size) || sample_size <= 0) {

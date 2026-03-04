@@ -36,7 +36,11 @@ region <- function(region_id,
   region_info <- region_api(region_id, include_associations, include_coloc_pairs, h4_threshold)
 
   region_info <- cleanup_api_object(region_info)
-  region_info <- merge_associations(region_info)
+  if (include_associations) {
+    new_groups <- merge_associations(region_info$coloc_groups, region_info$rare_results, region_info$associations)
+    region_info$coloc_groups <- new_groups$coloc_groups
+    region_info$rare_results <- new_groups$rare_results
+  }
   region_info$tissues <- NULL
 
   return(region_info)

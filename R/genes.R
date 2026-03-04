@@ -1,4 +1,4 @@
-#' @title Genes
+#' @title All genes
 #' @description Get all genes from the API
 #' @return A dataframe containing all genes with the following columns:
 #'   \itemize{
@@ -19,7 +19,7 @@
 #'     \item num_rare_groups: the number of rare groups for this gene
 #'   }
 #' @export
-genes <- function() {
+all_genes <- function() {
   genes <- genes_api()
   return(genes$genes)
 }
@@ -53,10 +53,11 @@ genes <- function() {
 #' @inheritSection variants_doc variants_dataframe
 #' @export
 gene <- function(gene_id,
-                 include_associations = FALSE,
-                 include_coloc_pairs = FALSE,
-                 include_trans = TRUE,
-                 h4_threshold = 0.8) {
+  include_associations = FALSE,
+  include_coloc_pairs = FALSE,
+  include_trans = TRUE,
+  h4_threshold = 0.8
+) {
   if (is.null(gene_id)) {
     stop("gene_id is required")
   }
@@ -64,7 +65,62 @@ gene <- function(gene_id,
   gene_info$tissues <- NULL
 
   gene_info <- cleanup_api_object(gene_info)
-  if (include_associations) gene_info <- merge_associations(gene_info)
+  if (include_associations) {
+    new_groups <- merge_associations(gene_info$coloc_groups, gene_info$rare_results, gene_info$associations)
+    gene_info$coloc_groups <- new_groups$coloc_groups
+    gene_info$rare_results <- new_groups$rare_results
+  }
 
   return(gene_info)
+}
+
+#' @title Genes
+#' @description Get specific genes from the API. The API returns collapsed/combined data for all requested genes.
+#' @param gene_ids A vector of gene ids (1 or more)
+#' @param include_associations A logical value specifying whether to include associations
+#' (BETA, SE, P), defaults to FALSE
+#' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
+#' @param include_trans A logical value specifying whether to include trans genetic effects, defaults to TRUE
+#' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8
+#' @return A list which contains the following elements:
+#' \itemize{
+#'   \item genes: gene metadata for the requested genes
+#'   \item coloc_groups: a dataframe containing information about which studies have coloc results for all genes
+#'   \item study_extractions: a dataframe containing the study extractions for all genes
+#'   \item rare_results: a dataframe containing the rare results for all genes
+#' }
+#' @details
+#' The dataframes returned by this function are as follows:
+#' @inheritSection coloc_groups_doc coloc_groups_dataframe
+#' @inheritSection study_extractions_doc study_extractions_dataframe
+#' @inheritSection rare_results_doc rare_results_dataframe
+#' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
+#' @export
+genes <- function(gene_ids,
+  include_associations = FALSE,
+  include_coloc_pairs = FALSE,
+  include_trans = TRUE,
+  h4_threshold = 0.8
+) {
+  if (is.null(gene_ids) || length(gene_ids) == 0) stop("gene_ids is required")
+  if (any(is.na(gene_ids))) stop("gene_ids must not contain NA values")
+  if (length(gene_ids) > 10) stop("gene_ids must contain at most 10 gene ids")
+
+  gene_ids <- unique(gene_ids)
+
+  result <- specific_genes_api(
+    gene_ids,
+    include_associations = include_associations,
+    include_coloc_pairs = include_coloc_pairs,
+    include_trans = include_trans,
+    h4_threshold = h4_threshold
+  )
+
+  if (include_associations && !is.null(result$associations)) {
+    new_groups <- merge_associations(result$coloc_groups, result$rare_results, result$associations)
+    result$coloc_groups <- new_groups$coloc_groups
+    result$rare_results <- new_groups$rare_results
+  }
+
+  return(result)
 }
