@@ -81,5 +81,25 @@ test_that("traits(trait_ids) returns expected output", {
   expect_true(all(result$traits$id %in% trait_ids))
   expect_true(nrow(result$coloc_groups) > 0)
   expect_true(!is.null(result$study_extractions))
-  expect_true(!is.null(result$rare_results))
+  expect_true(nrow(result$study_extractions) > 0)
+})
+
+test_that("genes(gene_ids) returns expected output", {
+  gene_ids <- c("WNT7B", "WNT7A")
+  result <- genes(gene_ids = gene_ids, include_associations = TRUE)
+  expect_type(result, "list")
+  expect_true(all(result$genes$gene %in% gene_ids))
+  expect_true(nrow(result$coloc_groups) > 0)
+  expect_true(!is.null(result$study_extractions))
+  expect_true(nrow(result$study_extractions) > 0)
+})
+
+test_that("variants() returns expected output", {
+  variant_ids <- c(5553693, 5553694)
+  result <- variants(variants = variant_ids, include_associations = TRUE, expand = TRUE)
+  expect_type(result, "list")
+  expect_true(all(result$variants$snp_id %in% variant_ids))
+  expect_true(nrow(result$coloc_groups) > 0)
+  expect_true(!is.null(result$study_extractions))
+  expect_true(nrow(result$study_extractions) > 0)
 })

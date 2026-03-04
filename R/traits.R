@@ -106,9 +106,10 @@ trait <- function(trait_id,
 #' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
 #' @export
 traits <- function(trait_ids,
-                  include_associations = FALSE,
-                  include_coloc_pairs = FALSE,
-                  h4_threshold = 0.8) {
+  include_associations = FALSE,
+  include_coloc_pairs = FALSE,
+  h4_threshold = 0.8
+) {
   if (is.null(trait_ids) || length(trait_ids) == 0) stop("trait_ids is required")
   if (any(is.na(trait_ids))) stop("trait_ids must not contain NA values")
   if (length(trait_ids) > 10) stop("trait_ids must contain at most 10 trait ids")

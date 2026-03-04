@@ -5,32 +5,37 @@
 \title{Variants}
 \usage{
 variants(
-  snp_ids,
+  variants,
+  expand = FALSE,
   include_associations = FALSE,
-  p_value_threshold = NULL,
-  expand = FALSE
+  include_coloc_pairs = FALSE,
+  h4_threshold = 0.8
 )
 }
 \arguments{
-\item{snp_ids}{A vector of SNP ids}
+\item{variants}{A vector of variant identifiers (snp_ids, rsids, or strings)}
 
-\item{include_associations}{A logical value specifying whether to include associations (BETA, SE, P)}
+\item{expand}{Logical. FALSE (default) returns minimal data. TRUE returns full VariantResponse (max 10)}
 
-\item{p_value_threshold}{A numeric value specifying the p-value threshold for associations}
+\item{include_associations}{Logical. Whether to include associations (BETA, SE, P). Only when expand=TRUE}
 
-\item{expand}{Logical or character vector. FALSE (default) returns minimal data. TRUE for expanded data.}
+\item{include_coloc_pairs}{Logical. Whether to include coloc pairs. Only when expand=TRUE}
+
+\item{h4_threshold}{Numeric. H4 threshold for coloc pairs, defaults to 0.8}
 }
 \value{
 A list which contains the following elements:
 \itemize{
-\item variants: a dataframe containing the variants for all requested SNPs
+\item variants: a dataframe containing the variants for all requested variants
 \item coloc_groups: (if expanded) a dataframe containing the coloc groups for all variants
 \item study_extractions: (if expanded) a dataframe containing the study extractions for all variants
 \item rare_results: (if expanded) a dataframe containing the rare results for all variants
 }
 }
 \description{
-Get specific variants from the API. The API returns collapsed/combined data for all requested variants.
+Get specific variants from the API. The API accepts variant identifiers (snp_ids, rsids, or strings)
+and returns collapsed/combined data. The API distinguishes between identifier types automatically.
+Max 10 variants when expand=TRUE.
 }
 \details{
 The dataframes returned by this function are as follows:

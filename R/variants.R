@@ -47,14 +47,17 @@ variant <- function(snp_id,
 }
 
 #' @title Variants
-#' @description Get specific variants from the API. The API returns collapsed/combined data for all requested variants.
-#' @param snp_ids A vector of SNP ids
-#' @param include_associations A logical value specifying whether to include associations (BETA, SE, P)
-#' @param p_value_threshold A numeric value specifying the p-value threshold for associations
-#' @param expand Logical or character vector. FALSE (default) returns minimal data. TRUE for expanded data.
+#' @description Get specific variants from the API. The API accepts variant identifiers (snp_ids, rsids, or strings)
+#' and returns collapsed/combined data. The API distinguishes between identifier types automatically.
+#' Max 10 variants when expand=TRUE.
+#' @param variants A vector of variant identifiers (snp_ids, rsids, or strings)
+#' @param expand Logical. FALSE (default) returns minimal data. TRUE returns full VariantResponse (max 10)
+#' @param include_associations Logical. Whether to include associations (BETA, SE, P). Only when expand=TRUE
+#' @param include_coloc_pairs Logical. Whether to include coloc pairs. Only when expand=TRUE
+#' @param h4_threshold Numeric. H4 threshold for coloc pairs, defaults to 0.8
 #' @return A list which contains the following elements:
 #' \itemize{
-#'   \item variants: a dataframe containing the variants for all requested SNPs
+#'   \item variants: a dataframe containing the variants for all requested variants
 #'   \item coloc_groups: (if expanded) a dataframe containing the coloc groups for all variants
 #'   \item study_extractions: (if expanded) a dataframe containing the study extractions for all variants
 #'   \item rare_results: (if expanded) a dataframe containing the rare results for all variants
@@ -67,22 +70,33 @@ variant <- function(snp_id,
 #' @inheritSection summary_statistics_doc summary_statistics_dataframe
 #' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
 #' @export
-variants <- function(snp_ids,
+variants <- function(
+  variants,
+  expand = FALSE,
   include_associations = FALSE,
-  p_value_threshold = NULL,
-  expand = FALSE
+  include_coloc_pairs = FALSE,
+  h4_threshold = 0.8
 ) {
-  if (is.null(snp_ids) || length(snp_ids) == 0) stop("snp_ids is required")
-  if (any(is.na(snp_ids))) stop("snp_ids must not contain NA values")
-  if (length(snp_ids) > 50) stop("snp_ids must contain at most 50 SNP ids")
+  if (is.null(variants) || length(variants) == 0) stop("variants is required")
+  if (any(is.na(variants))) stop("variants must not contain NA values")
+  if (expand && length(variants) > 10) stop("variants must contain at most 10 when expand=TRUE")
+  if (!expand && length(variants) > 50) stop("variants must contain at most 50 when expand=FALSE")
 
-  snp_ids <- unique(snp_ids)
+  variants <- unique(variants)
 
-  result <- variants_by_snp_id_api(
-    snp_ids,
+  result <- variants_api(
+    variants,
+    expand = expand,
     include_associations = include_associations,
-    p_value_threshold = p_value_threshold,
-    expand = expand
+    include_coloc_pairs = include_coloc_pairs,
+    h4_threshold = h4_threshold
   )
-  return(result)
+
+  if (expand && include_associations && is.data.frame(result$associations) && nrow(result$associations) > 0) {
+    new_groups <- merge_associations(result$coloc_groups, result$rare_results, result$associations)
+    result$coloc_groups <- new_groups$coloc_groups
+    result$rare_results <- new_groups$rare_results
+  }
+
+  return(cleanup_api_object(result))
 }

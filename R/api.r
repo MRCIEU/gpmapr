@@ -221,68 +221,46 @@ region_api <- function(region_id, include_associations = FALSE, include_coloc_pa
   return(region)
 }
 
-#' @title Get Variants by RSID
-#' @description Get variants from the API by RSID
-#' @param rsids A character string specifying the RSID
-#' @param include_associations A logical value specifying whether to include associations
-#' @param p_value_threshold A numeric value specifying the p-value threshold
-#' @param expand A logical value specifying whether to expand the data to all fields
+#' @title Get Variants API
+#' @description Get variants from the API. The API accepts variants (snp_ids, rsids, or strings - auto-detected)
+#' or a genomic range (grange).
+#' @param variants A vector of variant identifiers (snp_ids, rsids, or strings)
+#' @param expand Logical. FALSE (default) returns minimal data. TRUE returns full VariantResponse (max 10, not available with grange)
+#' @param include_associations Logical. Whether to include associations for SNPs (only when expand=TRUE)
+#' @param include_coloc_pairs Logical. Whether to include coloc pairs for SNPs (only when expand=TRUE)
+#' @param h4_threshold Numeric. H4 threshold for coloc pairs, defaults to 0.8
 #' @return A list containing the variants
-variants_by_rsid_api <- function(rsids, include_associations = FALSE, p_value_threshold = NULL, expand = FALSE) {
-  rsids <- paste(rsids, collapse = "&rsids=")
-  url <- paste0(getOption("gpmap_url"), "/v1/variants?rsids=", rsids)
-  return(get_variants_with_options_api(url, include_associations, p_value_threshold, expand))
-}
-
-#' @title Get Variants by SNP ID
-#' @description Get variants from the API by SNP ID
-#' @param snp_ids A character string specifying the SNP ID
-#' @param include_associations A logical value specifying whether to include associations
-#' @param p_value_threshold A numeric value specifying the p-value threshold
-#' @param expand A logical value specifying whether to expand the data to all fields
-#' @return A list containing the variants
-variants_by_snp_id_api <- function(snp_ids, include_associations = FALSE, p_value_threshold = NULL, expand = FALSE) {
-  snp_ids <- paste(snp_ids, collapse = "&snp_ids=")
-  url <- paste0(getOption("gpmap_url"), "/v1/variants?snp_ids=", snp_ids)
-  return(get_variants_with_options_api(url, include_associations, p_value_threshold, expand))
-}
-
-#' @title Get Variants by Variant ID
-#' @description Get variants from the API by Variant ID
-#' @param variants A character string specifying the Variant ID
-#' @param include_associations A logical value specifying whether to include associations
-#' @param p_value_threshold A numeric value specifying the p-value threshold
-#' @param expand A logical value specifying whether to expand the data to all fields
-#' @return A list containing the variants
-variants_by_variant_api <- function(variants, include_associations = FALSE, p_value_threshold = NULL, expand = FALSE) {
+variants_api <- function(variants, expand = FALSE, include_associations = FALSE, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
   variants <- paste(variants, collapse = "&variants=")
   url <- paste0(getOption("gpmap_url"), "/v1/variants?variants=", variants)
-  return(get_variants_with_options_api(url, include_associations, p_value_threshold, expand))
+  return(get_variants_with_options_api(url, expand, include_associations, include_coloc_pairs, h4_threshold))
 }
 
-#' @title Get Variants by GRange
-#' @description Get variants from the API by GRange
+#' @title Get Variants by GRange API
+#' @description Get variants from the API by genomic range. Expand is not available with grange.
 #' @param chr A character string specifying the chromosome
 #' @param start A numeric value specifying the start position
 #' @param stop A numeric value specifying the stop position
-#' @param include_associations A logical value specifying whether to include associations
-#' @param p_value_threshold A numeric value specifying the p-value threshold
+#' @param include_associations Logical. Whether to include associations (only when expand=TRUE, but expand not available with grange)
+#' @param include_coloc_pairs Logical. Whether to include coloc pairs
+#' @param h4_threshold Numeric. H4 threshold for coloc pairs, defaults to 0.8
 #' @return A list containing the variants
-variants_by_grange_api <- function(chr, start, stop, include_associations = FALSE, p_value_threshold = NULL) {
+variants_grange_api <- function(chr, start, stop, include_associations = FALSE, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
   url <- paste0(getOption("gpmap_url"), "/v1/variants?grange=", chr, ":", start, "-", stop)
-  return(get_variants_with_options_api(url, include_associations, p_value_threshold))
+  return(get_variants_with_options_api(url, expand = FALSE, include_associations, include_coloc_pairs, h4_threshold))
 }
 
 get_variants_with_options_api <- function(
   url,
-  include_associations = FALSE,
-  p_value_threshold = NULL,
   expand = FALSE,
+  include_associations = FALSE,
+  include_coloc_pairs = FALSE,
   h4_threshold = 0.8
 ) {
-  url <- paste0(url, "?include_associations=", include_associations)
-  url <- paste0(url, "&p_value_threshold=", p_value_threshold)
-  url <- paste0(url, "&expand=", expand)
+  sep <- if (grepl("?", url, fixed = TRUE)) "&" else "?"
+  url <- paste0(url, sep, "expand=", tolower(expand))
+  url <- paste0(url, "&include_associations=", tolower(include_associations))
+  url <- paste0(url, "&include_coloc_pairs=", tolower(include_coloc_pairs))
   url <- paste0(url, "&h4_threshold=", h4_threshold)
 
   variants <- httr::GET(url, httr::timeout(timeout_seconds))
