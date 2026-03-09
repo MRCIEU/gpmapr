@@ -27,7 +27,8 @@ all_traits <- function() {
 #' @title Trait
 #' @description A collection of studies that are associated with a particular phenotype.
 #' A trait will include a common study and occasionally a rare study.
-#' @param trait_id A numeric value specifying the trait id
+#' When trait_id is a GUID (from GWAS upload), fetches the upload result instead.
+#' @param trait_id A numeric value or GUID (from GWAS upload) specifying the trait id
 #' @param include_associations A logical value specifying whether to include associations
 #' (BETA, SE, P), defaults to FALSE
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
@@ -60,29 +61,46 @@ trait <- function(trait_id,
     stop("trait_id is required")
   }
 
-  trait_info <- trait_api(trait_id, include_associations)
+  if (is_guid(trait_id)) {
+    trait_info <- get_gwas_api(trait_id, include_summary_stats = FALSE)
+    if (include_associations && !is.null(trait_info$associations)) {
+      new_groups <- merge_associations(trait_info$coloc_groups, trait_info$rare_results, trait_info$associations)
+      trait_info$coloc_groups <- new_groups$coloc_groups
+      trait_info$rare_results <- new_groups$rare_results
+    }
+    coloc_trait_id <- if (!is.null(trait_info$trait$id)) trait_info$trait$id else trait_id
+    if (include_coloc_pairs && !is.null(coloc_trait_id) && !is_guid(coloc_trait_id)) {
+      response <- trait_coloc_pairs_api(coloc_trait_id, h4_threshold)
+      trait_info$coloc_pairs <- response
+    }
+  } else {
+    trait_info <- trait_api(trait_id, include_associations)
 
-  if (include_coloc_pairs) {
-    response <- trait_coloc_pairs_api(trait_id, h4_threshold)
-    trait_info$coloc_pairs <- response
+    if (include_coloc_pairs) {
+      response <- trait_coloc_pairs_api(trait_id, h4_threshold)
+      trait_info$coloc_pairs <- response
+    }
+
+    if (include_associations) {
+      new_groups <- merge_associations(trait_info$coloc_groups, trait_info$rare_results, trait_info$associations)
+      trait_info$coloc_groups <- new_groups$coloc_groups
+      trait_info$rare_results <- new_groups$rare_results
+    }
   }
 
-  trait_info$trait$source_url <- create_source_url(trait_info$trait$trait)
+  if (!is.null(trait_info$trait) && !is.null(trait_info$trait$trait)) {
+    trait_info$trait$source_url <- create_source_url(trait_info$trait$trait)
+  }
 
   trait_info <- cleanup_api_object(trait_info)
-  if (include_associations) {
-    new_groups <- merge_associations(trait_info$coloc_groups, trait_info$rare_results, trait_info$associations)
-    trait_info$coloc_groups <- new_groups$coloc_groups
-    trait_info$rare_results <- new_groups$rare_results
-  }
-
   return(trait_info)
 }
 
 
 #' @title Traits
 #' @description Get specific traits from the API. The API returns collapsed/combined data for all requested traits.
-#' @param trait_ids A vector of trait ids (1 or more)
+#' When a trait ID is a GUID (from GWAS upload), fetches the upload result instead.
+#' @param trait_ids A vector of trait ids (numeric) or GUIDs (from GWAS upload)
 #' @param include_associations A logical value specifying whether to include associations
 #' (BETA, SE, P), defaults to FALSE
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE.
@@ -115,24 +133,60 @@ traits <- function(trait_ids,
   if (length(trait_ids) > 10) stop("trait_ids must contain at most 10 trait ids")
 
   trait_ids <- unique(trait_ids)
+  numeric_ids <- trait_ids[!is_guid(trait_ids)]
+  guid_ids <- trait_ids[is_guid(trait_ids)]
 
-  result <- specific_traits_api(
-    trait_ids,
-    include_associations = include_associations,
-    h4_threshold = h4_threshold
-  )
-
-  if (include_associations && nrow(result$associations) > 0) {
-    new_groups <- merge_associations(result$coloc_groups, result$rare_results, result$associations)
-    result$coloc_groups <- new_groups$coloc_groups
-    result$rare_results <- new_groups$rare_results
+  if (length(numeric_ids) > 0) {
+    result <- specific_traits_api(
+      numeric_ids,
+      include_associations = include_associations,
+      h4_threshold = h4_threshold
+    )
+    if (include_associations && is.data.frame(result$associations) && nrow(result$associations) > 0) {
+      new_groups <- merge_associations(result$coloc_groups, result$rare_results, result$associations)
+      result$coloc_groups <- new_groups$coloc_groups
+      result$rare_results <- new_groups$rare_results
+    }
+    if (include_coloc_pairs && length(numeric_ids) > 0) {
+      result$coloc_pairs <- lapply(numeric_ids, trait_coloc_pairs_api, h4_threshold = h4_threshold) |>
+        dplyr::bind_rows() |>
+        dplyr::distinct()
+    }
+  } else {
+    result <- list(traits = NULL, coloc_groups = NULL, study_extractions = NULL, rare_results = NULL)
   }
 
-  if (include_coloc_pairs) {
-    result$coloc_pairs <- lapply(trait_ids, trait_coloc_pairs_api, h4_threshold = h4_threshold) |>
-      dplyr::bind_rows() |>
-      dplyr::distinct()
+  if (length(guid_ids) > 0) {
+    upload_results <- lapply(guid_ids, get_gwas_api)
+    for (upload in upload_results) {
+      result <- merge_trait_result(result, upload)
+    }
   }
 
+  return(result)
+}
+
+#' Merge a trait result into a traits result
+#'
+#' @param result A list of trait results
+#' @param upload A list of upload results
+#' @return A list of trait results with the upload results merged in
+#' @keywords internal
+#' @noRd
+merge_trait_result <- function(result, upload) {
+  if (is.null(upload)) return(result)
+  if (!is.null(upload$trait)) {
+    trait_df <- as.data.frame(t(upload$trait))
+    result$traits <- dplyr::bind_rows(result$traits, trait_df)
+  }
+  if (is.data.frame(upload$coloc_groups) && nrow(upload$coloc_groups) > 0) {
+    result$coloc_groups <- dplyr::bind_rows(result$coloc_groups, upload$coloc_groups)
+  }
+  if (is.data.frame(upload$study_extractions) && nrow(upload$study_extractions) > 0) {
+    result$study_extractions <- dplyr::bind_rows(result$study_extractions, upload$study_extractions)
+  }
+  if (is.data.frame(upload$rare_results) && nrow(upload$rare_results) > 0) {
+    result$rare_results <- dplyr::bind_rows(result$rare_results, upload$rare_results)
+  }
   return(result)
 }
