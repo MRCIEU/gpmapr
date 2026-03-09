@@ -12,7 +12,7 @@ trait(
 )
 }
 \arguments{
-\item{trait_id}{A numeric value specifying the trait id}
+\item{trait_id}{A numeric value or GUID (from GWAS upload) specifying the trait id}
 
 \item{include_associations}{A logical value specifying whether to include associations
 (BETA, SE, P), defaults to FALSE}
@@ -38,6 +38,7 @@ See below for details.
 \description{
 A collection of studies that are associated with a particular phenotype.
 A trait will include a common study and occasionally a rare study.
+When trait_id is a GUID (from GWAS upload), fetches the upload result instead.
 }
 \details{
 The dataframes returned by this function are as follows:
