@@ -2,6 +2,16 @@ api_to_package_version <- list(
   "1.0.0" = c("0.0.0.9000")
 )
 
+#' Check if a string is a GUID
+#' @param id A string to check
+#' @return A logical value indicating whether the string is a GUID (8-4-4-4-12 hex format)
+#' @keywords internal
+#' @noRd
+is_guid <- function(id) {
+  id <- as.character(id)
+  result <- grepl("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", id)
+  return(result)
+}
 
 #' Merge associations into coloc info
 #'
@@ -9,6 +19,8 @@ api_to_package_version <- list(
 #' @param rare_results A dataframe of rare results
 #' @param associations A dataframe of associations
 #' @return An updated list of coloc info with associations merged in
+#' @keywords internal
+#' @noRd
 merge_associations <- function(coloc_groups, rare_results, associations) {
   if (is.null(associations)) return(coloc_groups = coloc_groups, rare_results = rare_results)
 
@@ -35,6 +47,8 @@ merge_associations <- function(coloc_groups, rare_results, associations) {
 #'
 #' @param study_name character string specifying the study name
 #' @return A character string specifying the source url
+#' @keywords internal
+#' @noRd
 create_source_url <- function(study_name) {
   replace_except_first_two <- function(x) {
     dash_positions <- gregexpr("-", x)[[1]]
@@ -57,6 +71,8 @@ create_source_url <- function(study_name) {
 #'
 #' @param api_object A list of api info, as returned by the api
 #' @return An updated list of api info with null, empty, and NA elements removed
+#' @keywords internal
+#' @noRd
 cleanup_api_object <- function(api_object) {
   api_object <- api_object[!sapply(api_object, is.null)]
   api_object <- api_object[!sapply(api_object, length) == 0]

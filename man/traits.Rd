@@ -12,7 +12,7 @@ traits(
 )
 }
 \arguments{
-\item{trait_ids}{A vector of trait ids (1 or more)}
+\item{trait_ids}{A vector of trait ids (numeric) or GUIDs (from GWAS upload)}
 
 \item{include_associations}{A logical value specifying whether to include associations
 (BETA, SE, P), defaults to FALSE}
@@ -36,6 +36,7 @@ See below for details.
 }
 \description{
 Get specific traits from the API. The API returns collapsed/combined data for all requested traits.
+When a trait ID is a GUID (from GWAS upload), fetches the upload result instead.
 }
 \details{
 The dataframes returned by this function are as follows:
