@@ -124,21 +124,22 @@ It has the following columns:
 \section{summary_statistics_dataframe}{
 
 The summary_statistics dataframe contains information about which studies have summary statistics.
-It has the following columns:
+From the API, column names are typically uppercase (SNP, CHR, BP, EA, OA, EAF, Z, BETA, SE, P, LBF_1, etc.).
+It has the following columns (names may be upper or lower case depending on source):
 \itemize{
-\item snp_id: the id of the SNP
-\item chr: the chromosome of the SNP
-\item bp: the base pair position of the SNP
-\item ea: the effect allele
-\item oa: the other allele
-\item eaf: the estimated allele frequency
-\item z: the z-score
-\item beta: the beta value
-\item se: the standard error
-\item p: the p-value
+\item SNP / snp_id: the id of the SNP
+\item CHR / chr: the chromosome of the SNP
+\item BP / bp: the base pair position of the SNP
+\item EA / ea: the effect allele
+\item OA / oa: the other allele
+\item EAF / eaf: the estimated allele frequency
+\item Z / z: the z-score
+\item BETA / beta: the beta value
+\item SE / se: the standard error
+\item P / p: the p-value
 \item imputed: whether the summary statistics are imputed
-\item lbf_*: all different finemapped log-bayes factors for each credible set.
-Each credible set is numbered from 1 to 10.  If finemapped failed or only returned 1 credible set, the lbf_1
+\item LBF_* / lbf_*: all different finemapped log-bayes factors for each credible set.
+Each credible set is numbered from 1 to 10.  If finemapped failed or only returned 1 credible set, the LBF_1
 column is just converted directly from the z-score.
 }
 }

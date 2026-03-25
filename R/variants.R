@@ -11,7 +11,7 @@
 #'  * rare_results: a list of dataframes containing the rare variants
 #'  * study_extractions: a list of dataframes containing the study extractions
 #'  * summary_stats (optional): a list of dataframes containing the summary stats for each study,
-#'      where the name of the dataframe is the study_extraction_id
+#'      where the name of each element is the study_id. Column names are uppercase (e.g. SNP, BP, BETA, SE, LBF_1).
 #'  * coloc_pairs (optional): a dataframe containing information about which studies have coloc pairs for this variant
 #'      where the study_extraction_a_id and study_extraction_b_id are the study_extraction_ids of the two studies.
 #'      h4_threshold is the cutoff for included coloc pairs, defaults to 0.8

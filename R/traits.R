@@ -62,16 +62,9 @@ trait <- function(trait_id,
   }
 
   if (is_guid(trait_id)) {
-    trait_info <- get_gwas_api(trait_id, include_summary_stats = FALSE)
+    trait_info <- get_gwas_api(trait_id, include_summary_stats = FALSE, include_associations = include_associations)
     if (include_associations && !is.null(trait_info$associations)) {
-      new_groups <- merge_associations(trait_info$coloc_groups, trait_info$rare_results, trait_info$associations)
-      trait_info$coloc_groups <- new_groups$coloc_groups
-      trait_info$rare_results <- new_groups$rare_results
-    }
-    coloc_trait_id <- if (!is.null(trait_info$trait$id)) trait_info$trait$id else trait_id
-    if (include_coloc_pairs && !is.null(coloc_trait_id) && !is_guid(coloc_trait_id)) {
-      response <- trait_coloc_pairs_api(coloc_trait_id, h4_threshold)
-      trait_info$coloc_pairs <- response
+      trait_info$coloc_groups <- merge_gwas_upload_associations(trait_info$coloc_groups, trait_info$associations)
     }
   } else {
     trait_info <- trait_api(trait_id, include_associations)

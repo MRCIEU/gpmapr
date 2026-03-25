@@ -2,10 +2,15 @@
 #' @description Get a GWAS from the API
 #' @param gwas_id The ID of the GWAS
 #' @param include_summary_stats Whether to include summary statistics
+#' @param include_associations Whether to include associations
 #' @return A list containing the GWAS information
 #' @export
-get_gwas <- function(gwas_id, include_summary_stats = FALSE) {
-  gwas_info <- get_gwas_api(gwas_id, include_summary_stats = include_summary_stats)
+get_gwas <- function(gwas_id, include_associations = FALSE, include_summary_stats = FALSE) {
+  gwas_info <- get_gwas_api(
+    gwas_id,
+    include_summary_stats = include_summary_stats,
+    include_associations = include_associations
+  )
   gwas_info <- cleanup_api_object(gwas_info)
   return(gwas_info)
 }

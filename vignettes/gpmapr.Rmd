@@ -1,6 +1,8 @@
 ---
 title: "Using gpmapr"
-output: rmarkdown::html_vignette
+output:
+  rmarkdown::html_vignette:
+    css: vignette-wide.css
 vignette: >
   %\VignetteIndexEntry{gpmapr}
   %\VignetteEngine{knitr::rmarkdown}
