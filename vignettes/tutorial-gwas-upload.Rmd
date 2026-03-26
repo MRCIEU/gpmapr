@@ -62,7 +62,7 @@ This is of Atopic Dermatitis.
 
 ```{r fetch-results, cache = TRUE}
 my_guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
-my_results <- gpmapr::trait(my_guid, include_associations = TRUE, include_coloc_pairs = TRUE)
+my_results <- gpmapr::trait(my_guid, include_associations = TRUE)
 ```
 
 When processing is complete, the result includes `trait`, `coloc_groups`, `study_extractions`, `upload_study_extractions`, and optionally `associations` and `coloc_pairs`.
