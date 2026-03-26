@@ -16,7 +16,8 @@ upload_gwas(
   should_be_added = FALSE,
   ancestry = "EUR",
   sample_size = NA,
-  reference_build = "GRCh38"
+  reference_build = "GRCh38",
+  compare_with_upload_guids = NA
 )
 }
 \arguments{
@@ -57,6 +58,8 @@ And either BETA and SE, or OR, LB, and UB
 \item{sample_size}{The sample size of the GWAS}
 
 \item{reference_build}{The reference build of the GWAS.  Only "GRCh37" and "GRCh38" are accepted.}
+
+\item{compare_with_upload_guids}{A vector of GUIDs of uploads to compare with}
 }
 \value{
 A list containing the GWAS information

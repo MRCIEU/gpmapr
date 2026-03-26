@@ -1,10 +1,8 @@
 ---
-title: "GWAS upload tutorial"
-output:
-  rmarkdown::html_vignette:
-    css: vignette-wide.css
+title: "GPMap tutorial: GWAS upload"
+output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{GWAS upload}
+  %\VignetteIndexEntry{GPMap tutorial: GWAS upload}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -17,15 +15,11 @@ knitr::opts_chunk$set(
 )
 ```
 
-# Introduction
-
-The GPMap API allows you to upload your own GWAS summary statistics and receive colocalisation results against the existing genotype–phenotype map. This vignette covers how to upload a GWAS, retrieve your results, interpret them, and compare your upload with another trait (including another upload) to find insights.
-
-# Part 1: How to use it and get the data
+The GPMap API allows you to upload your own GWAS summary statistics and receive colocalisation results against the existing GPMap. This vignette covers how to upload a GWAS, retrieve your results, interpret them, and compare your upload with another trait (including another upload) to find insights.
 
 ## Uploading a GWAS
 
-Use `upload_gwas()` to submit your summary statistics. You need a file with standard GWAS columns and metadata such as sample size and ancestry.
+Use `gpmapr::upload_gwas()` to submit your summary statistics. You need a file with standard GWAS columns and metadata such as sample size and ancestry.
 
 ```{r upload-example, eval = FALSE}
 # Example: upload a GWAS file
@@ -51,6 +45,8 @@ result <- gpmapr::upload_gwas(
 )
 ```
 
+You can also compare your upload with another upload by passing the GUIDs of the uploads you want to compare with, by including `compare_with_upload_guids = c("GUID1")`.
+
 The response includes a **GUID** (a UUID such as `a1b2c3d4-e5f6-7890-abcd-ef1234567890`). Save this GUID; you use it to fetch your results once they are ready.
 
 ```{r guid-example, eval = FALSE}
@@ -60,55 +56,222 @@ my_guid <- result$id
 
 ## Fetching your results
 
-Processing can take some time. Use the GUID with `trait()` to check status and retrieve results:
+Processing can take some time. Use the GUID with `trait()` to check status and retrieve results.  Here we will use an GWAS that has already been uploaded to the GPMap.
 
-```{r fetch-results, eval = FALSE}
-# Using trait() - works with both numeric trait IDs and GUIDs
+This is of Atopic Dermatitis.
+
+```{r fetch-results, cache = TRUE}
+my_guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
 my_results <- gpmapr::trait(my_guid, include_associations = TRUE, include_coloc_pairs = TRUE)
 ```
 
 When processing is complete, the result includes `trait`, `coloc_groups`, `study_extractions`, `upload_study_extractions`, and optionally `associations` and `coloc_pairs`.
 
+## Interpreting your results
 
-
-# Part 2: Interpreting your results
+Much of the same analysis that is shown in the [case study](https://mrcieu.r-universe.dev/articles/gpmapr/tutorial-case-study.html) can be applied to your upload results.  If you are interested in the relationship between your upload and another trait, you can filter the coloc groups by trait id.
 
 Your upload results use the same structure as traits in the database. Here are the main components and what they mean.
 
+### Study extractions
+
+The difference between study_extractions and upload_study_extractions is that upload_study_extractions are the individual finemapped regions (LD blocks) that were found from the uploaded GWAS, while study_extractions are the existing finemapped loci that your upload colocalises with.
+
+Key columns include `study`, `snp`, `gene`, `chr`, `bp`, `min_p`, and trait metadata (`trait_name`, `data_type`, `tissue`).
+
+```{r study-extractions-demo}
+# Study extractions (structure may vary - list of dataframes or single dataframe)
+uploaded_study_extractions <- my_results$upload_study_extractions
+paste("Number of uploaded study extractions:", nrow(uploaded_study_extractions))
+study_extractions <- my_results$study_extractions
+paste("Number of study extractions associated with your upload:", nrow(study_extractions))
+```
+
+### Coloc groups and coloc pairs
+
+Although coloc groups provide a more robust view of the relationship between your trait and other traits, coloc pairs can be useful for identifying the specific regions that are driving the colocalisation, espeically if the loci is less powered, and therefore less likely to be captured by the coloc groups.
+
 **Coloc groups** identify genomic regions (LD blocks) where your trait colocalises with other studies in the map. Each row is a study extraction that shares a colocalisation signal with your trait at that region.
+
 
 If you are interested in the relationship between your trait and another specific trait, you can filter the coloc groups by trait id.
 
-```{r coloc-groups-demo}
-# Filter the coloc groups by trait of interest
-trait_of_interest <- 931
-coloc_groups <- my_results$coloc_groups |>
-  dplyr::filter(trait_id == trait_of_interest)
+```{r coloc-groups-demo, fig.width=8, fig.height=10, out.width="100%"}
+trait_to_compare <- 2527L # Allergic rhinitis
+upload_id   <- my_results$trait$id
+upload_name <- as.character(my_results$trait$name)[[1L]]
+
+compare_name <- {
+  nm <- my_results$coloc_groups |>
+    dplyr::filter(trait_id == trait_to_compare) |>
+    dplyr::distinct(trait_name) |>
+    dplyr::pull(trait_name)
+  if (length(nm) >= 1L) nm[[1L]] else "Comparison trait"
+}
+
+shared_coloc_groups <- my_results$coloc_groups |>
+  dplyr::filter(trait_id == trait_to_compare) |>
+  dplyr::pull(coloc_group_id) |>
+  unique()
 
 compare_coloc_groups <- my_results$coloc_groups |>
-  dplyr::filter(coloc_group_id %in% coloc_groups$coloc_group_id & (trait_id == trait_of_interest | gwas_upload_id == my_results$trait$id))
-
-head(compare_coloc_groups)
-```
-
-**Coloc pairs** give pairwise colocalisation between study extractions, with probabilities for shared vs distinct causal variants:
-
-- **h4**: Probability that both traits share **one common causal variant**
-- **h3**: Probability that both traits have association at the region but through **two distinct causal variants**
-
-High h4 (e.g. > 0.8) suggests strong evidence for a shared causal variant. The `h4_threshold` parameter filters pairs by this probability.
-
-```{r coloc-pairs-demo}
-study_extractions_of_gwas_upload <- my_results$study_extractions
-
-coloc_pairs_of_interest <- my_results$coloc_pairs |>
   dplyr::filter(
-    study_extraction_id_a == trait_of_interest | study_extraction_id_b == trait_of_interest |
-    existing_study_extraction_id_a == trait_of_interest | existing_study_extraction_id_b == trait_of_interest
+    coloc_group_id %in% shared_coloc_groups,
+    trait_id == trait_to_compare | gwas_upload_id == upload_id
   )
 
-# Coloc pairs from my_results (upload + trait of interest)
-# Column names vary: study_extraction_id_a/b or existing_study_extraction_id_a/b for GWAS uploads
+compare_coloc_groups <- compare_coloc_groups |>
+  dplyr::group_by(coloc_group_id) |>
+  dplyr::filter(!any(se == 1)) |>
+  dplyr::ungroup()
+
+
+# Strongest hit (smallest min_p) per group per side
+pick_lead <- function(dat, grp_col) {
+  dat |>
+    dplyr::filter(!is.na(beta), !is.na(se), se > 0, !is.na(min_p)) |>
+    dplyr::group_by(dplyr::across(dplyr::all_of(grp_col))) |>
+    dplyr::slice_min(order_by = min_p, n = 1L, with_ties = FALSE) |>
+    dplyr::ungroup()
+}
+
+trait_colours <- c("#2166ac", "#d6604d")
+names(trait_colours) <- c(upload_name, compare_name)
+
+make_forest_plot <- function(df, panel_labels, title_str) {
+  lbl_fn <- function(x) {
+    m <- match(as.character(x), as.character(panel_labels$group_id))
+    out <- panel_labels$strip_lbl[m]
+    dplyr::if_else(is.na(out), as.character(x), out)
+  }
+  ggplot2::ggplot(df, ggplot2::aes(x = beta, y = trait_lbl, colour = trait_lbl)) +
+    ggplot2::geom_vline(xintercept = 0, colour = "red", lty = 2) +
+    ggplot2::geom_hline(yintercept = 1.5, colour = "grey85", linewidth = 0.5) +
+    ggplot2::geom_errorbar(
+      ggplot2::aes(xmin = beta - 1.96 * se, xmax = beta + 1.96 * se),
+      width = 0.12, linewidth = 0.35
+    ) +
+    ggplot2::geom_point(size = 2.5) +
+    ggplot2::facet_grid(
+      rows = ggplot2::vars(coloc_panel),
+      scales = "fixed", space = "fixed", switch = "y",
+      labeller = ggplot2::labeller(coloc_panel = lbl_fn)
+    ) +
+    ggplot2::scale_y_discrete(expand = ggplot2::expansion(add = 0.65)) +
+    ggplot2::scale_colour_manual(values = trait_colours,
+                                 breaks = c(upload_name, compare_name)) +
+    ggplot2::theme_bw() +
+    ggplot2::theme(
+      panel.grid      = ggplot2::element_blank(),
+      panel.border    = ggplot2::element_blank(),
+      panel.spacing.y = grid::unit(1.5, "lines"),
+      strip.background = ggplot2::element_rect(colour = NA),
+      strip.placement  = "outside",
+      plot.title       = ggplot2::element_text(hjust = 0.5, size = 12),
+      legend.position  = "bottom",
+      axis.text.y      = ggplot2::element_blank(),
+      axis.ticks.y     = ggplot2::element_blank()
+    ) +
+    ggplot2::labs(x = "Study beta", y = NULL, colour = NULL, title = title_str)
+}
+
+make_strip_labels <- function(df) {
+  df |>
+    dplyr::group_by(group_id) |>
+    dplyr::summarise(
+      strip_lbl = paste(unique(stats::na.omit(display_snp)), collapse = " · "),
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(strip_lbl = dplyr::if_else(
+      nzchar(strip_lbl), strip_lbl, as.character(group_id)
+    ))
+}
+
+build_forest_df <- function(upload_rows, compare_rows, max_groups = 5L) {
+  df <- dplyr::bind_rows(
+    upload_rows  |> dplyr::mutate(trait_lbl = upload_name),
+    compare_rows |> dplyr::mutate(trait_lbl = compare_name)
+  ) |>
+    dplyr::mutate(trait_lbl = factor(trait_lbl, levels = c(upload_name, compare_name)))
+
+  ids_both <- df |>
+    dplyr::count(group_id, name = "n") |>
+    dplyr::filter(n == 2L) |>
+    dplyr::slice_head(n = max_groups) |>
+    dplyr::pull(group_id)
+
+  df |>
+    dplyr::filter(group_id %in% ids_both) |>
+    dplyr::mutate(coloc_panel = factor(group_id))
+}
+
+# --- Section 1: Coloc groups ---
+cg_upload <- compare_coloc_groups |>
+  dplyr::filter(gwas_upload_id == upload_id) |>
+  pick_lead("coloc_group_id") |>
+  dplyr::mutate(group_id = as.character(coloc_group_id))
+
+cg_compare <- compare_coloc_groups |>
+  dplyr::filter(trait_id == trait_to_compare) |>
+  pick_lead("coloc_group_id") |>
+  dplyr::mutate(group_id = as.character(coloc_group_id))
+
+cg_df <- build_forest_df(cg_upload, cg_compare)
+
+if (nrow(cg_df) > 0) {
+  print(make_forest_plot(
+    cg_df, make_strip_labels(cg_df),
+    "Colocalisation groups"
+  ))
+}
+
+# --- Section 2: Coloc pairs only (h4 > 0.8, locus not in shared coloc groups) ---
+pairs_all <- my_results$coloc_pairs
+
+if (!is.null(pairs_all) && nrow(pairs_all) > 0 && "h4" %in% names(pairs_all) &&
+    "ld_block_id" %in% names(pairs_all)) {
+  covered_ld <- compare_coloc_groups |>
+    dplyr::pull(ld_block_id) |>
+    unique()
+
+  sig_ld <- pairs_all |>
+    dplyr::filter(h4 > 0.8, !ld_block_id %in% covered_ld) |>
+    dplyr::pull(ld_block_id) |>
+    unique()
+
+  if (length(sig_ld) > 0) {
+    cp_upload <- my_results$coloc_groups |>
+      dplyr::filter(gwas_upload_id == upload_id, ld_block_id %in% sig_ld) |>
+      pick_lead("ld_block_id") |>
+      dplyr::mutate(group_id = as.character(ld_block_id))
+
+    cp_compare <- my_results$coloc_groups |>
+      dplyr::filter(trait_id == trait_to_compare, ld_block_id %in% sig_ld) |>
+      pick_lead("ld_block_id") |>
+      dplyr::mutate(group_id = as.character(ld_block_id))
+
+    cp_df <- build_forest_df(cp_upload, cp_compare)
+
+    if (nrow(cp_df) > 0) {
+      print(make_forest_plot(
+        cp_df, make_strip_labels(cp_df),
+        "Coloc pairs only (h4 > 0.8, not in a shared coloc group)"
+      ))
+    }
+  }
+}
+```
+
+**Coloc pairs** give pairwise colocalisation probabilities between study extractions:
+
+- **h4**: Both traits share **one common causal variant**
+- **h3**: Both traits associate at the region through **two distinct causal variants**
+
+The forest plot above already includes loci with h4 > 0.8 that are not captured by any shared coloc group. The raw pair scores for all significant pairs are shown below.
+
+```{r coloc-pairs-demo}
+truncate_results <- 20L
+
 pairs <- my_results$coloc_pairs
 if (!is.null(pairs) && nrow(pairs) > 0) {
   cols <- intersect(names(pairs), c(
@@ -116,135 +279,11 @@ if (!is.null(pairs) && nrow(pairs) > 0) {
     "existing_study_extraction_id_a", "existing_study_extraction_id_b",
     "ld_block_id", "h3", "h4", "false_positive", "spurious"
   ))
-  head(pairs[, cols, drop = FALSE])
+  knitr::kable(
+    head(dplyr::filter(pairs[, cols, drop = FALSE], h4 > 0.8), truncate_results),
+    digits = 3
+  )
 } else {
   "No coloc pairs for these traits"
 }
 ```
-
-## Study extractions
-
-**Study extractions** are the individual finemapped regions (LD blocks) that contribute to coloc groups. They link your trait to specific studies, SNPs, and genes.
-
-Key columns include `study`, `snp`, `gene`, `chr`, `bp`, `min_p`, and trait metadata (`trait_name`, `data_type`, `tissue`).
-
-```{r study-extractions-demo}
-# Study extractions (structure may vary - list of dataframes or single dataframe)
-se <- demo$study_extractions
-df <- if (is.data.frame(se) && nrow(se) > 0) se else if (is.list(se) && length(se) > 0 && is.data.frame(se[[1]])) se[[1]] else NULL
-if (!is.null(df) && nrow(df) > 0) {
-  cols <- intersect(names(df), c("study", "snp", "gene", "trait_name", "chr", "bp"))
-  if (length(cols) > 0) head(df[, cols, drop = FALSE]) else head(df)
-}
-```
-
-## Rare results
-
-If present, **rare_results** are rare-disease associations that colocalise with your trait at the same regions. They use a similar structure to coloc groups, with `rare_result_group_id` and study/trait metadata.
-
-# Part 3: Comparing with another GUID and filtering for insights
-
-## Fetching multiple traits (including GUIDs)
-
-Use `traits()` to fetch several traits or GUIDs in one call. This returns combined `coloc_groups`, `study_extractions`, and `rare_results` for all of them.
-
-```{r compare-fetch, eval = FALSE}
-# Compare your upload with another upload or a published trait
-both <- gpmapr::traits(c(my_guid, "another-guid-or-numeric-id"),
-  include_associations = TRUE,
-  include_coloc_pairs = TRUE
-)
-```
-
-```{r compare-fetch-demo}
-# Demo with two published traits (same pattern as GUIDs)
-both <- gpmapr::traits(c(931, 932), include_associations = TRUE, include_coloc_pairs = TRUE)
-```
-
-## Filtering to focus on the comparison
-
-### Shared coloc groups
-
-Find regions where both traits colocalise with the same studies:
-
-```{r filter-shared}
-# Get coloc groups for both traits
-cg <- both$coloc_groups
-if (is.null(cg)) cg <- data.frame()
-shared_groups <- cg
-
-# Find coloc_group_ids that appear for both traits (when trait_id column exists)
-if (nrow(cg) > 0 && "trait_id" %in% names(cg)) {
-  shared_groups <- cg |>
-    dplyr::group_by(coloc_group_id) |>
-    dplyr::filter(dplyr::n_distinct(trait_id) >= 2) |>
-    dplyr::ungroup()
-
-  # Regions (genes) shared between your traits
-  shared_groups |>
-    dplyr::distinct(coloc_group_id, gene, display_snp, trait_name) |>
-    head(10)
-} else {
-  head(cg, 10)
-}
-```
-
-### Filter by trait
-
-Restrict results to one of your traits:
-
-```{r filter-by-trait}
-# Focus on one trait's coloc groups
-if ("trait_id" %in% names(cg)) {
-  trait_931_only <- cg |> dplyr::filter(trait_id == 931)
-  head(trait_931_only)
-} else {
-  head(cg)
-}
-```
-
-### Filter by tissue or data type
-
-Narrow down to specific molecular layers (e.g. eQTL, pQTL) or tissues:
-
-```{r filter-tissue}
-# eQTL colocalisations only (when data_type column exists)
-if ("data_type" %in% names(cg)) {
-  eqtl_only <- cg |> dplyr::filter(data_type == "eQTL")
-  nrow(eqtl_only)
-}
-# Specific tissue
-if ("tissue" %in% names(cg)) {
-  liver_only <- cg |> dplyr::filter(tissue == "Liver")
-}
-```
-
-### High-confidence coloc pairs
-
-Keep only pairs with strong evidence for a shared causal variant:
-
-```{r filter-h4}
-pairs <- both$coloc_pairs
-if (!is.null(pairs) && nrow(pairs) > 0 && "h4" %in% names(pairs)) {
-  high_h4 <- pairs |> dplyr::filter(h4 >= 0.8)
-  if ("false_positive" %in% names(high_h4)) high_h4 <- high_h4 |> dplyr::filter(!false_positive)
-  else if ("spurious" %in% names(high_h4)) high_h4 <- high_h4 |> dplyr::filter(!spurious)
-  head(high_h4)
-}
-```
-
-## Finding insights
-
-1. **Shared biology**: Use shared coloc groups to find genes/regions where both traits likely share causal mechanisms.
-2. **Tissue specificity**: Filter by `tissue` or `data_type` to see which molecular contexts drive colocalisation.
-3. **Prioritise by h4**: Use `coloc_pairs` with high h4 to rank the strongest shared-signal pairs.
-4. **Rare disease links**: Inspect `rare_results` for potential rare-variant overlap with your trait.
-
-```{r insights-summary}
-# Example: genes with coloc evidence for both traits
-df <- if (nrow(shared_groups) > 0) shared_groups else cg
-if (nrow(df) > 0 && "gene" %in% names(df)) {
-  df |> dplyr::distinct(gene, display_snp, trait_name) |> head(15)
-}
-```
-

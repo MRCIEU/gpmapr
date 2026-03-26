@@ -1,8 +1,8 @@
 ---
-title: "GPMap: Haemoglobin concentration case study"
+title: "GPMap tutorial: Haemoglobin concentration case study"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{GPMap: Haemoglobin concentration case study}
+  %\VignetteIndexEntry{GPMap tutorial: Haemoglobin concentration case study}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -21,7 +21,7 @@ knitr::opts_chunk$set(
 
 This is a case study of GPMAP genetic colocalisations with the UK Biobank complex trait "Haemoglobin concentration", a physiological measure underpinned by well understood biological mechanisms of iron uptake, handling and storage and erythropoiesis, which potentially sits downstream of many disease states.
 
-This vignette is a demonstrative example of Figure 4 in (the GPMap paper)[https://doi.org/10.64898/2026.02.19.26346618].
+This vignette is a demonstrative example of Figure 4 in [the GPMap paper](https://doi.org/10.64898/2026.02.19.26346618).
 
 We wish to demonstrate that the GPMap:
 
@@ -35,13 +35,15 @@ We wish to demonstrate that the GPMap:
 
 ```{r find-trait}
 all_genes <- gpmapr::all_genes()
+all_traits_df <- gpmapr::all_traits()
 all_haemoglobin_traits <- gpmapr::search_gpmap("haemoglobin") |>
   dplyr::select(type_id, type, name, sample_size, num_coloc_groups)
-knitr::kable(all_haemoglobin_traits)
+anchor_trait_id <- 4759
 
-trait_results <- gpmapr::trait(trait_id = 4759)
+trait_results <- gpmapr::trait(trait_id = anchor_trait_id)
 haemoglobin_common <- trait_results$coloc_groups
 haemoglobin_rare <- trait_results$rare_results
+knitr::kable(all_haemoglobin_traits)
 ```
 
 Exclude duplicate haemoglobin traits and filter on genome-wide significance:
@@ -53,11 +55,11 @@ traits_out <- trait_ids_hgb$type_id
 
 # Exclude coloc groups where the anchor trait has no genome-wide significant hit in the region
 colocs_out_common <- haemoglobin_common |>
-  dplyr::filter(trait_id == 4759 & min_p > 5e-8) |>
+  dplyr::filter(trait_id == anchor_trait_id & min_p > 5e-8) |>
   dplyr::pull(coloc_group_id)
 
 colocs_out_rare <- haemoglobin_rare |>
-  dplyr::filter(trait_id == 4759 & min_p > 5e-8) |>
+  dplyr::filter(trait_id == anchor_trait_id & min_p > 5e-8) |>
   dplyr::pull(rare_result_group_id)
 
 haemoglobin_common <- haemoglobin_common |>
@@ -79,38 +81,85 @@ haemoglobin_rare <- haemoglobin_rare |> dplyr::filter(!(rare_result_group_id %in
 Colocalising signals across the genome, annotated by variant class and number of colocalising studies:
 
 ```{r genome-view, fig.width=15, fig.height=3.5}
-common_colocs_per_position <- haemoglobin_common |>
+n_per_locus_common <- haemoglobin_common |>
   dplyr::group_by(display_snp, chr, bp) |>
-  dplyr::summarise(n_studies = dplyr::n(), .groups = "drop") |>
-  dplyr::mutate(variant_type = "common")
+  dplyr::summarise(n_studies = dplyr::n(), .groups = "drop")
+
+common_colocs_per_position <- haemoglobin_common |>
+  dplyr::filter(trait_id == anchor_trait_id) |>
+  dplyr::group_by(display_snp, chr, bp) |>
+  dplyr::summarise(min_p = min(min_p, na.rm = TRUE), .groups = "drop") |>
+  dplyr::inner_join(n_per_locus_common, by = c("display_snp", "chr", "bp")) |>
+  dplyr::mutate(
+    neg_log10_p = -log10(pmax(min_p, .Machine$double.xmin)),
+    variant_type = "common"
+  )
+
+n_per_locus_rare <- haemoglobin_rare |>
+  dplyr::group_by(display_snp, chr, bp) |>
+  dplyr::summarise(n_studies = dplyr::n(), .groups = "drop")
 
 rare_colocs_per_position <- haemoglobin_rare |>
+  dplyr::filter(trait_id == anchor_trait_id) |>
   dplyr::group_by(display_snp, chr, bp) |>
-  dplyr::summarise(n_studies = dplyr::n(), .groups = "drop") |>
-  dplyr::mutate(variant_type = "rare")
+  dplyr::summarise(min_p = min(min_p, na.rm = TRUE), .groups = "drop") |>
+  dplyr::inner_join(n_per_locus_rare, by = c("display_snp", "chr", "bp")) |>
+  dplyr::mutate(
+    neg_log10_p = -log10(pmax(min_p, .Machine$double.xmin)),
+    variant_type = "rare"
+  )
 
 colocs_per_position <- dplyr::bind_rows(common_colocs_per_position,
                                         rare_colocs_per_position) |>
-  dplyr::arrange(chr, bp) |>
-  dplyr::mutate(x = factor(paste(chr, bp, sep = ":"),
-                           levels = unique(paste(chr, bp, sep = ":"))))
+  dplyr::mutate(chr_lab = as.character(chr))
+
+chr_order_lbl <- c(as.character(1:22), "X", "Y")
+chr_offsets <- all_genes |>
+  dplyr::mutate(chr_lab = as.character(chr)) |>
+  dplyr::group_by(chr_lab) |>
+  dplyr::summarise(chr_len = max(stop, na.rm = TRUE), .groups = "drop") |>
+  dplyr::mutate(
+    ord = match(chr_lab, chr_order_lbl),
+    ord = dplyr::if_else(is.na(ord), 999L, ord)
+  ) |>
+  dplyr::arrange(ord, chr_lab) |>
+  dplyr::mutate(offset = cumsum(c(0, utils::head(chr_len, -1))))
+
+colocs_per_position <- colocs_per_position |>
+  dplyr::left_join(chr_offsets, by = "chr_lab") |>
+  dplyr::mutate(x_mbp = (bp + offset) / 1e6)
+
+axis_chr <- chr_offsets |>
+  dplyr::filter(chr_lab %in% unique(colocs_per_position$chr_lab)) |>
+  dplyr::mutate(x_mbp_mid = (offset + chr_len / 2) / 1e6) |>
+  dplyr::arrange(ord)
 
 colocs_per_position |>
-  dplyr::arrange(dplyr::desc(n_studies)) |>
-  ggplot2::ggplot(ggplot2::aes(x = x, y = n_studies,
-                               colour = variant_type, size = n_studies)) +
-  ggplot2::geom_point() +
+  ggplot2::ggplot(ggplot2::aes(x = x_mbp, y = neg_log10_p,
+                                colour = variant_type, size = n_studies)) +
+  ggplot2::geom_point(alpha = 0.85) +
   ggplot2::scale_colour_manual(name = "Variant class:",
                                values = c(common = "steelblue", rare = "tomato")) +
-  ggplot2::scale_size_continuous(name = "No. colocalising studies") +
+  ggplot2::scale_size_continuous(name = "No. colocalising\nstudy rows\n(at locus)") +
+  ggplot2::scale_x_continuous(
+    breaks = axis_chr$x_mbp_mid,
+    labels = axis_chr$chr_lab,
+    expand = ggplot2::expansion(mult = c(0.01, 0.01))
+  ) +
   ggplot2::theme_minimal() +
-  ggplot2::theme(axis.text.x = ggplot2::element_blank(),
+  ggplot2::theme(axis.text.x = ggplot2::element_text(size = 11),
                  axis.title = ggplot2::element_text(size = 14),
-                 panel.grid = ggplot2::element_blank(),
+                 panel.grid.major.x = ggplot2::element_blank(),
+                 panel.grid.minor = ggplot2::element_blank(),
                  legend.position = "bottom") +
-  ggplot2::labs(x = "Genomic position", y = "No. colocalising studies",
-                title = "Haemoglobin concentration")
+  ggplot2::labs(
+    x = "Chromosome (cumulative position, Mb)",
+    y = "-log10(P), anchor trait",
+    title = "Colocalisation groups for anchor trait"
+  )
 ```
+
+This is a recreation of the data you can see on the GPMap website at https://gpmap.opengwas.io/trait.html?id=4759
 
 ### Complex trait colocalisations
 
@@ -132,7 +181,7 @@ common_colocs_per_trait <- haemoglobin_common |>
   dplyr::summarise(n_colocs = dplyr::n(), .groups = "drop") |>
   dplyr::inner_join(pull_trait_ids_common, by = "trait_id") |>
   dplyr::inner_join(n_studyhits_common, by = "trait_id") |>
-  dplyr::filter(trait_id != 4759, n_colocs > 1, !is.na(trait_category),
+  dplyr::filter(trait_id != anchor_trait_id, n_colocs > 1, !is.na(trait_category),
                 n_studyhits > 0) |>
   dplyr::mutate(
     prop_colocing_hits = (n_colocs / n_studyhits) * 100,
@@ -227,7 +276,7 @@ meta_tmprss6 <- haemoglobin_tmprss6 |>
   dplyr::distinct()
 ```
 
-We found the candidate SNP to be `r snp_id_tmprss6`, which VEP has annoted as an `r tmprss6_gene$consequence` of `r tmprss6_gene$gene`.
+The GPMap found the candidate SNP to be `r tmprss6_variant$variant$snp`, which VEP has annotated as an `r tmprss6_variant$variant$consequence` of `r tmprss6_variant$variant$symbol`.
 
 ### Region plot: scaled LBF values across all studies in the coloc group
 ```{r TMPRSS6-region, fig.width=8, fig.height=2}
@@ -274,36 +323,7 @@ plot_region(se_tmprss6,
 )
 ```
 
-```{r TMPRSS6-geneview, fig.width=8, fig.height=1.5}
-
-chr22_genes <- all_genes |>
-  dplyr::filter(chr == 22, start < tmprss6_gene$stop + 50000, stop > tmprss6_gene$start - 50000)
-
-tmprss6_markers <- data.frame(
-  pos  = c(37100807, 37073553, 37095555, 37100889),
-  label = c("rs9619658", "rs137853120", "cg17956747", "cg19979738"),
-  fill  = c("red", "blue", "black", "black")
-)
-
-ggplot2::ggplot() +
-  ggplot2::geom_segment(data = chr22_genes,
-                        ggplot2::aes(x = start / 1e6, xend = stop / 1e6,
-                                     y = 0, yend = 0),
-                        linewidth = 3, colour = "steelblue") +
-  ggplot2::geom_text(data = chr22_genes,
-                     ggplot2::aes(x = (start + stop) / 2e6, y = 0.3, label = gene),
-                     size = 3) +
-  ggplot2::geom_point(data = tmprss6_markers,
-                      ggplot2::aes(x = pos / 1e6, y = -0.3, colour = fill),
-                      size = 3) +
-  ggplot2::scale_colour_identity() +
-  ggplot2::scale_x_continuous(limits = c(36970000 / 1e6, 37150000 / 1e6)) +
-  ggplot2::theme_minimal() +
-  ggplot2::theme(axis.text.y = ggplot2::element_blank(),
-                 axis.title.y = ggplot2::element_blank(),
-                 panel.grid = ggplot2::element_blank()) +
-  ggplot2::labs(x = "Position (Mb)")
-```
+We can also plot the effect estimates at the candidate SNP across the colocalising studies.
 
 ```{r TMPRSS6-betas, fig.width=6, fig.height=3}
 # Effect estimates at candidate SNP across colocalising studies
@@ -400,4 +420,37 @@ ggplot2::ggplot(mx_colocs_melt,
                  axis.title = ggplot2::element_blank(),
                  panel.grid = ggplot2::element_blank(),
                  axis.text = ggplot2::element_blank())
+```
+
+We can also view the specific clusters that were found.
+```{r trait-clustering-table}
+# Define how many clusters you want (adjust 'k' as needed)
+n_clusters <- 10
+cluster_assignments <- stats::cutree(mx_clust, k = n_clusters)
+
+# cutree names are character rownames; trait_id in common_colocs_per_trait is integer
+trait_clusters <- dplyr::tibble(
+  trait_id = as.integer(names(cluster_assignments)),
+  cluster_id = as.factor(unname(cluster_assignments))
+) |>
+  dplyr::left_join(
+    common_colocs_per_trait |>
+      dplyr::select(trait_id, trait_name) |>
+      dplyr::distinct(),
+    by = "trait_id"
+  ) |>
+  dplyr::arrange(cluster_id)
+
+# View the groups in a condensed format (truncate long trait lists for readability)
+grouped_summary <- trait_clusters |>
+  dplyr::group_by(cluster_id) |>
+  dplyr::summarize(
+    traits = stringr::str_trunc(
+      paste(stats::na.omit(trait_name), collapse = ", "),
+      width = 500
+    ),
+    .groups = "drop"
+  )
+
+knitr::kable(grouped_summary)
 ```

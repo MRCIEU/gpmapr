@@ -495,6 +495,7 @@ get_gwas_summary_stats_api <- function(gwas_id) {
 #' @param ancestry The ancestry of the GWAS.  Currently only "EUR" is accepted.
 #' @param sample_size The sample size of the GWAS
 #' @param reference_build The reference build of the GWAS.  Only "GRCh37" and "GRCh38" are accepted.
+#' @param compare_with_upload_guids A vector of GUIDs of uploads to compare with
 #' @return A list containing the GWAS information
 #' @noRd
 upload_gwas_api <- function(file,
@@ -508,7 +509,8 @@ upload_gwas_api <- function(file,
                             should_be_added = FALSE,
                             ancestry = "EUR",
                             sample_size,
-                            reference_build = "GRCh38") {
+                            reference_build = "GRCh38",
+                            compare_with_upload_guids = NA) {
   url <- paste0(getOption("gpmap_url"), "/v1/gwas")
 
   gwas_request <- list(
@@ -522,7 +524,8 @@ upload_gwas_api <- function(file,
     ancestry = ancestry,
     sample_size = sample_size,
     p_value_threshold = p_value_threshold,
-    column_names = column_names
+    column_names = column_names,
+    compare_with_upload_guids = compare_with_upload_guids
   )
   request_json <- jsonlite::toJSON(gwas_request, auto_unbox = TRUE)
 

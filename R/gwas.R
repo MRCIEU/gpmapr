@@ -41,6 +41,7 @@ get_gwas <- function(gwas_id, include_associations = FALSE, include_summary_stat
 #' @param ancestry The ancestry of the GWAS.  Currently only "EUR" is accepted.
 #' @param sample_size The sample size of the GWAS
 #' @param reference_build The reference build of the GWAS.  Only "GRCh37" and "GRCh38" are accepted.
+#' @param compare_with_upload_guids A vector of GUIDs of uploads to compare with
 #' @return A list containing the GWAS information
 #' @export
 upload_gwas <- function(file,
@@ -54,7 +55,9 @@ upload_gwas <- function(file,
                         should_be_added = FALSE,
                         ancestry = "EUR",
                         sample_size = NA,
-                        reference_build = "GRCh38") {
+                        reference_build = "GRCh38",
+                        compare_with_upload_guids = NA) {
+
   if (is.na(file) || !file.exists(file) || file.info(file)$size > 1024^3) {
     stop("file must be a valid file and less than 1GB")
   }
@@ -69,6 +72,11 @@ upload_gwas <- function(file,
   if (is.na(sample_size) || !is.numeric(sample_size) || sample_size <= 0) {
     stop("sample_size must be a positive number")
   }
+  if (!is.na(compare_with_upload_guids)) {
+    if (!all(sapply(compare_with_upload_guids, is_guid))) {
+      stop("compare_with_upload_guids must be a vector of GUIDs")
+    }
+  }
 
   gwas_info <- upload_gwas_api(file,
     name,
@@ -81,7 +89,8 @@ upload_gwas <- function(file,
     should_be_added,
     ancestry,
     sample_size,
-    reference_build
+    reference_build,
+    compare_with_upload_guids
   )
   return(gwas_info)
 }
