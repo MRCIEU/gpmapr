@@ -1,4 +1,5 @@
 linters: linters_with_defaults(
+    object_length_linter = object_length_linter(length = 50),
     line_length_linter = line_length_linter(120),
     return_linter = return_linter(return_style = "explicit"),
     object_name_linter = NULL,

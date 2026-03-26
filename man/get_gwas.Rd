@@ -4,10 +4,12 @@
 \alias{get_gwas}
 \title{Get a GWAS from the API}
 \usage{
-get_gwas(gwas_id, include_summary_stats = FALSE)
+get_gwas(gwas_id, include_associations = FALSE, include_summary_stats = FALSE)
 }
 \arguments{
 \item{gwas_id}{The ID of the GWAS}
+
+\item{include_associations}{Whether to include associations}
 
 \item{include_summary_stats}{Whether to include summary statistics}
 }
