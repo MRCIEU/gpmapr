@@ -16,7 +16,7 @@ It has the following columns:
 \itemize{
 \item id: the unique id for this study extraction
 \item study_id: the id of the study associated with this study extraction
-\item snp_id: the id of the SNP
+\item variant_id: the id of the SNP
 \item snp: the SNP name
 \item ld_block_id: the id of the LD block
 \item unique_study_id: the unique id for this study

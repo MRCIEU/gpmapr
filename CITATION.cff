@@ -16,7 +16,7 @@ authors:
 repository-code: "https://github.com/MRCIEU/gpmapr"
 url: "https://gpmap.opengwas.io/"
 license: MIT
-version: 0.0.0.9000
+version: 0.0.1.0
 preferred-citation:
   type: article
   title: "Building The Human Genotype-Phenotype Map to Harness Pleiotropy and Refine Disease Mechanisms"

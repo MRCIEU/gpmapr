@@ -1,5 +1,6 @@
 api_to_package_version <- list(
-  "1.0.0" = c("0.0.0.9000")
+  "1.0.0" = c("0.0.0.9000"),
+  "1.0.1" = c("0.0.1.0")
 )
 
 #' Check if a string is a GUID
@@ -24,7 +25,7 @@ is_guid <- function(id) {
 merge_associations <- function(coloc_groups, rare_results, associations) {
   if (is.null(associations)) return(coloc_groups = coloc_groups, rare_results = rare_results)
 
-  join_keys <- c("study_id", "snp_id")
+  join_keys <- c("study_id", "variant_id")
   if (!all(join_keys %in% colnames(associations))) {
     return(list(coloc_groups = coloc_groups, rare_results = rare_results))
   }
@@ -69,18 +70,18 @@ merge_gwas_upload_associations <- function(coloc_groups, associations) {
   assoc_cols <- intersect(assoc_cols, colnames(associations))
 
   if (nrow(study_rows) > 0 && "study_id" %in% colnames(associations)) {
-    assoc <- dplyr::distinct(associations, dplyr::across(dplyr::all_of(c("study_id", "snp_id"))), .keep_all = TRUE)
-    assoc <- dplyr::select(assoc, dplyr::all_of(c("study_id", "snp_id", assoc_cols)))
-    parts[[length(parts) + 1L]] <- dplyr::left_join(study_rows, assoc, by = c("study_id", "snp_id"))
+    assoc <- dplyr::distinct(associations, dplyr::across(dplyr::all_of(c("study_id", "variant_id"))), .keep_all = TRUE)
+    assoc <- dplyr::select(assoc, dplyr::all_of(c("study_id", "variant_id", assoc_cols)))
+    parts[[length(parts) + 1L]] <- dplyr::left_join(study_rows, assoc, by = c("study_id", "variant_id"))
   }
   if (nrow(existing_rows) > 0 && "existing_study_id" %in% colnames(associations)) {
     assoc <- dplyr::distinct(
       associations,
-      dplyr::across(dplyr::all_of(c("existing_study_id", "snp_id"))),
+      dplyr::across(dplyr::all_of(c("existing_study_id", "variant_id"))),
       .keep_all = TRUE
     )
-    assoc <- dplyr::select(assoc, dplyr::all_of(c("existing_study_id", "snp_id", assoc_cols)))
-    parts[[length(parts) + 1L]] <- dplyr::left_join(existing_rows, assoc, by = c("existing_study_id", "snp_id"))
+    assoc <- dplyr::select(assoc, dplyr::all_of(c("existing_study_id", "variant_id", assoc_cols)))
+    parts[[length(parts) + 1L]] <- dplyr::left_join(existing_rows, assoc, by = c("existing_study_id", "variant_id"))
   }
   if (nrow(other_rows) > 0) {
     parts[[length(parts) + 1L]] <- other_rows

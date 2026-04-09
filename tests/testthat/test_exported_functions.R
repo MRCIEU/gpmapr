@@ -42,11 +42,11 @@ test_that("gene() returns expected output", {
 })
 
 test_that("associations() returns expected output", {
-  snp_ids <- c(80750)
+  variant_ids <- c(80750)
   study_ids <- c(5020, 4870)
-  result <- associations(snp_ids, study_ids)
+  result <- associations(variant_ids, study_ids)
   expect_type(result, "list")
-  expect_true(all(result$snp_id %in% snp_ids))
+  expect_true(all(result$variant_id %in% variant_ids))
   expect_true(all(result$study_id %in% study_ids))
 })
 
@@ -56,8 +56,8 @@ test_that("get_all_gene_pleiotropies() returns expected output", {
   expect_true(nrow(result) > 0)
 })
 
-test_that("get_all_snp_pleiotropies() returns expected output", {
-  result <- get_all_snp_pleiotropies()
+test_that("get_all_variant_pleiotropies() returns expected output", {
+  result <- get_all_variant_pleiotropies()
   expect_type(result, "list")
   expect_true(nrow(result) > 0)
 })
@@ -98,7 +98,7 @@ test_that("variants() returns expected output", {
   variant_ids <- c(5553693, 5553694)
   result <- variants(variants = variant_ids, include_associations = TRUE, expand = TRUE)
   expect_type(result, "list")
-  expect_true(all(result$variants$snp_id %in% variant_ids))
+  expect_true(all(result$variants$variant_id %in% variant_ids))
   expect_true(nrow(result$coloc_groups) > 0)
   expect_true(!is.null(result$study_extractions))
   expect_true(nrow(result$study_extractions) > 0)

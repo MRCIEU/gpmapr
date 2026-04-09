@@ -237,9 +237,9 @@ region_api <- function(region_id, include_associations = FALSE, include_coloc_pa
 }
 
 #' @title Get Variants API
-#' @description Get variants from the API. The API accepts variants (snp_ids, rsids, or strings - auto-detected)
+#' @description Get variants from the API. The API accepts variants (variant_ids, rsids, or strings - auto-detected)
 #' or a genomic range (grange).
-#' @param variants A vector of variant identifiers (snp_ids, rsids, or strings)
+#' @param variants A vector of variant identifiers (variant_ids, rsids, or strings)
 #' @param expand Logical. FALSE (default) returns minimal data. TRUE returns full VariantResponse (max 10, not available with grange)
 #' @param include_associations Logical. Whether to include associations for SNPs (only when expand=TRUE)
 #' @param include_coloc_pairs Logical. Whether to include coloc pairs for SNPs (only when expand=TRUE)
@@ -297,15 +297,15 @@ get_variants_with_options_api <- function(
 
 #' @title Get a Variant API
 #' @description Get a variant from the API
-#' @param snp_id A character string specifying the SNP ID
+#' @param variant_id A character string specifying the SNP ID
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs
 #' @return A list containing the variant
 #' @noRd
-variant_api <- function(snp_id, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
+variant_api <- function(variant_id, include_coloc_pairs = FALSE, h4_threshold = 0.8) {
   url <- paste0(
     getOption("gpmap_url"),
-    "/v1/variants/", snp_id,
+    "/v1/variants/", variant_id,
     "?include_coloc_pairs=", include_coloc_pairs,
     "&h4_threshold=", h4_threshold
   )
@@ -318,13 +318,13 @@ variant_api <- function(snp_id, include_coloc_pairs = FALSE, h4_threshold = 0.8)
 
 #' @title Get Variant Summary Stats API
 #' @description Get variant summary statistics from the API
-#' @param snp_id A character string specifying the SNP ID
+#' @param variant_id A character string specifying the SNP ID
 #' @return A list containing dataframes from the TSV files
 #' @noRd
-variant_summary_stats_api <- function(snp_id) {
-  temp_zip <- file.path(tempdir(), paste0("summary_stats_", snp_id, ".zip"))
+variant_summary_stats_api <- function(variant_id) {
+  temp_zip <- file.path(tempdir(), paste0("summary_stats_", variant_id, ".zip"))
 
-  url <- paste0(getOption("gpmap_url"), "/v1/variants/", snp_id, "/summary-stats")
+  url <- paste0(getOption("gpmap_url"), "/v1/variants/", variant_id, "/summary-stats")
   response <- httr::GET(url, httr::timeout(timeout_seconds))
   writeBin(httr::content(response, "raw"), temp_zip)
   utils::unzip(temp_zip, exdir = tempdir())
@@ -357,12 +357,12 @@ ld_proxies_by_variant_api <- function(variants) {
 
 #' @title Get LD Proxies by SNP ID API
 #' @description Get LD proxies from the API by SNP ID
-#' @param snp_ids A character string specifying the SNP ID
+#' @param variant_ids A character string specifying the SNP ID
 #' @return A list containing the LD proxies
 #' @noRd
-ld_proxies_by_snp_id_api <- function(snp_ids) {
-  snp_ids <- paste(snp_ids, collapse = "&snp_ids=")
-  url <- paste0(getOption("gpmap_url"), "/v1/ld/proxies?snp_ids=", snp_ids)
+ld_proxies_by_variant_id_api <- function(variant_ids) {
+  variant_ids <- paste(variant_ids, collapse = "&variant_ids=")
+  url <- paste0(getOption("gpmap_url"), "/v1/ld/proxies?variant_ids=", variant_ids)
   ld_proxies <- httr::GET(url)
   ld_proxies <- httr::content(ld_proxies, "text", encoding = "UTF-8")
   ld_proxies <- jsonlite::fromJSON(ld_proxies)
@@ -385,12 +385,12 @@ ld_matrix_by_variant_api <- function(variants) {
 
 #' @title Get LD Matrix by SNP ID API
 #' @description Get LD matrix from the API by SNP ID
-#' @param snp_ids A character string specifying the SNP ID
+#' @param variant_ids A character string specifying the SNP ID
 #' @return A list containing the LD matrix
 #' @noRd
-ld_matrix_by_snp_id_api <- function(snp_ids) {
-  snp_ids <- paste(snp_ids, collapse = "&snp_ids=")
-  url <- paste0(getOption("gpmap_url"), "/v1/ld/matrix?snp_ids=", snp_ids)
+ld_matrix_by_variant_id_api <- function(variant_ids) {
+  variant_ids <- paste(variant_ids, collapse = "&variant_ids=")
+  url <- paste0(getOption("gpmap_url"), "/v1/ld/matrix?variant_ids=", variant_ids)
   ld_matrix <- httr::GET(url)
   ld_matrix <- httr::content(ld_matrix, "text", encoding = "UTF-8")
   ld_matrix <- jsonlite::fromJSON(ld_matrix)
@@ -399,14 +399,14 @@ ld_matrix_by_snp_id_api <- function(snp_ids) {
 
 #' @title Get Associations by SNP ID and Study ID API
 #' @description Get associations from the API by SNP id and study id
-#' @param snp_ids A vector of numeric values specifying the SNP IDs
+#' @param variant_ids A vector of numeric values specifying the SNP IDs
 #' @param study_ids A vector of numeric values specifying the Study IDs
 #' @return A list containing the associations
 #' @noRd
-associations_api <- function(snp_ids, study_ids) {
-  snp_ids <- paste(snp_ids, collapse = "&snp_ids=")
+associations_api <- function(variant_ids, study_ids) {
+  variant_ids <- paste(variant_ids, collapse = "&variant_ids=")
   study_ids <- paste(study_ids, collapse = "&study_ids=")
-  url <- paste0(getOption("gpmap_url"), "/v1/associations?snp_ids=", snp_ids, "&study_ids=", study_ids)
+  url <- paste0(getOption("gpmap_url"), "/v1/associations?variant_ids=", variant_ids, "&study_ids=", study_ids)
 
   associations <- httr::GET(url, httr::timeout(timeout_seconds))
   associations <- httr::content(associations, "text", encoding = "UTF-8")
@@ -430,12 +430,12 @@ gene_pleiotropies_api <- function() {
 #' @description Get all SNP pleiotropies from the API
 #' @return A list containing the SNP pleiotropies
 #' @noRd
-snp_pleiotropies_api <- function() {
+variant_pleiotropies_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/pleiotropy/snps")
-  snp_pleiotropies <- httr::GET(url, httr::timeout(timeout_seconds))
-  snp_pleiotropies <- httr::content(snp_pleiotropies, "text", encoding = "UTF-8")
-  snp_pleiotropies <- jsonlite::fromJSON(snp_pleiotropies)
-  return(snp_pleiotropies)
+  variant_pleiotropies <- httr::GET(url, httr::timeout(timeout_seconds))
+  variant_pleiotropies <- httr::content(variant_pleiotropies, "text", encoding = "UTF-8")
+  variant_pleiotropies <- jsonlite::fromJSON(variant_pleiotropies)
+  return(variant_pleiotropies)
 }
 
 #' @title Get a GWAS from the API

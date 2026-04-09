@@ -6,7 +6,7 @@
 #' @export
 ld_matrix <- function(variant_ids = c()) {
   if (is.numeric(variant_ids)) {
-    ld_matrix <- ld_matrix_by_snp_id_api(variant_ids)
+    ld_matrix <- ld_matrix_by_variant_id_api(variant_ids)
   }
   if (is.character(variant_ids)) {
     ld_matrix <- ld_matrix_by_variant_api(variant_ids)
@@ -23,7 +23,7 @@ ld_matrix <- function(variant_ids = c()) {
 #' @export
 ld_proxies <- function(variant_ids = c()) {
   if (is.numeric(variant_ids)) {
-    ld_proxies <- ld_proxies_by_snp_id_api(variant_ids)
+    ld_proxies <- ld_proxies_by_variant_id_api(variant_ids)
   }
   if (is.character(variant_ids)) {
     ld_proxies <- ld_proxies_by_variant_api(variant_ids)

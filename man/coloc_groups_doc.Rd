@@ -17,7 +17,7 @@ It has the following columns:
 \item coloc_group_id: the unique id for this group of colocalised results
 \item study_id: the id of the study
 \item study_extraction_id: the id of the study extraction
-\item snp_id: the id of the SNP
+\item variant_id: the id of the SNP
 \item ld_block_id: the id of the LD block
 \item chr: the chromosome of the SNP
 \item bp: the base pair position of the SNP

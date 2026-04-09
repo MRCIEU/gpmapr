@@ -260,12 +260,12 @@ tmprss6_richest_coloc_id <- haemoglobin_tmprss6_all |>
 haemoglobin_tmprss6 <- haemoglobin_tmprss6_all |>
   dplyr::filter(coloc_group_id == tmprss6_richest_coloc_id)
 
-snp_id_tmprss6 <- haemoglobin_tmprss6$snp_id |> unique() |> head(1)
+variant_id_tmprss6 <- haemoglobin_tmprss6$variant_id |> unique() |> head(1)
 bp_tmprss6 <- haemoglobin_tmprss6$bp[1]
 
 # Fetch summary statistics for the LD block containing the candidate SNP.
 # summary_stats is a named list keyed by study_id; columns are uppercase (BP, SE, LBF_1, SNP, BETA, ...).
-tmprss6_variant <- gpmapr::variant(snp_id_tmprss6, include_summary_stats = TRUE)
+tmprss6_variant <- gpmapr::variant(variant_id_tmprss6, include_summary_stats = TRUE)
 
 # Trait labels live on coloc_groups, not always on variant$study_extractions
 se_tmprss6 <- tmprss6_variant$study_extractions |>

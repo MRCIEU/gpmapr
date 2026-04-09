@@ -47,7 +47,7 @@ It has the following columns:
 \item coloc_group_id: the unique id for this group of colocalised results
 \item study_id: the id of the study
 \item study_extraction_id: the id of the study extraction
-\item snp_id: the id of the SNP
+\item variant_id: the id of the SNP
 \item ld_block_id: the id of the LD block
 \item chr: the chromosome of the SNP
 \item bp: the base pair position of the SNP
@@ -72,7 +72,7 @@ It has the following columns:
 \itemize{
 \item id: the unique id for this study extraction
 \item study_id: the id of the study associated with this study extraction
-\item snp_id: the id of the SNP
+\item variant_id: the id of the SNP
 \item snp: the SNP name
 \item ld_block_id: the id of the LD block
 \item unique_study_id: the unique id for this study
@@ -103,7 +103,7 @@ It has the following columns:
 \item rare_result_group_id: the unique id for this rare result group
 \item study_id: the id of the study associated with this rare result
 \item study_extraction_id: the id of the study extraction associated with this rare result
-\item snp_id: the id of the SNP
+\item variant_id: the id of the SNP
 \item ld_block_id: the id of the LD block
 \item chr: the chromosome of the SNP
 \item bp: the base pair position of the SNP
