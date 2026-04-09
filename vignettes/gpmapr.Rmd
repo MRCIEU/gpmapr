@@ -68,6 +68,8 @@ Each trait, gene, or variant call have optional parameters:
 * `include_coloc_pairs`: Whether to include coloc pairs in the output (which include h3 and h4), as opposed to just the coloc groups.
 * `h4_threshold`: The h4 threshold for coloc pairs.
 
+## Trait example
+
 ```{r trait-example}
 hemoglobin_trait <- trait(931)
 names(hemoglobin_trait)
@@ -83,11 +85,120 @@ This returns a list of elements, which you can access by name.  More detailed ex
 * `associations`: (optional) a dataframe containing the associations for the variants in which the trait is colocalised
 * `coloc_pairs`: (optional) a dataframe containing all pairwise coloc results for this trait.
 
+### How `study_extractions`, `coloc_groups`, and `rare_results` relate
+
+All three layers refer to **study extractions** (GWAS hits in finemapped LD regions), keyed by `id` in `study_extractions` and by `study_extraction_id` in `coloc_groups` and `rare_results`.
+
+Think of **`study_extractions`** as the catalogue of extractions linked to the trait or gene in the map: each row is a study signal at a locus. Not every listed extraction necessarily has a full colocalisation story or a rare-disease result row.
+
+- **`coloc_groups`** holds extractions that sit inside a **colocalisation group** (shared coloc evidence with other studies/traits at that locus). If a study extraction appears here, it has coloc-structured results for that entity.
+- **`rare_results`** holds extractions that belong to a **rare-result group** (rare-disease-style finemapping in the API). The same biological signal can, in principle, be reflected in both rare and common coloc paths, so overlap between this set of extraction ids and those in `coloc_groups` is possible.
+- **Neither table:** Some extractions appear only under **`study_extractions`**. They are still tied to the trait or gene in the genotype–phenotype map (for example via **locus tagging, proximity, or other association logic** in the pipeline), but they do not currently carry a coloc-group row or a rare-result group row. Treat those as “present on the map at this locus” rather than “absent by mistake.”
+
+The same idea applies when you call **`gene()`** (or other entity-specific endpoints): `study_extractions` is the wider catalogue, while `coloc_groups` and `rare_results` subdivide it where those analyses exist. The table below illustrates counts for the hemoglobin trait example (`trait(931)`).
+
+```{r trait-extraction-membership, dependson = "trait-example"}
+extraction_ids <- function(x) {
+  if (is.null(x) || !length(x)) {
+    return(integer(0))
+  }
+  id_col <- if ("id" %in% names(x)) "id" else NULL
+  if (!is.null(id_col)) {
+    return(unique(stats::na.omit(x[[id_col]])))
+  }
+  unique(stats::na.omit(unlist(lapply(x, function(df) {
+    if (!is.data.frame(df)) {
+      return(NULL)
+    }
+    if ("id" %in% names(df)) {
+      return(df[["id"]])
+    }
+    NULL
+  }))))
+}
+
+cg_ids <- unique(stats::na.omit(hemoglobin_trait$coloc_groups$study_extraction_id))
+
+rr <- hemoglobin_trait$rare_results
+rr_ids <- if (is.null(rr) || !length(rr)) {
+  integer(0)
+} else {
+  unique(stats::na.omit(unlist(lapply(rr, function(d) {
+    if (!is.data.frame(d) || !"study_extraction_id" %in% names(d)) {
+      return(NULL)
+    }
+    d[["study_extraction_id"]]
+  }))))
+}
+
+se_ids <- extraction_ids(hemoglobin_trait$study_extractions)
+
+only_study_extractions <- setdiff(se_ids, union(cg_ids, rr_ids))
+
+data.frame(
+  source = c(
+    "Distinct study_extraction_id in coloc_groups",
+    "Distinct study_extraction_id in rare_results",
+    "In study_extractions only (not in coloc_groups nor rare_results)",
+    "Total distinct extraction id in study_extractions"
+  ),
+  n_extractions = c(
+    length(cg_ids),
+    length(rr_ids),
+    length(only_study_extractions),
+    length(se_ids)
+  )
+)
+```
+
+# Gene example
+
 ```{r gene-example}
 slc44a1 <- gene("SLC44A1")
 names(slc44a1)
 nrow(slc44a1$coloc_groups)
 head(slc44a1$coloc_groups[, c("coloc_group_id", "trait_name", "data_type", "tissue")])
+```
+
+Note that by default, the gene endpoint includes trans genetic effects. You can turn this off with `gene("SLC44A1", include_trans = FALSE)`, or filter `coloc_groups` after the fact (for example `cis_trans == "cis"` or a `min_p` cutoff).
+
+After you subset rows, some `coloc_group_id` values may be left with only a single row. Those are no longer meaningful colocalisation **groups**, so drop them by keeping only groups with more than one row:
+
+```{r gene-filter-example}
+slc44a1_no_trans <- slc44a1
+slc44a1_no_trans$coloc_groups <- dplyr::filter(
+  slc44a1_no_trans$coloc_groups,
+  cis_trans == "cis"
+)
+# or e.g. dplyr::filter(..., min_p <= 5e-8)
+
+slc44a1_no_trans$coloc_groups <- slc44a1_no_trans$coloc_groups |>
+  dplyr::group_by(coloc_group_id) |>
+  dplyr::filter(dplyr::n() > 1L) |>
+  dplyr::ungroup()
+
+nrow(slc44a1_no_trans$coloc_groups)
+head(slc44a1_no_trans$coloc_groups[, c("coloc_group_id", "trait_name", "data_type", "tissue")])
+```
+
+## Coloc pairs example
+
+Although coloc groups provide a helpful overview of the colocalisation results for a gene, you may want to look at the pairwise relationships between the studies.  You can do this by setting `include_coloc_pairs = TRUE` in the call.
+
+As there may be many coloc pairs, the results are not as fleshed out as the coloc groups.  You may have to filter the results to get the information you need, or join with the study extractions to get the full picture.
+
+```{r coloc-pairs-example}
+slc44a1_coloc_pairs <- gene("SLC44A1", include_coloc_pairs = TRUE)
+nrow(slc44a1_coloc_pairs$coloc_pairs)
+head(slc44a1_coloc_pairs$coloc_pairs[, c("study_extraction_a_id", "study_extraction_b_id", "h4")])
+
+study_extractions_tbl <- dplyr::bind_rows(slc44a1_no_trans$study_extractions)
+study_extractions_subset <- dplyr::select(study_extractions_tbl, id, trait_name, min_p)
+slc44a1_coloc_pairs$coloc_pairs |>
+  dplyr::left_join(study_extractions_subset, by = c("study_extraction_a_id" = "id")) |>
+  dplyr::rename(trait_a = trait_name, min_p_a = min_p) |>
+  dplyr::left_join(study_extractions_subset, by = c("study_extraction_b_id" = "id")) |>
+  dplyr::rename(trait_b = trait_name, min_p_b = min_p)
 ```
 
 # Accessing summary statistics

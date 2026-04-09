@@ -1,6 +1,6 @@
 #' @title Variant
 #' @description A collection of studies that are associated with a particular variant.
-#' @param snp_id A character string specifying the SNP ID
+#' @param variant_id A character string specifying the SNP ID
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs
 #' @param h4_threshold A numeric value specifying the cutoff for included coloc pairs, defaults to 0.8.
 #'      Only used if include_coloc_pairs is TRUE.
@@ -23,18 +23,18 @@
 #' @inheritSection summary_statistics_doc summary_statistics_dataframe
 #' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
 #' @export
-variant <- function(snp_id,
+variant <- function(variant_id,
                     include_coloc_pairs = FALSE,
                     h4_threshold = 0.8,
                     include_summary_stats = FALSE) {
-  if (is.null(snp_id)) {
-    stop("snp_id is required")
+  if (is.null(variant_id)) {
+    stop("variant_id is required")
   }
 
-  variant_info <- variant_api(snp_id, include_coloc_pairs = include_coloc_pairs, h4_threshold = h4_threshold)
+  variant_info <- variant_api(variant_id, include_coloc_pairs = include_coloc_pairs, h4_threshold = h4_threshold)
 
   if (include_summary_stats) {
-    summary_stats <- variant_summary_stats_api(snp_id)
+    summary_stats <- variant_summary_stats_api(variant_id)
     variant_info$summary_stats <- summary_stats
   }
 
@@ -47,10 +47,10 @@ variant <- function(snp_id,
 }
 
 #' @title Variants
-#' @description Get specific variants from the API. The API accepts variant identifiers (snp_ids, rsids, or strings)
+#' @description Get specific variants from the API. The API accepts variant identifiers (variant_ids, rsids, or strings)
 #' and returns collapsed/combined data. The API distinguishes between identifier types automatically.
 #' Max 10 variants when expand=TRUE.
-#' @param variants A vector of variant identifiers (snp_ids, rsids, or strings)
+#' @param variants A vector of variant identifiers (variant_ids, rsids, or strings)
 #' @param expand Logical. FALSE (default) returns minimal data. TRUE returns full VariantResponse (max 10)
 #' @param include_associations Logical. Whether to include associations (BETA, SE, P). Only when expand=TRUE
 #' @param include_coloc_pairs Logical. Whether to include coloc pairs. Only when expand=TRUE

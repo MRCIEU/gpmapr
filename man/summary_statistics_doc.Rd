@@ -15,7 +15,7 @@ The summary_statistics dataframe contains information about which studies have s
 From the API, column names are typically uppercase (SNP, CHR, BP, EA, OA, EAF, Z, BETA, SE, P, LBF_1, etc.).
 It has the following columns (names may be upper or lower case depending on source):
 \itemize{
-\item SNP / snp_id: the id of the SNP
+\item SNP / variant_id: the id of the SNP
 \item CHR / chr: the chromosome of the SNP
 \item BP / bp: the base pair position of the SNP
 \item EA / ea: the effect allele

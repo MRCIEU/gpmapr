@@ -20,8 +20,8 @@ Get LD proxies from the API by Variant ID
 The ld dataframe contains information about the LD matrix.
 It has the following columns:
 \itemize{
-\item lead_snp_id: the id of the lead SNP
-\item variant_snp_id: the id of the variant SNP
+\item lead_variant_id: the id of the lead SNP
+\item proxy_variant_id: the id of the variant SNP
 \item ld_block_id: the id of the LD block
 \item r: the r value between the lead and variant SNPs
 }

@@ -7,7 +7,7 @@
 #'   \item coloc_group_id: the unique id for this group of colocalised results
 #'   \item study_id: the id of the study
 #'   \item study_extraction_id: the id of the study extraction
-#'   \item snp_id: the id of the SNP
+#'   \item variant_id: the id of the SNP
 #'   \item ld_block_id: the id of the LD block
 #'   \item chr: the chromosome of the SNP
 #'   \item bp: the base pair position of the SNP
@@ -34,7 +34,7 @@ coloc_groups_doc <- function() {}
 #' \itemize{
 #'   \item id: the unique id for this study extraction
 #'   \item study_id: the id of the study associated with this study extraction
-#'   \item snp_id: the id of the SNP
+#'   \item variant_id: the id of the SNP
 #'   \item snp: the SNP name
 #'   \item ld_block_id: the id of the LD block
 #'   \item unique_study_id: the unique id for this study
@@ -67,7 +67,7 @@ study_extractions_doc <- function() {}
 #'   \item rare_result_group_id: the unique id for this rare result group
 #'   \item study_id: the id of the study associated with this rare result
 #'   \item study_extraction_id: the id of the study extraction associated with this rare result
-#'   \item snp_id: the id of the SNP
+#'   \item variant_id: the id of the SNP
 #'   \item ld_block_id: the id of the LD block
 #'   \item chr: the chromosome of the SNP
 #'   \item bp: the base pair position of the SNP
@@ -107,7 +107,7 @@ coloc_pairs_doc <- function() {}
 #' The associations dataframe contains information about which studies have association results.
 #' It has the following columns:
 #' \itemize{
-#'   \item snp_id: the id of the SNP associated with this association
+#'   \item variant_id: the id of the SNP associated with this association
 #'   \item study_id: the id of the study associated with this association
 #'   \item beta: the beta value of the association
 #'   \item se: the standard error of the association
@@ -125,7 +125,7 @@ associations_doc <- function() {}
 #' From the API, column names are typically uppercase (SNP, CHR, BP, EA, OA, EAF, Z, BETA, SE, P, LBF_1, etc.).
 #' It has the following columns (names may be upper or lower case depending on source):
 #' \itemize{
-#'   \item SNP / snp_id: the id of the SNP
+#'   \item SNP / variant_id: the id of the SNP
 #'   \item CHR / chr: the chromosome of the SNP
 #'   \item BP / bp: the base pair position of the SNP
 #'   \item EA / ea: the effect allele
@@ -183,8 +183,8 @@ genes_in_region_doc <- function() {}
 #' The ld dataframe contains information about the LD matrix.
 #' It has the following columns:
 #' \itemize{
-#'   \item lead_snp_id: the id of the lead SNP
-#'   \item variant_snp_id: the id of the variant SNP
+#'   \item lead_variant_id: the id of the lead SNP
+#'   \item proxy_variant_id: the id of the variant SNP
 #'   \item ld_block_id: the id of the LD block
 #'   \item r: the r value between the lead and variant SNPs
 #' }
@@ -206,15 +206,15 @@ ld_doc <- function() {}
 gene_pleiotropies_doc <- function() {}
 
 #' @title SNP Pleiotropies Dataframe Documentation
-#' @description Shared documentation for snp_pleiotropies dataframe columns
-#' @section snp_pleiotropies_dataframe:
-#' The snp_pleiotropies dataframe contains information about which SNPs are pleiotropic.
+#' @description Shared documentation for variant_pleiotropies dataframe columns
+#' @section variant_pleiotropies_dataframe:
+#' The variant_pleiotropies dataframe contains information about which SNPs are pleiotropic.
 #' It has the following columns:
 #' \itemize{
-#'   \item snp_id: the id of the SNP
+#'   \item variant_id: the id of the SNP
 #'   \item snp: the name of the SNP
 #'   \item : distinct_trait_categories the number of trait categories that the SNP is associated with via coloc groups
 #'   \item : distinct_protein_coding_genes the number of genes that the SNP is associated with via coloc groups
 #' }
 #' @keywords internal
-snp_pleiotropies_doc <- function() {}
+variant_pleiotropies_doc <- function() {}
