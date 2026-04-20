@@ -1,10 +1,9 @@
 ---
 title: "Using gpmapr"
 output:
-  rmarkdown::html_vignette:
-    css: vignette-wide.css
+  rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{gpmapr}
+  %\VignetteIndexEntry{Using gpmapr}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -30,8 +29,8 @@ The gpmapr package provides a set of functions to interact with the GPMap API.
 The first port of entry is the `search_gpmap` function.  This function allows you to search for a trait, gene, or variant.
 
 ```{r search-trait}
-hemoglobin <- search_gpmap("hemoglobin")
-hemoglobin
+haemoglobin <- search_gpmap("haemoglobin")
+knitr::kable(haemoglobin[, c("name", "sample_size", "num_coloc_groups", "call")])
 ```
 You can see information about the different traits that match your search, how to subsequently get more information (under `call`), and metadata about the trait (under `info`).
 
@@ -40,13 +39,13 @@ You can see information about the different traits that match your search, how t
 * Extractions: Each trait has a number of extractions, related to the number of finemapped ld regions that had a p-value < 1.5e-4.
 * Colocalisation Groups: The number of colocalisation groups associated with the trait / gene / variant.
 * Colocalising Traits: The number of traits that are colocalising with the trait / gene / variant.
-* Rare Disease Results: Each trait has a number of rare disease results, related to the number of groups of rare disease results that had a p-value < 1.5e-4.
+* Rare Result Groups: Each trait has a number of rare result groups, related to the number of groups of rare result groups that had a p-value < 1.5e-4.
 
 You can also search for a gene (by ENSG ID or gene name) or variant (by CHR:BP or rsID).
 
 ```{r other-searches}
-search_gpmap("SLC44A")
-search_gpmap("22:37042914")
+knitr::kable(search_gpmap("SLC44A")[, c("name", "sample_size", "num_study_extractions", "num_coloc_groups", "call")])
+knitr::kable(search_gpmap("22:37042914"))
 ```
 
 ### Variant search returns proxy variants
@@ -55,7 +54,7 @@ The variant search will return the original variant and any proxy variants that 
 
 ```{r proxy-variants}
 proxy_variants <- search_gpmap("rs17078078")
-proxy_variants
+knitr::kable(proxy_variants)
 ```
 
 # Diving in
@@ -73,7 +72,8 @@ Each trait, gene, or variant call have optional parameters:
 ```{r trait-example}
 hemoglobin_trait <- trait(931)
 names(hemoglobin_trait)
-head(hemoglobin_trait$coloc_groups)
+nrow(hemoglobin_trait$coloc_groups)
+nrow(hemoglobin_trait$study_extractions)
 ```
 
 This returns a list of elements, which you can access by name.  More detailed explanations of the below are described in the API documentation.
@@ -97,7 +97,7 @@ Think of **`study_extractions`** as the catalogue of extractions linked to the t
 
 The same idea applies when you call **`gene()`** (or other entity-specific endpoints): `study_extractions` is the wider catalogue, while `coloc_groups` and `rare_results` subdivide it where those analyses exist. The table below illustrates counts for the hemoglobin trait example (`trait(931)`).
 
-```{r trait-extraction-membership, dependson = "trait-example"}
+```{r trait-extraction-membership}
 extraction_ids <- function(x) {
   if (is.null(x) || !length(x)) {
     return(integer(0))
@@ -135,7 +135,7 @@ se_ids <- extraction_ids(hemoglobin_trait$study_extractions)
 
 only_study_extractions <- setdiff(se_ids, union(cg_ids, rr_ids))
 
-data.frame(
+knitr::kable(data.frame(
   source = c(
     "Distinct study_extraction_id in coloc_groups",
     "Distinct study_extraction_id in rare_results",
@@ -148,7 +148,7 @@ data.frame(
     length(only_study_extractions),
     length(se_ids)
   )
-)
+))
 ```
 
 # Gene example
@@ -157,7 +157,7 @@ data.frame(
 slc44a1 <- gene("SLC44A1")
 names(slc44a1)
 nrow(slc44a1$coloc_groups)
-head(slc44a1$coloc_groups[, c("coloc_group_id", "trait_name", "data_type", "tissue")])
+knitr::kable(head(slc44a1$coloc_groups[, c("coloc_group_id", "trait_name", "data_type", "tissue")]))
 ```
 
 Note that by default, the gene endpoint includes trans genetic effects. You can turn this off with `gene("SLC44A1", include_trans = FALSE)`, or filter `coloc_groups` after the fact (for example `cis_trans == "cis"` or a `min_p` cutoff).
@@ -178,7 +178,7 @@ slc44a1_no_trans$coloc_groups <- slc44a1_no_trans$coloc_groups |>
   dplyr::ungroup()
 
 nrow(slc44a1_no_trans$coloc_groups)
-head(slc44a1_no_trans$coloc_groups[, c("coloc_group_id", "trait_name", "data_type", "tissue")])
+knitr::kable(head(slc44a1_no_trans$coloc_groups[, c("coloc_group_id", "trait_name", "data_type", "tissue")]))
 ```
 
 ## Coloc pairs example
@@ -190,16 +190,158 @@ As there may be many coloc pairs, the results are not as fleshed out as the colo
 ```{r coloc-pairs-example}
 slc44a1_coloc_pairs <- gene("SLC44A1", include_coloc_pairs = TRUE)
 nrow(slc44a1_coloc_pairs$coloc_pairs)
-head(slc44a1_coloc_pairs$coloc_pairs[, c("study_extraction_a_id", "study_extraction_b_id", "h4")])
+knitr::kable(head(slc44a1_coloc_pairs$coloc_pairs[, c("study_extraction_a_id", "study_extraction_b_id", "h4")]))
 
 study_extractions_tbl <- dplyr::bind_rows(slc44a1_no_trans$study_extractions)
 study_extractions_subset <- dplyr::select(study_extractions_tbl, id, trait_name, min_p)
-slc44a1_coloc_pairs$coloc_pairs |>
-  dplyr::left_join(study_extractions_subset, by = c("study_extraction_a_id" = "id")) |>
-  dplyr::rename(trait_a = trait_name, min_p_a = min_p) |>
-  dplyr::left_join(study_extractions_subset, by = c("study_extraction_b_id" = "id")) |>
-  dplyr::rename(trait_b = trait_name, min_p_b = min_p)
+
+hydrated_coloc_pairs <- slc44a1_coloc_pairs$coloc_pairs |>
+  dplyr::left_join(slc44a1_coloc_pairs$study_extractions, by = c("study_extraction_a_id" = "id")) |>
+  dplyr::rename(trait_a = trait_name) |>
+  dplyr::left_join(slc44a1_coloc_pairs$study_extractions, by = c("study_extraction_b_id" = "id")) |>
+  dplyr::rename(trait_b = trait_name)
+
+knitr::kable(head(hydrated_coloc_pairs[, c("trait_a", "trait_b", "h4")]))
 ```
+
+
+# Using Pleiotropy Scores and Directionality to uncover genetic insights from colocalisation findings
+
+For the gene, distinct_trait_categories and distinct_protein_coding_genes are available and automatically are returned when you call `gene()`.  These are the number of trait categories and protein coding genes that the gene is associated with via coloc groups.
+
+```{r gene-pleiotropy-example}
+trem2 <- gene("TREM2", include_associations = TRUE)
+trem2$gene$distinct_trait_categories
+trem2$gene$distinct_protein_coding_genes
+```
+
+We can see that TREM2 is associated with only one trait category, and two other protein coding genes, TREM1 and TREML2.
+
+Furthermore, if we look at the colocalization group that is associated with Alzheimer's disease, we can see that the associations are such that any decrease in the expression of TREM2 is associated with an increase in Alzheimer's disease.
+
+```{r trem2-alzheimer-example}
+
+alzheimer_trait_ids <- search_gpmap("alzheimer")$type_id
+trem2_alzheimer_coloc_group_ids <- unique(
+  trem2$coloc_groups[trem2$coloc_groups$trait_id %in% alzheimer_trait_ids, ]$coloc_group_id
+)
+trem2_alzheimer_rare_result_group_ids <- unique(
+  trem2$rare_results[trem2$rare_results$trait_id %in% alzheimer_trait_ids, ]$rare_result_group_id
+)
+trem2_alzheimer_groups <- trem2$coloc_groups[
+  trem2$coloc_groups$coloc_group_id %in% trem2_alzheimer_coloc_group_ids,
+]
+trem2_alzheimer_rare_results <- trem2$rare_results[
+  trem2$rare_results$rare_result_group_id %in% trem2_alzheimer_rare_result_group_ids,
+]
+```
+
+We can see 2 colocalization groups and 2 rare result groups are associated with Alzheimer's disease, and TREM2 are not associated with any other trait categories.
+
+Here we have made a forest plot of the association betas relating to Alzheimer's disease, combining **colocalisation groups** (one panel per `coloc_group_id`) and **rare disease result groups** (facet strip shows the **SNP** from `display_snp`, or `variant_id` if needed).
+
+```{r trem2-alzheimer-forest, fig.width = 8, fig.height = 8}
+forest_row_label <- function(trait_name, data_type, tissue) {
+  tn <- if (missing(tissue) || is.null(tissue)) {
+    rep(NA_character_, length(trait_name))
+  } else {
+    tissue
+  }
+  paste(
+    trait_name,
+    data_type,
+    tidyr::replace_na(as.character(tn), ""),
+    sep = " — "
+  )
+}
+
+trem2_forest_coloc <- trem2_alzheimer_groups |>
+  dplyr::filter(!is.na(.data$beta), !is.na(.data$se), .data$se > 0) |>
+  dplyr::mutate(
+    lo = .data$beta - 1.96 * .data$se,
+    hi = .data$beta + 1.96 * .data$se,
+    row_label = forest_row_label(.data$trait_name, .data$data_type, .data$tissue),
+    panel_id = dplyr::coalesce(
+      as.character(.data$display_snp),
+      paste0("variant ", as.character(.data$variant_id))
+    ),
+    analysis = "Colocalisation"
+  ) |>
+  dplyr::group_by(.data$coloc_group_id) |>
+  dplyr::arrange(.data$beta, .by_group = TRUE) |>
+  dplyr::mutate(
+    row_label = factor(.data$row_label, levels = unique(.data$row_label))
+  ) |>
+  dplyr::ungroup()
+
+trem2_forest_rare <- if (is.null(trem2_alzheimer_rare_results) || nrow(trem2_alzheimer_rare_results) == 0L) {
+  NULL
+} else {
+  rr <- trem2_alzheimer_rare_results
+  if (!"tissue" %in% names(rr)) {
+    rr$tissue <- NA_character_
+  }
+  rr |>
+    dplyr::filter(!is.na(.data$beta), !is.na(.data$se), .data$se > 0) |>
+    dplyr::mutate(
+      lo = .data$beta - 1.96 * .data$se,
+      hi = .data$beta + 1.96 * .data$se,
+      row_label = forest_row_label(.data$trait_name, .data$data_type, .data$tissue),
+      panel_id = dplyr::coalesce(
+        as.character(.data$display_snp),
+        paste0("variant ", as.character(.data$variant_id))
+      ),
+      analysis = "Rare result"
+    ) |>
+    dplyr::group_by(.data$panel_id) |>
+    dplyr::arrange(.data$beta, .by_group = TRUE) |>
+    dplyr::mutate(
+      row_label = factor(.data$row_label, levels = unique(.data$row_label))
+    ) |>
+    dplyr::ungroup()
+}
+
+trem2_forest <- dplyr::bind_rows(
+  trem2_forest_coloc,
+  trem2_forest_rare
+) |>
+  dplyr::mutate(
+    panel_id = factor(.data$panel_id, levels = unique(.data$panel_id))
+  )
+
+ggplot2::ggplot(trem2_forest, ggplot2::aes(x = beta, y = row_label, colour = analysis)) +
+  ggplot2::geom_vline(xintercept = 0, linetype = 2, colour = "grey55") +
+  ggplot2::geom_errorbarh(
+    ggplot2::aes(xmin = lo, xmax = hi),
+    height = 0,
+    linewidth = 0.35
+  ) +
+  ggplot2::geom_point(size = 2) +
+  ggplot2::facet_wrap(~ panel_id, scales = "free_y", ncol = 1) +
+  ggplot2::labs(
+    x = "Effect (beta) with 95% CI",
+    y = NULL,
+    colour = "Analysis",
+    title = "TREM2 — Alzheimer's"
+  ) +
+  ggplot2::theme_bw() +
+  ggplot2::theme(
+    strip.text = ggplot2::element_text(face = "bold"),
+    panel.grid.minor = ggplot2::element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+We now have a good overview of the use of TREM2 as a mechanism to investigate, and potentially target for Alzheimer's disease. We now know:
+
+- TREM2 is associated with Alzheimer's disease
+- TREM2 is associated with two other protein coding genes, TREM1 and TREML2, but there is no evidence of colocalisation with any other nearby genes.
+- TREM2 is not associated with any other trait categories, or even any other traits.
+- The direction of effect between TREM2 and Alzheimer's disease seems to be complex.  In 3 instances, an increase in the expression of TREM2 is associated with an increase in Alzheimer's disease, and in 1 instance, a decrease in the expression of TREM2 (across many gene expression, splice variants, and protein levels) is associated with an increase in Alzheimer's disease.
+
+Existing literature has shown that TREM2 is associated with Alzheimer's disease, and that TREM2 is currently being investigated as a potential target for Alzheimer's disease.
+
+Although the GPMap can not provide a definitive answer as a drug target for Alzheimer's disease, it has proven to helpful in illuminating the potential pleiotropy, and of the directionality of effect that perturbing specific variants associated with TREM2 may have.
 
 # Accessing summary statistics
 
