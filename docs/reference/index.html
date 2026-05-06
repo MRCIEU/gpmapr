@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">gpmapr</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9000</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.1.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -15,13 +15,17 @@
     </button>
 
     <div id="navbar" class="collapse navbar-collapse ms-3">
-      <ul class="navbar-nav me-auto"><li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
+      <ul class="navbar-nav me-auto"><li class="nav-item"><a class="nav-link" href="../articles/gpmapr.html">Get started</a></li>
+<li class="active nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
-  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/api_calls.html">API Calls</a></li>
+  <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/tutorial-case-study.html">GPMap tutorial: Haemoglobin concentration case study</a></li>
+    <li><a class="dropdown-item" href="../articles/tutorial-choosing-ivs.html">Choosing Instrumental Variables tutorial</a></li>
+    <li><a class="dropdown-item" href="../articles/tutorial-gwas-upload.html">GPMap tutorial: GWAS upload</a></li>
     <li><a class="dropdown-item" href="../articles/tutorial-ios.html">Index of suspicion tutorial</a></li>
     <li><a class="dropdown-item" href="../articles/tutorial-tissue-stratification.html">Tissue stratification tutorial</a></li>
     <li><a class="dropdown-item" href="../articles/tutorial-trait-clustering.html">Trait clustering tutorial</a></li>
+    <li><a class="dropdown-item" href="../articles/tutorial-trait-comparison.html">Trait comparison tutorial</a></li>
   </ul></li>
       </ul><ul class="navbar-nav"><li class="nav-item"><form class="form-inline" role="search">
  <input class="form-control" type="search" name="search-input" id="search-input" autocomplete="off" aria-label="Search site" placeholder="Search for" data-search-index="../search.json"></form></li>
@@ -41,30 +45,136 @@
 
 
 
-
-    </div><div class="section level2">
+      <dl></dl></div><div class="section level2">
 
 
 
 
       <dl><dt>
 
+          <code><a href="all_genes.html">all_genes()</a></code>
+
+        </dt>
+        <dd>All genes</dd>
+
+        <dt>
+
+          <code><a href="all_traits.html">all_traits()</a></code>
+
+        </dt>
+        <dd>All traits</dd>
+
+        <dt>
+
+          <code><a href="associations.html">associations()</a></code>
+
+        </dt>
+        <dd>Get Associations by SNP ID and Study ID</dd>
+
+        <dt>
+
+          <code><a href="gene.html">gene()</a></code>
+
+        </dt>
+        <dd>Gene</dd>
+
+        <dt>
+
           <code><a href="genes.html">genes()</a></code>
 
         </dt>
-        <dd>Get Gene Information</dd>
-      </dl><dl><dt>
+        <dd>Genes</dd>
 
-          <code><a href="health.html">health()</a></code>
+        <dt>
+
+          <code><a href="get_all_gene_pleiotropies.html">get_all_gene_pleiotropies()</a></code>
+
+        </dt>
+        <dd>Get All Gene Pleiotropies</dd>
+
+        <dt>
+
+          <code><a href="get_all_variant_pleiotropies.html">get_all_variant_pleiotropies()</a></code>
+
+        </dt>
+        <dd>Get All SNP Pleiotropies</dd>
+
+        <dt>
+
+          <code><a href="get_gwas.html">get_gwas()</a></code>
+
+        </dt>
+        <dd>Get a GWAS from the API</dd>
+
+        <dt>
+
+          <code><a href="health_api.html">health_api()</a></code>
 
         </dt>
         <dd>Get API Health</dd>
-      </dl><dl><dt>
 
-          <code><a href="select_api.html">select_api()</a></code>
+        <dt>
+
+          <code><a href="ld_matrix.html">ld_matrix()</a></code>
 
         </dt>
-        <dd>Select API</dd>
+        <dd>LD Matrix</dd>
+
+        <dt>
+
+          <code><a href="ld_proxies.html">ld_proxies()</a></code>
+
+        </dt>
+        <dd>LD Proxies</dd>
+
+        <dt>
+
+          <code><a href="region.html">region()</a></code>
+
+        </dt>
+        <dd>Region</dd>
+
+        <dt>
+
+          <code><a href="search_gpmap.html">search_gpmap()</a></code>
+
+        </dt>
+        <dd>Search the Genotype-Phenotype Map</dd>
+
+        <dt>
+
+          <code><a href="trait.html">trait()</a></code>
+
+        </dt>
+        <dd>Trait</dd>
+
+        <dt>
+
+          <code><a href="traits.html">traits()</a></code>
+
+        </dt>
+        <dd>Traits</dd>
+
+        <dt>
+
+          <code><a href="upload_gwas.html">upload_gwas()</a></code>
+
+        </dt>
+        <dd>Upload a GWAS to the API</dd>
+
+        <dt>
+
+          <code><a href="variant.html">variant()</a></code>
+
+        </dt>
+        <dd>Variant</dd>
+
+        <dt>
+
+          <code><a href="variants.html">variants()</a></code>
+
+        </dt>
+        <dd>Variants</dd>
       </dl></div>
   </main></div>
 
@@ -74,7 +184,7 @@
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.1.1.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
 </div>
 
     </footer></div>
