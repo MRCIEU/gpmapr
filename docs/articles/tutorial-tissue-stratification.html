@@ -20,7 +20,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">gpmapr</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9000</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.1.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -29,14 +29,18 @@
 
     <div id="navbar" class="collapse navbar-collapse ms-3">
       <ul class="navbar-nav me-auto">
+<li class="nav-item"><a class="nav-link" href="../articles/gpmapr.html">Get started</a></li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="../articles/api_calls.html">API Calls</a></li>
+<li><a class="dropdown-item" href="../articles/tutorial-case-study.html">GPMap tutorial: Haemoglobin concentration case study</a></li>
+    <li><a class="dropdown-item" href="../articles/tutorial-choosing-ivs.html">Choosing Instrumental Variables tutorial</a></li>
+    <li><a class="dropdown-item" href="../articles/tutorial-gwas-upload.html">GPMap tutorial: GWAS upload</a></li>
     <li><a class="dropdown-item" href="../articles/tutorial-ios.html">Index of suspicion tutorial</a></li>
     <li><a class="dropdown-item" href="../articles/tutorial-tissue-stratification.html">Tissue stratification tutorial</a></li>
     <li><a class="dropdown-item" href="../articles/tutorial-trait-clustering.html">Trait clustering tutorial</a></li>
+    <li><a class="dropdown-item" href="../articles/tutorial-trait-comparison.html">Trait comparison tutorial</a></li>
   </ul>
 </li>
       </ul>
@@ -66,36 +70,37 @@
 
     
     
-<div class="section level2">
-<h2 id="background">Background<a class="anchor" aria-label="anchor" href="#background"></a>
-</h2>
-<p>Complex traits are often composite measures, and may be able to be
-refined by stratifying instruments based on the tissue in which they are
-expressed. This tutorial aims to illustrate how to use the
-genotype-phenotype map to stratify instruments based on tissue
-expression.</p>
-</div>
-<div class="section level2">
-<h2 id="get-instruments">1. Get instruments<a class="anchor" aria-label="anchor" href="#get-instruments"></a>
-</h2>
-<p>Provide a trait within the <a href="https://gpmap.opengwas.io" class="external-link">https://gpmap.opengwas.io</a>
-database</p>
-<div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">bmi_instruments</span> <span class="op">&lt;-</span> <span class="fu">get_instruments</span><span class="op">(</span>trait <span class="op">=</span> <span class="st">"CRP"</span><span class="op">)</span></span></code></pre></div>
-</div>
-<div class="section level2">
-<h2 id="get-traits-that-are-associated-with-the-same-instruments">2. Get traits that are associated with the same instruments<a class="anchor" aria-label="anchor" href="#get-traits-that-are-associated-with-the-same-instruments"></a>
-</h2>
-<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">bmi_colocs</span> <span class="op">&lt;-</span> <span class="fu">coloc_search</span><span class="op">(</span>variants <span class="op">=</span> <span class="va">bmi_instruments</span><span class="op">$</span><span class="va">variants</span><span class="op">)</span></span></code></pre></div>
-</div>
-<div class="section level2">
-<h2 id="assign-instruments-to-tissues">3. Assign instruments to tissues<a class="anchor" aria-label="anchor" href="#assign-instruments-to-tissues"></a>
-</h2>
-<p>…</p>
-</div>
-  </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
-    </nav></aside>
+<p>Coming soon.</p>
+<!--
+
+
+
+## Background
+
+Complex traits are often composite measures, and may be able to be refined by stratifying instruments based on the tissue in which they are expressed. This tutorial aims to illustrate how to use the genotype-phenotype map to stratify instruments based on tissue expression.
+
+## 1. Get instruments
+
+Provide a trait within the [https://gpmap.opengwas.io](https://gpmap.opengwas.io) database
+
+
+``` r
+bmi_instruments <- get_instruments(trait = "CRP")
+```
+
+## 2. Get traits that are associated with the same instruments
+
+
+``` r
+bmi_colocs <- coloc_search(variants = bmi_instruments$variants)
+```
+
+## 3. Assign instruments to tissues
+
+...
+
+-->
+  </main>
 </div>
 
 
@@ -105,7 +110,7 @@ database</p>
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.1.1.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
 </div>
 
     </footer>

@@ -20,7 +20,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">gpmapr</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9000</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.1.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -29,14 +29,18 @@
 
     <div id="navbar" class="collapse navbar-collapse ms-3">
       <ul class="navbar-nav me-auto">
+<li class="nav-item"><a class="nav-link" href="../articles/gpmapr.html">Get started</a></li>
 <li class="nav-item"><a class="nav-link" href="../reference/index.html">Reference</a></li>
 <li class="active nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
-<li><a class="dropdown-item" href="../articles/api_calls.html">API Calls</a></li>
+<li><a class="dropdown-item" href="../articles/tutorial-case-study.html">GPMap tutorial: Haemoglobin concentration case study</a></li>
+    <li><a class="dropdown-item" href="../articles/tutorial-choosing-ivs.html">Choosing Instrumental Variables tutorial</a></li>
+    <li><a class="dropdown-item" href="../articles/tutorial-gwas-upload.html">GPMap tutorial: GWAS upload</a></li>
     <li><a class="dropdown-item" href="../articles/tutorial-ios.html">Index of suspicion tutorial</a></li>
     <li><a class="dropdown-item" href="../articles/tutorial-tissue-stratification.html">Tissue stratification tutorial</a></li>
     <li><a class="dropdown-item" href="../articles/tutorial-trait-clustering.html">Trait clustering tutorial</a></li>
+    <li><a class="dropdown-item" href="../articles/tutorial-trait-comparison.html">Trait comparison tutorial</a></li>
   </ul>
 </li>
       </ul>
@@ -66,49 +70,52 @@
 
     
     
-<div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va">gpmapr</span><span class="op">)</span></span>
-<span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://dplyr.tidyverse.org" class="external-link">dplyr</a></span><span class="op">)</span></span></code></pre></div>
-<div class="section level2">
-<h2 id="background">Background<a class="anchor" aria-label="anchor" href="#background"></a>
-</h2>
-<p>It is often difficult to determine how specific the instruments for a
-particular trait are. For example if you have a particular measure of
-adiposity, how do you know that the instruments are not also associated
-with other measures of adiposity? It may be the case that there is a
-cluster of traits that are statistically indistinguishable from one
-another in an MR framework. This aims to illustrate how to create trait
-clusters based on the similarity of the instruments used to measure
-them.</p>
-<p>The <code>gpmapr</code> package provides a way to cluster traits
-based on instrument similarity. This is done by starting with an index
-trait, identifying instruments for that trait, and then searching for
-traits with similar associations. Finally, it uses a conditional
-F-statistic measure to determine how to cluster traits.</p>
-</div>
-<div class="section level2">
-<h2 id="get-instruments">1. Get instruments<a class="anchor" aria-label="anchor" href="#get-instruments"></a>
-</h2>
-<p>Provide a trait within the <a href="https://gpmap.opengwas.io" class="external-link">https://gpmap.opengwas.io</a>
-database</p>
-<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">bmi_instruments</span> <span class="op">&lt;-</span> <span class="fu">get_instruments</span><span class="op">(</span>trait <span class="op">=</span> <span class="st">"ieu-a-2"</span><span class="op">)</span></span></code></pre></div>
-</div>
-<div class="section level2">
-<h2 id="get-traits-that-are-associated-with-the-same-instruments">2. Get traits that are associated with the same instruments<a class="anchor" aria-label="anchor" href="#get-traits-that-are-associated-with-the-same-instruments"></a>
-</h2>
-<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">bmi_phewas</span> <span class="op">&lt;-</span> <span class="fu">phewas</span><span class="op">(</span>variants <span class="op">=</span> <span class="va">bmi_instruments</span><span class="op">$</span><span class="va">variants</span><span class="op">)</span> <span class="op"><a href="https://magrittr.tidyverse.org/reference/pipe.html" class="external-link">%&gt;%</a></span></span>
-<span>    <span class="fu">wide_format</span><span class="op">(</span><span class="op">)</span></span></code></pre></div>
-</div>
-<div class="section level2">
-<h2 id="get-clusters">3. Get clusters<a class="anchor" aria-label="anchor" href="#get-clusters"></a>
-</h2>
-<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="va">bmi_clusters</span> <span class="op">&lt;-</span> <span class="fu">get_clusters</span><span class="op">(</span>phewas_result <span class="op">=</span> <span class="va">bmi_phewas</span><span class="op">)</span></span></code></pre></div>
-</div>
-  </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
-    </nav></aside>
+<p>Coming soon.</p>
+<!--
+
+
+
+
+``` r
+library(gpmapr)
+library(dplyr)
+```
+
+## Background
+
+It is often difficult to determine how specific the instruments for a particular trait are. For example if you have a particular measure of adiposity, how do you know that the instruments are not also associated with other measures of adiposity? It may be the case that there is a cluster of traits that are statistically indistinguishable from one another in an MR framework. This aims to illustrate how to create trait clusters based on the similarity of the instruments used to measure them.
+
+The `gpmapr` package provides a way to cluster traits based on instrument similarity. This is done by starting with an index trait, identifying instruments for that trait, and then searching for traits with similar associations. Finally, it uses a conditional F-statistic measure to determine how to cluster traits.
+
+
+## 1. Get instruments
+
+Provide a trait within the [https://gpmap.opengwas.io](https://gpmap.opengwas.io) database
+
+
+``` r
+bmi_instruments <- get_instruments(trait = "ieu-a-2")
+```
+
+## 2. Get traits that are associated with the same instruments
+
+
+``` r
+bmi_phewas <- phewas(variants = bmi_instruments$variants) %>%
+    wide_format()
+```
+
+
+## 3. Get clusters
+
+
+``` r
+bmi_clusters <- get_clusters(phewas_result = bmi_phewas)
+```
+
+
+-->
+  </main>
 </div>
 
 
@@ -118,7 +125,7 @@ database</p>
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.1.1.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
 </div>
 
     </footer>
