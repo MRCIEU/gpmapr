@@ -205,143 +205,325 @@ knitr::kable(head(hydrated_coloc_pairs[, c("trait_a", "trait_b", "h4")]))
 ```
 
 
-# Using Pleiotropy Scores and Directionality to uncover genetic insights from colocalisation findings
+# Target–indication prioritisation workflow: Alzheimer's disease
 
-For the gene, distinct_trait_categories and distinct_protein_coding_genes are available and automatically are returned when you call `gene()`.  These are the number of trait categories and protein coding genes that the gene is associated with via coloc groups.
+This section demonstrates a systematic workflow for using the GPMap to prioritise gene targets for a disease of interest.  We use **Alzheimer's disease (AD)** as an example.
 
-```{r gene-pleiotropy-example}
+The logic proceeds through four steps:
+1. **Get a list of genes mapped to AD** via colocalisation.
+2. **Rank genes by pleiotropy score** — low-pleiotropy genes are more specific to the indication.
+3. **Assess variant-level specificity** — if a variant associates with many cis-genes, it provides weaker evidence for any single target.
+4. **Check consistency across multiple variants and rare results** — concordant signals from independent loci and rare variant evidence strengthen the target–indication link.
+
+## Step 1: Genes mapped to Alzheimer's disease
+
+We start by searching for Alzheimer's traits and then pulling their colocalisation groups to identify the set of genes that have colocalisation evidence with AD.
+
+```{r ad-search}
+ad_search <- search_gpmap("alzheimer")
+ad_trait_ids <- ad_search$type_id
+
+ad_coloc <- dplyr::bind_rows(lapply(ad_trait_ids, function(tid) {
+  tryCatch(trait(tid)$coloc_groups, error = function(e) NULL)
+})) |>
+  dplyr::filter(!grepl("methyl", .data$data_type, ignore.case = TRUE))
+
+ad_genes <- ad_coloc |>
+  dplyr::filter(!is.na(.data$gene_id)) |>
+  dplyr::distinct(.data$gene_id, .data$gene)
+
+nrow(ad_genes)
+```
+
+
+## Step 2: Rank by gene-level pleiotropy
+
+The GPMap provides a pre-computed pleiotropy score for every gene: `distinct_trait_categories` counts how many different phenotypic categories a gene's coloc groups span.  A **low** value means the gene's associations are concentrated in a narrow phenotypic space — desirable for a drug target because it predicts fewer off-target effects.
+
+We can retrieve pleiotropy scores for all genes at once using `get_all_gene_pleiotropies()` and join them to our AD gene list.
+
+```{r ad-pleiotropy}
+all_pleiotropy <- get_all_gene_pleiotropies()
+
+ad_genes_ranked <- ad_genes |>
+  dplyr::inner_join(
+    all_pleiotropy[, c("gene_id", "distinct_trait_categories", "distinct_protein_coding_genes")],
+    by = "gene_id"
+  ) |>
+  dplyr::arrange(.data$distinct_trait_categories)
+```
+
+There are a total of `r nrow(ad_genes_ranked)` genes mapped to Alzheimer's disease.  We can see some of the genes that are mapped to AD, and the number of colocalisation groups that each gene has.
+
+Genes at the top of this list — those with very few distinct trait categories — are the most "specific" to Alzheimer's disease.  A gene appearing in many trait categories (high pleiotropy) is more likely to produce on-target side effects if therapeutically modulated.
+
+## Step 3: Variant-level specificity and consistency across variants and rare results
+
+Each colocalisation group is anchored to a **variant** (an LD block).  Within a single coloc group, the same variant may map to expression or protein QTLs of **multiple cis-genes**.  When a variant associates with many cis-genes or trait categories, it provides weaker evidence that the gene would be a good drug target without potential off-target effects.
+
+The strongest evidence for a target-indication pair comes when **multiple independent variants** (different LD blocks) and **rare variant results** all point to the same gene.  This replication across loci greatly reduces the chance that any single colocalisation is spurious.
+
+Let's pick some of the top-ranked genes from Step 2 and check how many independent coloc groups and rare result groups support them.
+
+```{r ad-consistency}
+top_genes <- head(ad_genes_ranked, 40)
+
+gene_evidence <- lapply(top_genes$gene, function(g) {
+  gi <- tryCatch(gene(g, include_associations = TRUE), error = function(e) NULL)
+  if (is.null(gi)) return(NULL)
+
+  cg <- gi$coloc_groups
+  rr <- gi$rare_results
+
+  ad_cg <- if (!is.null(cg) && nrow(cg) > 0) {
+    cg[cg$trait_id %in% ad_trait_ids, ]
+  } else {
+    data.frame()
+  }
+
+  ad_rr <- if (!is.null(rr) && nrow(rr) > 0) {
+    rr[rr$trait_id %in% ad_trait_ids, ]
+  } else {
+    data.frame()
+  }
+
+  n_tissues <- if (!is.null(cg) && nrow(cg) > 0 && "tissue" %in% names(cg)) {
+    dplyr::n_distinct(cg$tissue[!is.na(cg$tissue)])
+  } else {
+    0L
+  }
+
+  data.frame(
+    gene = g,
+    n_coloc_groups = dplyr::n_distinct(ad_cg$coloc_group_id),
+    n_tissues = n_tissues,
+    n_rare_groups = if (nrow(ad_rr) > 0) dplyr::n_distinct(ad_rr$rare_result_group_id) else 0L
+  )
+}) |> dplyr::bind_rows()
+
+ad_summary <- ad_genes_ranked |>
+  dplyr::filter(.data$gene %in% gene_evidence$gene) |>
+  dplyr::left_join(gene_evidence, by = "gene") |>
+  dplyr::select("gene", "distinct_trait_categories", "distinct_protein_coding_genes",
+                "n_tissues", "n_coloc_groups", "n_rare_groups") |>
+  dplyr::arrange(.data$distinct_trait_categories, .data$gene)
+
+ad_summary_long <- ad_summary |>
+  tidyr::pivot_longer(
+    cols = c("distinct_trait_categories", "distinct_protein_coding_genes",
+             "n_tissues", "n_coloc_groups", "n_rare_groups"),
+    names_to = "metric",
+    values_to = "value"
+  ) |>
+  dplyr::mutate(
+    metric = factor(.data$metric,
+      levels = c("distinct_trait_categories", "distinct_protein_coding_genes",
+                 "n_tissues", "n_coloc_groups", "n_rare_groups"),
+      labels = c("Trait categories", "Protein-coding genes",
+                 "Distinct tissues", "Colocalization groups", "Rare result groups")
+    ),
+    gene = factor(.data$gene, levels = rev(ad_summary$gene))
+  )
+```
+
+```{r ad-summary-plot, fig.width = 7, fig.height = 14}
+ad_summary_plot <- ggplot2::ggplot(ad_summary_long, ggplot2::aes(x = value, y = gene, fill = metric)) +
+  ggplot2::geom_col(show.legend = FALSE, width = 0.5) +
+  ggplot2::facet_wrap(~ metric, scales = "free_x", nrow = 1) +
+  ggplot2::labs(x = NULL, y = NULL, title = "Alzheimer's disease gene targets: pleiotropy and evidence summary") +
+  ggplot2::theme_bw(base_size = 9) +
+  ggplot2::theme(
+    strip.text = ggplot2::element_text(face = "bold"),
+    panel.grid.minor = ggplot2::element_blank(),
+    panel.grid.major.y = ggplot2::element_blank(),
+    axis.text.y = ggplot2::element_text(size = 5)
+  )
+
+ad_summary_plot
+
+```
+
+Genes with **multiple coloc groups** and supporting **rare result groups** have the most robust genetic evidence linking them to Alzheimer's disease.  Combined with low pleiotropy (few trait categories), these represent the highest-priority targets for further investigation.
+
+## Diving deeper: TREM2
+
+From the table above, **TREM2** stands out as a particularly interesting target for Alzheimer's disease.  It has very low pleiotropy (few trait categories), meaning its genetic associations are highly specific to AD rather than spread across many unrelated phenotypes.  At the same time, it is supported by multiple coloc groups and rare result groups — independent lines of genetic evidence converging on the same gene.
+
+Let's examine TREM2 in more detail by looking at the direction of effect across all its AD-related colocalisation and rare variant signals.
+
+```{r trem2-deep-dive}
 trem2 <- gene("TREM2", include_associations = TRUE)
 trem2$gene$distinct_trait_categories
 trem2$gene$distinct_protein_coding_genes
 ```
 
-We can see that TREM2 is associated with only one trait category, and two other protein coding genes, TREM1 and TREML2.
-
-Furthermore, if we look at the colocalization group that is associated with Alzheimer's disease, we can see that the associations are such that any decrease in the expression of TREM2 is associated with an increase in Alzheimer's disease.
-
-```{r trem2-alzheimer-example}
-
-alzheimer_trait_ids <- search_gpmap("alzheimer")$type_id
-trem2_alzheimer_coloc_group_ids <- unique(
-  trem2$coloc_groups[trem2$coloc_groups$trait_id %in% alzheimer_trait_ids, ]$coloc_group_id
+```{r trem2-ad-groups}
+trem2_ad_coloc_group_ids <- unique(
+  trem2$coloc_groups[trem2$coloc_groups$trait_id %in% ad_trait_ids, ]$coloc_group_id
 )
-trem2_alzheimer_rare_result_group_ids <- unique(
-  trem2$rare_results[trem2$rare_results$trait_id %in% alzheimer_trait_ids, ]$rare_result_group_id
-)
-trem2_alzheimer_groups <- trem2$coloc_groups[
-  trem2$coloc_groups$coloc_group_id %in% trem2_alzheimer_coloc_group_ids,
+trem2_ad_rare_group_ids <- if (!is.null(trem2$rare_results) && nrow(trem2$rare_results) > 0) {
+  unique(trem2$rare_results[trem2$rare_results$trait_id %in% ad_trait_ids, ]$rare_result_group_id)
+} else {
+  character(0)
+}
+
+trem2_ad_groups <- trem2$coloc_groups[
+  trem2$coloc_groups$coloc_group_id %in% trem2_ad_coloc_group_ids,
 ]
-trem2_alzheimer_rare_results <- trem2$rare_results[
-  trem2$rare_results$rare_result_group_id %in% trem2_alzheimer_rare_result_group_ids,
-]
+trem2_ad_rare <- if (length(trem2_ad_rare_group_ids) == 0L) {
+  trem2$rare_results[0, ]
+} else {
+  trem2$rare_results[
+    trem2$rare_results$rare_result_group_id %in% trem2_ad_rare_group_ids,
+  ]
+}
 ```
 
-We can see 2 colocalization groups and 2 rare result groups are associated with Alzheimer's disease, and TREM2 are not associated with any other trait categories.
+The forest plot below shows the effect sizes (beta with 95% CI) for all colocalisation and rare result entries related to Alzheimer's disease at TREM2.  Panels are labelled with the variant and its MAF (minor allele frequency), and colour distinguishes **molecular phenotypes** (eQTL, pQTL, sQTL, etc.) from **traits** (disease GWAS).
 
-Here we have made a forest plot of the association betas relating to Alzheimer's disease, combining **colocalisation groups** (one panel per `coloc_group_id`) and **rare disease result groups** (facet strip shows the **SNP** from `display_snp`, or `variant_id` if needed).
+```{r trem2-forest-helpers, include = FALSE}
+truncate_label <- function(x, max_chars = 50) {
+  ifelse(nchar(x) > max_chars, paste0(substr(x, 1, max_chars - 3), "..."), x)
+}
 
-```{r trem2-alzheimer-forest, fig.width = 8, fig.height = 8}
-forest_row_label <- function(trait_name, data_type, tissue) {
+forest_row_label <- function(trait_name, data_type, tissue, max_chars = 50) {
+
   tn <- if (missing(tissue) || is.null(tissue)) {
     rep(NA_character_, length(trait_name))
   } else {
     tissue
   }
-  paste(
-    trait_name,
-    data_type,
+  raw <- paste(
+    trait_name, data_type,
     tidyr::replace_na(as.character(tn), ""),
-    sep = " — "
+    sep = " \u2014 "
   )
+  truncate_label(raw, max_chars)
+}
+data_type_labels <- c(
+  splice_variant = "Splice Variant",
+  transcript = "Transcript",
+  gene_expression = "Gene Expression",
+  protein = "Protein",
+  methylation = "Methylation",
+  metabolome = "Metabolome",
+  cell_trait = "Cell Trait",
+  plasma_protein = "Plasma Protein",
+  phenotype = "Phenotype"
+)
+
+label_data_type <- function(data_type) {
+  labelled <- data_type_labels[data_type]
+  ifelse(is.na(labelled), data_type, labelled)
 }
 
-trem2_forest_coloc <- trem2_alzheimer_groups |>
+```
+
+```{r trem2-forest, fig.width = 6, fig.height = 7}
+trem2_all_rows <- dplyr::bind_rows(
+  trem2_ad_groups,
+  if (!is.null(trem2_ad_rare) && nrow(trem2_ad_rare) > 0L) trem2_ad_rare else NULL
+)
+
+variant_maf <- trem2_all_rows |>
+  dplyr::filter(!is.na(.data$eaf)) |>
+  dplyr::mutate(maf = pmin(.data$eaf, 1 - .data$eaf)) |>
+  dplyr::group_by(.data$variant_id) |>
+  dplyr::summarise(maf = min(.data$maf, na.rm = TRUE), .groups = "drop")
+
+make_panel_label <- function(display_snp, variant_id, maf_lookup) {
+  snp <- dplyr::coalesce(as.character(display_snp), paste0("variant ", as.character(variant_id)))
+  maf <- maf_lookup$maf[match(variant_id, maf_lookup$variant_id)]
+  maf_str <- ifelse(is.na(maf), "", paste0(" (MAF=", formatC(maf, format = "f", digits = 3), ")"))
+  paste0(snp, maf_str)
+}
+
+trem2_forest_coloc <- trem2_ad_groups |>
   dplyr::filter(!is.na(.data$beta), !is.na(.data$se), .data$se > 0) |>
   dplyr::mutate(
     lo = .data$beta - 1.96 * .data$se,
     hi = .data$beta + 1.96 * .data$se,
     row_label = forest_row_label(.data$trait_name, .data$data_type, .data$tissue),
-    panel_id = dplyr::coalesce(
-      as.character(.data$display_snp),
-      paste0("variant ", as.character(.data$variant_id))
-    ),
-    analysis = "Colocalisation"
+    panel_id = make_panel_label(.data$display_snp, .data$variant_id, variant_maf),
+    data_type_label = label_data_type(.data$data_type)
   ) |>
   dplyr::group_by(.data$coloc_group_id) |>
   dplyr::arrange(.data$beta, .by_group = TRUE) |>
-  dplyr::mutate(
-    row_label = factor(.data$row_label, levels = unique(.data$row_label))
-  ) |>
+  dplyr::mutate(row_label = factor(.data$row_label, levels = unique(.data$row_label))) |>
   dplyr::ungroup()
 
-trem2_forest_rare <- if (is.null(trem2_alzheimer_rare_results) || nrow(trem2_alzheimer_rare_results) == 0L) {
+trem2_forest_rare <- if (is.null(trem2_ad_rare) || nrow(trem2_ad_rare) == 0L) {
   NULL
 } else {
-  rr <- trem2_alzheimer_rare_results
-  if (!"tissue" %in% names(rr)) {
-    rr$tissue <- NA_character_
-  }
+  rr <- trem2_ad_rare
+  if (!"tissue" %in% names(rr)) rr$tissue <- NA_character_
+  if (!"eaf" %in% names(rr)) rr$eaf <- NA_real_
   rr |>
     dplyr::filter(!is.na(.data$beta), !is.na(.data$se), .data$se > 0) |>
     dplyr::mutate(
       lo = .data$beta - 1.96 * .data$se,
       hi = .data$beta + 1.96 * .data$se,
       row_label = forest_row_label(.data$trait_name, .data$data_type, .data$tissue),
-      panel_id = dplyr::coalesce(
-        as.character(.data$display_snp),
-        paste0("variant ", as.character(.data$variant_id))
-      ),
-      analysis = "Rare result"
+      panel_id = make_panel_label(.data$display_snp, .data$variant_id, variant_maf),
+      data_type_label = label_data_type(.data$data_type)
     ) |>
     dplyr::group_by(.data$panel_id) |>
     dplyr::arrange(.data$beta, .by_group = TRUE) |>
-    dplyr::mutate(
-      row_label = factor(.data$row_label, levels = unique(.data$row_label))
-    ) |>
+    dplyr::mutate(row_label = factor(.data$row_label, levels = unique(.data$row_label))) |>
     dplyr::ungroup()
 }
 
-trem2_forest <- dplyr::bind_rows(
-  trem2_forest_coloc,
-  trem2_forest_rare
-) |>
-  dplyr::mutate(
-    panel_id = factor(.data$panel_id, levels = unique(.data$panel_id))
-  )
+trem2_forest <- dplyr::bind_rows(trem2_forest_coloc, trem2_forest_rare) |>
+  dplyr::mutate(panel_id = factor(.data$panel_id, levels = unique(.data$panel_id)))
 
-ggplot2::ggplot(trem2_forest, ggplot2::aes(x = beta, y = row_label, colour = analysis)) +
+cbf_palette <- c(
+  "Gene Expression" = "#0072B2",
+  "Splice Variant"  = "#E69F00",
+  "Protein"         = "#009E73",
+  "Plasma Protein"  = "#56B4E9",
+  "Transcript"      = "#CC79A7",
+  "Methylation"     = "#F0E442",
+  "Metabolome"      = "#D55E00",
+  "Cell Trait"      = "#999999",
+  "Phenotype"       = "#000000"
+)
+
+ggplot2::ggplot(trem2_forest, ggplot2::aes(x = beta, y = row_label, colour = data_type_label)) +
   ggplot2::geom_vline(xintercept = 0, linetype = 2, colour = "grey55") +
   ggplot2::geom_errorbarh(
-    ggplot2::aes(xmin = lo, xmax = hi),
-    height = 0,
-    linewidth = 0.35
+    ggplot2::aes(xmin = lo, xmax = hi), height = 0, linewidth = 0.35
   ) +
   ggplot2::geom_point(size = 2) +
   ggplot2::facet_wrap(~ panel_id, scales = "free_y", ncol = 1) +
+  ggplot2::scale_colour_manual(values = cbf_palette) +
   ggplot2::labs(
-    x = "Effect (beta) with 95% CI",
-    y = NULL,
-    colour = "Analysis",
-    title = "TREM2 — Alzheimer's"
+    x = "Effect (beta) with 95% CI", y = NULL,
+    colour = "Data type", title = "TREM2 \u2014 Alzheimer's disease"
   ) +
   ggplot2::theme_bw() +
   ggplot2::theme(
     strip.text = ggplot2::element_text(face = "bold"),
     panel.grid.minor = ggplot2::element_blank(),
-    legend.position = "bottom"
-  )
+    legend.position = "bottom",
+    legend.direction = "vertical"
+  ) +
+  ggplot2::guides(colour = ggplot2::guide_legend(ncol = 1))
 ```
 
-We now have a good overview of the use of TREM2 as a mechanism to investigate, and potentially target for Alzheimer's disease. We now know:
+TREM2 shows colocalisation evidence from multiple independent variants, supported by rare result groups.  The direction of effect appears complex — in some instances increased TREM2 expression associates with increased AD risk, while in others the direction is reversed — reflecting the biological complexity of TREM2 signalling in neuroinflammation.  Nonetheless, the convergence of evidence from multiple loci and data types makes it a compelling target, and it is indeed currently under active investigation as a therapeutic target for Alzheimer's disease.
 
-- TREM2 is associated with Alzheimer's disease
-- TREM2 is associated with two other protein coding genes, TREM1 and TREML2, but there is no evidence of colocalisation with any other nearby genes.
-- TREM2 is not associated with any other trait categories, or even any other traits.
-- The direction of effect between TREM2 and Alzheimer's disease seems to be complex.  In 3 instances, an increase in the expression of TREM2 is associated with an increase in Alzheimer's disease, and in 1 instance, a decrease in the expression of TREM2 (across many gene expression, splice variants, and protein levels) is associated with an increase in Alzheimer's disease.
+## Putting it together
 
-Existing literature has shown that TREM2 is associated with Alzheimer's disease, and that TREM2 is currently being investigated as a potential target for Alzheimer's disease.
+This four-step workflow uses the GPMap to move from a broad disease search to a prioritised shortlist of gene targets:
 
-Although the GPMap can not provide a definitive answer as a drug target for Alzheimer's disease, it has proven to helpful in illuminating the potential pleiotropy, and of the directionality of effect that perturbing specific variants associated with TREM2 may have.
+| Step | Question | GPMap function |
+|------|----------|----------------|
+| 1 | Which genes colocalise with my disease? | `search_gpmap()` → `trait()` |
+| 2 | Which are most specific (least pleiotropic)? | `get_all_gene_pleiotropies()` |
+| 3 | Do variants map cleanly to one cis-gene? | `coloc_groups$gene_id` per `coloc_group_id` |
+| 4 | Is the evidence replicated across loci? | `gene()` → count coloc groups, variants, rare results |
+
+A gene that scores well on all four criteria — colocalises with AD, has low pleiotropy, is supported by high-specificity variants, and is replicated across multiple loci including rare variants — is a strong candidate for target validation and drug development.
 
 # Accessing summary statistics
 
