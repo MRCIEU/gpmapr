@@ -513,6 +513,10 @@ upload_gwas_api <- function(file,
                             compare_with_upload_guids = NA) {
   url <- paste0(getOption("gpmap_url"), "/v1/gwas")
 
+  if (!is.na(compare_with_upload_guids)) {
+    compare_with_upload_guids <- I(as.character(compare_with_upload_guids))
+  }
+
   gwas_request <- list(
     reference_build = reference_build,
     email = email,
