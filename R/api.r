@@ -542,3 +542,27 @@ upload_gwas_api <- function(file,
   gwas <- jsonlite::fromJSON(gwas)
   return(gwas)
 }
+
+#' @title Get Pathway Enrichment API
+#' @description Get pathway enrichment results from the API for a set of gene IDs.
+#' @param gene_ids A vector of numeric gene IDs (from gene annotations)
+#' @param source Optional pathway source to filter by (Reactome, KEGG, or HP)
+#' @param p_value_threshold FDR-adjusted p-value threshold for filtering results. Defaults to 0.05.
+#' @return A list containing pathway enrichment results and metadata
+#' @noRd
+pathway_enrichment_api <- function(gene_ids,
+                                   source = NULL,
+                                   p_value_threshold = 0.05) {
+  gene_ids <- paste(gene_ids, collapse = "&gene_ids=")
+  url <- paste0(getOption("gpmap_url"), "/v1/pathways/enrichment?gene_ids=", gene_ids)
+
+  if (!is.null(source)) {
+    url <- paste0(url, "&source=", source)
+  }
+  url <- paste0(url, "&p_value_threshold=", p_value_threshold)
+
+  response <- httr::GET(url, httr::timeout(timeout_seconds))
+  response <- httr::content(response, "text", encoding = "UTF-8")
+  response <- jsonlite::fromJSON(response)
+  return(response)
+}

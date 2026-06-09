@@ -103,3 +103,34 @@ test_that("variants() returns expected output", {
   expect_true(!is.null(result$study_extractions))
   expect_true(nrow(result$study_extractions) > 0)
 })
+
+test_that("pathway_enrichment() returns expected output", {
+  genes <- all_genes()
+  gene_ids <- genes[genes$gene %in% c("TREM2", "APOE"), "id"]
+
+  result <- pathway_enrichment(gene_ids)
+  expect_type(result, "list")
+  expect_true("results" %in% names(result))
+  expect_true("input_gene_count" %in% names(result))
+  expect_true("matched_gene_count" %in% names(result))
+  expect_true("p_value_threshold" %in% names(result))
+  expect_true("total_terms_tested" %in% names(result))
+  expect_equal(result$input_gene_count, length(gene_ids))
+  expect_true(is.data.frame(result$results) || is.null(result$results))
+  if (is.data.frame(result$results) && nrow(result$results) > 0) {
+    expected_cols <- c(
+      "term_id", "source", "description", "pathway_size",
+      "background_size", "overlap", "p_value", "fdr", "gene_ids"
+    )
+    expect_true(all(expected_cols %in% names(result$results)))
+    expect_true(all(result$results$fdr <= 0.05))
+  }
+})
+
+test_that("pathway_enrichment() validates inputs", {
+  expect_error(pathway_enrichment(NULL), "gene_ids is required")
+  expect_error(pathway_enrichment(c(1, NA)), "gene_ids must not contain NA")
+  expect_error(pathway_enrichment(c("TREM2")), "gene_ids must be numeric")
+  expect_error(pathway_enrichment(1, source = "Invalid"), "source must be one of")
+  expect_error(pathway_enrichment(1, p_value_threshold = 2), "p_value_threshold must be")
+})

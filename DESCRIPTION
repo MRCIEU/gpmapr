@@ -16,6 +16,7 @@ Imports:
     jsonlite,
     dplyr,
     readr,
+    tidyLPA,
     tidyr
 Suggests: 
     ggplot2,
