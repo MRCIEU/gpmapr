@@ -1,0 +1,517 @@
+---
+title: "Colocalisation consistency, latent blocks, and pathway enrichment"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Colocalisation consistency, latent blocks, and pathway enrichment}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+```{r libraries}
+library(gpmapr)
+library(dplyr)
+library(tidyr)
+```
+
+This vignette walks through three complementary layers of colocalisation analysis in **gpmapr**:
+
+1. **Pleiotropic Consistency Score (PCS)** and **Net Directionality Score (NDS)** — quantify locus overlap and effect concordance between traits.
+2. **Latent causal blocks** — cluster loci with similar multi-trait effect profiles using Latent Profile Analysis (LPA).
+3. **Pathway enrichment** — test whether genes mapped to those loci are enriched for biological pathways, and compare LPA-refined gene sets with broader colocalisation blocks.
+
+We use **LDL cholesterol** (trait id `1486`) and **HDL cholesterol levels** (trait id `1630`) as an illustrative pair of lipid traits that share some, but not all, causal loci.
+
+## Fetch colocalisation data
+
+We fetch both traits in a single call and retain association statistics (`beta`, `se`) for directionality and z-score construction.
+
+```{r fetch-data}
+ldl_id <- 1486
+hdl_id <- 1630
+
+lipid_traits <- traits(
+  c(ldl_id, hdl_id),
+  include_associations = TRUE
+)
+cg <- lipid_traits$coloc_groups
+```
+
+## Pleiotropic consistency (PCS)
+
+`pleiotropic_consistency_score()` measures how much two traits colocalise at the same LD blocks versus having trait-specific signals. The score is a Jaccard-style ratio:
+
+$$\text{PCS} = \frac{n}{n + m_1 + m_2}$$
+
+where $n$ is the number of shared loci, $m_1$ are loci unique to trait 1, and $m_2$ are loci unique to trait 2.
+
+```{r pcs}
+pcs_result <- pleiotropic_consistency_score(
+  ldl_id, hdl_id,
+  coloc_groups = cg
+)
+
+pcs_result
+```
+
+LDL and HDL share a modest fraction of colocalising loci: most signals are trait-specific. This low PCS motivates splitting loci into blocks before interpreting shared biology.
+
+`pcs_matrix()` extends this to all pairs when comparing more than two traits:
+
+```{r pcs-matrix}
+pcs_mat <- pcs_matrix(c(ldl_id, hdl_id), coloc_groups = cg)
+pcs_mat
+```
+
+## Net directionality (NDS)
+
+At loci where both traits colocalise, `net_directionality_score()` asks whether effect directions agree:
+
+$$\text{NDS} = \frac{n_+ - n_-}{n_+ + n_-}$$
+
+```{r nds}
+nds_result <- net_directionality_score(
+  ldl_id, hdl_id,
+  coloc_groups = cg
+)
+
+nds_result
+```
+
+A positive NDS means concordant effect directions predominate at shared loci (here, slightly more concordant than discordant pairs).
+
+## Latent causal blocks
+
+PCS splits loci by *presence* of colocalisation per trait. **Latent Profile Analysis** instead groups loci by their *multi-trait effect profile* — the pattern of z-scores across traits at each locus.
+
+### Build the z-score matrix
+
+`build_locus_zscore_matrix()` constructs a loci x traits matrix of z-scores (`beta / se`). Loci without a genome-wide signal for a trait are set to 0. Only loci with signals in at least two traits are retained.
+
+```{r z-matrix}
+z_data <- build_locus_zscore_matrix(
+  c(ldl_id, hdl_id),
+  coloc_groups = cg
+)
+
+dim(z_data$z_matrix)
+head(z_data$locus_info)
+```
+
+### Fit LPA profiles
+
+`latent_causal_blocks()` fits LPA models via **tidyLPA** and returns profile assignments for each locus. We search over 2-4 profiles and use model 1 (equal variances, zero covariances) for speed.
+
+```{r lpa}
+lpa_result <- latent_causal_blocks(
+  z_data$z_matrix,
+  n_profiles = 2:4,
+  models = 1
+)
+
+lpa_result$best_model
+table(lpa_result$assignments$profile)
+```
+
+### Summarise profile biology
+
+`summarise_latent_blocks()` reports mean z-scores per trait within each profile — the signature of each latent block.
+
+```{r summarise-blocks}
+block_summary <- summarise_latent_blocks(
+  z_data$z_matrix,
+  lpa_result$assignments,
+  trait_info = z_data$trait_info
+)
+
+knitr::kable(
+  block_summary |>
+    dplyr::select(profile, trait_name, mean_z, sd_z, n_loci) |>
+    dplyr::arrange(profile, trait_name),
+  digits = 2
+)
+```
+
+Profile 1 loci tend toward positive LDL and HDL z-scores; profile 2 loci tend toward negative values for both traits. Profile 3 contains only a handful of loci with strong negative effects.
+
+## Pathway enrichment comparison
+
+`pathway_enrichment()` tests a gene set against Reactome, KEGG, and HP pathway databases via the GPMap API. We use numeric `gene_id` values here, but the API also accepts gene names.
+
+We ask four related questions:
+
+1. Which pathways are enriched in each **LPA profile**?
+2. In trait-specific loci, what remains after **removing LPA genes** from LDL-only and HDL-only blocks?
+3. What pathways appear when enriching **all LDL** or **all HDL** colocalisation genes?
+4. Does LPA surface **novel** pathways not found in the full trait gene sets?
+
+```{r gene-sets}
+locus_genes <- cg |>
+  dplyr::distinct(coloc_group_id, gene_id, gene) |>
+  dplyr::filter(!is.na(gene_id))
+
+assignments <- lpa_result$assignments |>
+  dplyr::mutate(coloc_group_id = as.integer(locus_id))
+
+genes_for_loci <- function(locus_ids) {
+  unique(locus_genes$gene_id[locus_genes$coloc_group_id %in% locus_ids])
+}
+
+ldl_loci <- cg |>
+  dplyr::filter(trait_id == ldl_id, min_p <= 5e-8) |>
+  dplyr::distinct(coloc_group_id) |>
+  dplyr::pull(coloc_group_id)
+
+hdl_loci <- cg |>
+  dplyr::filter(trait_id == hdl_id, min_p <= 5e-8) |>
+  dplyr::distinct(coloc_group_id) |>
+  dplyr::pull(coloc_group_id)
+
+ldl_only_loci <- setdiff(ldl_loci, hdl_loci)
+hdl_only_loci <- setdiff(hdl_loci, ldl_loci)
+
+lpa_genes <- genes_for_loci(assignments$coloc_group_id)
+ldl_only_genes <- genes_for_loci(ldl_only_loci)
+hdl_only_genes <- genes_for_loci(hdl_only_loci)
+
+gene_sets <- list(
+  all_ldl = genes_for_loci(ldl_loci),
+  all_hdl = genes_for_loci(hdl_loci),
+  ldl_only_minus_lpa = setdiff(ldl_only_genes, lpa_genes),
+  hdl_only_minus_lpa = setdiff(hdl_only_genes, lpa_genes)
+)
+
+for (profile_id in sort(unique(assignments$profile))) {
+  loci <- assignments$coloc_group_id[assignments$profile == profile_id]
+  gene_sets[[paste0("lpa_profile_", profile_id)]] <- genes_for_loci(loci)
+}
+
+gene_set_sizes <- data.frame(
+  gene_set = names(gene_sets),
+  n_genes = vapply(gene_sets, length, integer(1)),
+  row.names = NULL
+)
+knitr::kable(gene_set_sizes)
+```
+
+```{r pathway-enrichment}
+run_pathway_enrichment <- function(gene_ids, label) {
+  if (length(gene_ids) == 0) {
+    return(NULL)
+  }
+  n_input_genes <- length(gene_ids)
+  pe <- pathway_enrichment(
+    gene_ids,
+    p_value_threshold = 0.05,
+    minimum_count_in_network = 1
+  )
+  results <- pe$results
+  if (is.null(results) || !is.data.frame(results) || nrow(results) == 0) {
+    return(NULL)
+  }
+  results |>
+    dplyr::mutate(
+      gene_set = label,
+      n_genes = n_input_genes,
+      n_pathway_genes = vapply(pathway_gene_ids, length, integer(1)),
+      pathway_key = paste(source, term_id, sep = ":")
+    )
+}
+
+pathway_results_full <- dplyr::bind_rows(
+  lapply(names(gene_sets), function(nm) {
+    run_pathway_enrichment(gene_sets[[nm]], nm)
+  })
+)
+
+if (nrow(pathway_results_full) == 0) {
+  stop(
+    "No pathway enrichment results were returned. ",
+    "Reinstall or reload gpmapr (devtools::load_all()) so the API uses the 'genes' parameter."
+  )
+}
+
+pathway_comparison <- pathway_results_full |>
+  dplyr::group_by(gene_set) |>
+  dplyr::slice_min(fdr, n = 5, with_ties = FALSE) |>
+  dplyr::ungroup()
+
+knitr::kable(
+  pathway_comparison |>
+    dplyr::arrange(gene_set, fdr) |>
+    dplyr::mutate(fdr = sprintf("%.1e", fdr)) |>
+    dplyr::select(gene_set, n_genes, source, description, overlap, n_pathway_genes, fdr)
+)
+```
+
+### Shared vs trait-specific pathways after removing LPA genes
+
+Pathways enriched in any LPA profile are compared with pathways found in LDL-only or HDL-only gene sets **after LPA genes are removed**. Terms in the remainder sets that do not appear in the LPA union are trait-specific signal not captured by the latent blocks.
+
+```{r pathway-overlap}
+lpa_pathways <- pathway_results_full |>
+  dplyr::filter(grepl("^lpa_profile_", gene_set)) |>
+  dplyr::distinct(pathway_key, source, term_id, description)
+
+ldl_remainder_pathways <- pathway_results_full |>
+  dplyr::filter(gene_set == "ldl_only_minus_lpa") |>
+  dplyr::distinct(pathway_key, source, term_id, description, fdr)
+
+hdl_remainder_pathways <- pathway_results_full |>
+  dplyr::filter(gene_set == "hdl_only_minus_lpa") |>
+  dplyr::distinct(pathway_key, source, term_id, description, fdr)
+
+ldl_shared_with_lpa <- ldl_remainder_pathways |>
+  dplyr::filter(pathway_key %in% lpa_pathways$pathway_key)
+
+ldl_not_in_lpa <- ldl_remainder_pathways |>
+  dplyr::filter(!(pathway_key %in% lpa_pathways$pathway_key))
+
+hdl_shared_with_lpa <- hdl_remainder_pathways |>
+  dplyr::filter(pathway_key %in% lpa_pathways$pathway_key)
+
+hdl_not_in_lpa <- hdl_remainder_pathways |>
+  dplyr::filter(!(pathway_key %in% lpa_pathways$pathway_key))
+
+pathway_overlap_summary <- data.frame(
+  comparison = c(
+    "LPA profile pathways (union)",
+    "LDL-only minus LPA (total)",
+    "LDL-only minus LPA (also in LPA)",
+    "LDL-only minus LPA (not in LPA)",
+    "HDL-only minus LPA (total)",
+    "HDL-only minus LPA (also in LPA)",
+    "HDL-only minus LPA (not in LPA)"
+  ),
+  n_pathways = c(
+    nrow(lpa_pathways),
+    nrow(ldl_remainder_pathways),
+    nrow(ldl_shared_with_lpa),
+    nrow(ldl_not_in_lpa),
+    nrow(hdl_remainder_pathways),
+    nrow(hdl_shared_with_lpa),
+    nrow(hdl_not_in_lpa)
+  ),
+  row.names = NULL
+)
+
+knitr::kable(pathway_overlap_summary)
+
+if (nrow(ldl_not_in_lpa) > 0) {
+  knitr::kable(
+    ldl_not_in_lpa |>
+      dplyr::arrange(fdr) |>
+      dplyr::slice_head(n = 5) |>
+      dplyr::mutate(fdr = sprintf("%.1e", fdr)) |>
+      dplyr::select(source, description, fdr),
+    caption = "Top LDL-only pathways not enriched in any LPA profile"
+  )
+}
+
+if (nrow(hdl_not_in_lpa) > 0) {
+  knitr::kable(
+    hdl_not_in_lpa |>
+      dplyr::arrange(fdr) |>
+      dplyr::slice_head(n = 5) |>
+      dplyr::mutate(fdr = sprintf("%.1e", fdr)) |>
+      dplyr::select(source, description, fdr),
+    caption = "Top HDL-only pathways not enriched in any LPA profile"
+  )
+}
+```
+
+### All LDL vs all HDL, and LPA novelty
+
+Finally, we enrich all genome-wide colocalisation genes for each trait and ask whether LPA profiles recover pathways that the full trait gene sets do not.
+
+```{r pathway-novelty}
+all_ldl_pathways <- pathway_results_full |>
+  dplyr::filter(gene_set == "all_ldl") |>
+  dplyr::distinct(pathway_key, source, term_id, description, fdr)
+
+all_hdl_pathways <- pathway_results_full |>
+  dplyr::filter(gene_set == "all_hdl") |>
+  dplyr::distinct(pathway_key, source, term_id, description, fdr)
+
+full_trait_pathways <- dplyr::bind_rows(all_ldl_pathways, all_hdl_pathways) |>
+  dplyr::distinct(pathway_key, source, term_id, description)
+
+lpa_novel_pathways <- lpa_pathways |>
+  dplyr::filter(!(pathway_key %in% full_trait_pathways$pathway_key))
+
+ldl_not_hdl <- all_ldl_pathways |>
+  dplyr::filter(!(pathway_key %in% all_hdl_pathways$pathway_key))
+
+hdl_not_ldl <- all_hdl_pathways |>
+  dplyr::filter(!(pathway_key %in% all_ldl_pathways$pathway_key))
+
+pathway_novelty_summary <- data.frame(
+  comparison = c(
+    "All LDL pathways",
+    "All HDL pathways",
+    "LDL pathways not in all HDL",
+    "HDL pathways not in all LDL",
+    "LPA pathways not in all LDL or all HDL"
+  ),
+  n_pathways = c(
+    nrow(all_ldl_pathways),
+    nrow(all_hdl_pathways),
+    nrow(ldl_not_hdl),
+    nrow(hdl_not_ldl),
+    nrow(lpa_novel_pathways)
+  ),
+  row.names = NULL
+)
+
+knitr::kable(pathway_novelty_summary)
+
+if (nrow(lpa_novel_pathways) > 0) {
+  lpa_novel_with_fdr <- pathway_results_full |>
+    dplyr::filter(
+      grepl("^lpa_profile_", gene_set),
+      pathway_key %in% lpa_novel_pathways$pathway_key
+    ) |>
+    dplyr::group_by(pathway_key) |>
+    dplyr::slice_min(fdr, n = 1, with_ties = FALSE) |>
+    dplyr::ungroup() |>
+    dplyr::arrange(fdr) |>
+    dplyr::slice_head(n = 10)
+
+  knitr::kable(
+    lpa_novel_with_fdr |>
+      dplyr::mutate(fdr = sprintf("%.1e", fdr)) |>
+      dplyr::select(gene_set, source, description, fdr),
+    caption = "Pathways enriched in LPA profiles but not in full LDL or HDL gene sets"
+  )
+}
+```
+
+### Do LPA gene groups match pathway gene groups?
+
+LPA groups genes by locus-level effect *profiles*; pathway enrichment groups genes by curated pathway membership. They answer different questions, so we should not expect identical gene lists. We can still ask how much they agree.
+
+First, for each LPA profile, compare the full profile gene set with the union of input genes (`gene_ids`) that drove enrichment:
+
+```{r lpa-pathway-gene-overlap}
+jaccard <- function(a, b) {
+  intersection <- length(intersect(a, b))
+  union_size <- length(union(a, b))
+  if (union_size == 0) 0 else intersection / union_size
+}
+
+lpa_pathway_overlap <- pathway_comparison |>
+  dplyr::filter(grepl("^lpa_profile_", gene_set)) |>
+  dplyr::group_by(gene_set) |>
+  dplyr::summarise(
+    pathway_overlap_genes = list(unique(unlist(gene_ids))),
+    .groups = "drop"
+  ) |>
+  dplyr::rowwise() |>
+  dplyr::mutate(
+    n_lpa_genes = length(gene_sets[[gene_set]]),
+    n_pathway_overlap_genes = length(pathway_overlap_genes),
+    n_shared_genes = length(intersect(
+      gene_sets[[gene_set]],
+      pathway_overlap_genes
+    )),
+    jaccard = jaccard(gene_sets[[gene_set]], pathway_overlap_genes)
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::select(
+    gene_set, n_lpa_genes, n_pathway_overlap_genes, n_shared_genes, jaccard
+  )
+
+knitr::kable(lpa_pathway_overlap, digits = 3)
+```
+
+Low Jaccard scores are expected: most genes at loci in a profile are not members of any significantly enriched pathway term. Enrichment is typically driven by a small subset of pathway-mapped genes.
+
+Next, for all genes that appear in enriched pathways, check which LPA profile their colocalisation loci were assigned to:
+
+```{r enriched-gene-profiles}
+gene_to_profile <- assignments |>
+  dplyr::inner_join(
+    locus_genes |> dplyr::distinct(coloc_group_id, gene_id, gene),
+    by = "coloc_group_id",
+    relationship = "many-to-many"
+  ) |>
+  dplyr::distinct(gene_id, gene, profile)
+
+enriched_genes <- unique(unlist(
+  pathway_comparison$gene_ids[grepl("^lpa_profile_", pathway_comparison$gene_set)]
+))
+
+enriched_gene_profiles <- gene_to_profile |>
+  dplyr::filter(gene_id %in% enriched_genes) |>
+  dplyr::count(profile, name = "n_enriched_genes")
+
+knitr::kable(enriched_gene_profiles)
+
+if (length(enriched_genes) > 0) {
+  knitr::kable(
+    gene_to_profile |>
+      dplyr::filter(gene_id %in% enriched_genes) |>
+      dplyr::arrange(profile, gene),
+    col.names = c("Gene ID", "Gene", "LPA profile")
+  )
+}
+```
+
+### Interpreting the comparison
+
+Several patterns emerge from the LDL vs HDL comparison:
+
+- **LPA profiles** enrich for pathways driven by loci with shared multi-trait effect directions (e.g. lipid metabolism in concordant-negative blocks, xenobiotic metabolism in concordant-positive blocks).
+- **LDL-only / HDL-only minus LPA** reveal trait-specific biology in colocalisation loci *not* tagged by any latent profile. Pathways shared with the LPA union are consistent with pleiotropic blocks; pathways **not** in the LPA union are candidates for trait-specific mechanisms.
+- **All LDL vs all HDL** show the broad trait-level pathway landscape. Differences between these sets reflect trait-specific colocalisation architecture at genome-wide significance.
+- **LPA novelty** (pathways in LPA profiles but not in either full trait set) indicates that splitting by directional profile can surface enriched terms that are diluted when all colocalisation genes are pooled — the main justification for the LPA step.
+
+On gene-level agreement between LPA and pathways:
+
+- **Partially similar:** genes driving LPA profile enrichment tend to sit in the same profile loci — LPA and pathway annotation agree on modular biology.
+- **Meaningfully different:** pathway overlap genes are a small fraction of each profile's gene list (low Jaccard), and `pathway_gene_ids` are much larger than any LPA gene set.
+- **Complementary:** LPA groups loci by effect profile; pathway enrichment maps those genes to curated modules; subtracting LPA genes from trait-specific loci separates shared from remainder biology.
+
+## Session summary
+
+```{r summary}
+summary_table <- data.frame(
+  metric = c(
+    "PCS",
+    "Shared loci (n)",
+    "LDL-only loci (m1)",
+    "HDL-only loci (m2)",
+    "NDS",
+    "LPA profiles (best BIC)",
+    "Loci in z-score matrix"
+  ),
+  value = c(
+    round(pcs_result$pcs, 3),
+    pcs_result$n_shared,
+    pcs_result$m1,
+    pcs_result$m2,
+    round(nds_result$nds, 3),
+    lpa_result$best_model$Classes,
+    nrow(z_data$z_matrix)
+  ),
+  row.names = NULL
+)
+knitr::kable(summary_table)
+```
+
+## Further reading
+
+- `?pleiotropic_consistency_score`, `?net_directionality_score`
+- `?build_locus_zscore_matrix`, `?latent_causal_blocks`, `?summarise_latent_blocks`
+- `?pathway_enrichment`

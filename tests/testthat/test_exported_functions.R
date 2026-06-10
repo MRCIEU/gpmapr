@@ -104,11 +104,11 @@ test_that("variants() returns expected output", {
   expect_true(nrow(result$study_extractions) > 0)
 })
 
-test_that("pathway_enrichment() returns expected output", {
+test_that("pathway_enrichment() returns expected output with gene IDs", {
   genes <- all_genes()
   gene_ids <- genes[genes$gene %in% c("TREM2", "APOE"), "id"]
 
-  result <- pathway_enrichment(gene_ids)
+  result <- pathway_enrichment(gene_ids, minimum_count_in_network = 1)
   expect_type(result, "list")
   expect_true("results" %in% names(result))
   expect_true("input_gene_count" %in% names(result))
@@ -120,17 +120,33 @@ test_that("pathway_enrichment() returns expected output", {
   if (is.data.frame(result$results) && nrow(result$results) > 0) {
     expected_cols <- c(
       "term_id", "source", "description", "pathway_size",
-      "background_size", "overlap", "p_value", "fdr", "gene_ids"
+      "background_size", "overlap", "p_value", "fdr", "gene_ids",
+      "pathway_gene_ids"
     )
     expect_true(all(expected_cols %in% names(result$results)))
     expect_true(all(result$results$fdr <= 0.05))
+    expect_true(is.list(result$results$gene_ids))
+    expect_true(is.list(result$results$pathway_gene_ids))
+    expect_true(length(result$results$pathway_gene_ids[[1]]) >=
+                  length(result$results$gene_ids[[1]]))
   }
 })
 
+test_that("pathway_enrichment() accepts gene names", {
+  result <- pathway_enrichment(
+    c("TREM2", "APOE"),
+    minimum_count_in_network = 1
+  )
+  expect_type(result, "list")
+  expect_equal(result$input_gene_count, 2L)
+})
+
 test_that("pathway_enrichment() validates inputs", {
-  expect_error(pathway_enrichment(NULL), "gene_ids is required")
-  expect_error(pathway_enrichment(c(1, NA)), "gene_ids must not contain NA")
-  expect_error(pathway_enrichment(c("TREM2")), "gene_ids must be numeric")
+  expect_error(pathway_enrichment(NULL), "genes is required")
+  expect_error(pathway_enrichment(c(1, NA)), "genes must not contain NA")
+  expect_error(pathway_enrichment(c(TRUE)), "genes must be numeric gene IDs or character gene names")
   expect_error(pathway_enrichment(1, source = "Invalid"), "source must be one of")
   expect_error(pathway_enrichment(1, p_value_threshold = 2), "p_value_threshold must be")
+  expect_error(pathway_enrichment(1, minimum_count_in_network = 0),
+               "minimum_count_in_network must be a positive integer")
 })

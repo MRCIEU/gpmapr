@@ -93,7 +93,7 @@ Think of **`study_extractions`** as the catalogue of extractions linked to the t
 
 - **`coloc_groups`** holds extractions that sit inside a **colocalisation group** (shared coloc evidence with other studies/traits at that locus). If a study extraction appears here, it has coloc-structured results for that entity.
 - **`rare_results`** holds extractions that belong to a **rare-result group** (rare-disease-style finemapping in the API). The same biological signal can, in principle, be reflected in both rare and common coloc paths, so overlap between this set of extraction ids and those in `coloc_groups` is possible.
-- **Neither table:** Some extractions appear only under **`study_extractions`**. They are still tied to the trait or gene in the genotype–phenotype map (for example via **locus tagging, proximity, or other association logic** in the pipeline), but they do not currently carry a coloc-group row or a rare-result group row. Treat those as “present on the map at this locus” rather than “absent by mistake.”
+- **Neither table:** Some extractions appear only under **`study_extractions`**. They are still tied to the trait or gene in the genotype-phenotype map (for example via **locus tagging, proximity, or other association logic** in the pipeline), but they do not currently carry a coloc-group row or a rare-result group row. Treat those as “present on the map at this locus” rather than “absent by mistake.”
 
 The same idea applies when you call **`gene()`** (or other entity-specific endpoints): `study_extractions` is the wider catalogue, while `coloc_groups` and `rare_results` subdivide it where those analyses exist. The table below illustrates counts for the hemoglobin trait example (`trait(931)`).
 
@@ -205,7 +205,7 @@ knitr::kable(head(hydrated_coloc_pairs[, c("trait_a", "trait_b", "h4")]))
 ```
 
 
-# Target–indication prioritisation workflow: Alzheimer's disease
+# Target-indication prioritisation workflow: Alzheimer's disease
 
 This section demonstrates a systematic workflow for using the GPMap to prioritise gene targets for a disease of interest.  We use **Alzheimer's disease (AD)** as an example.
 
@@ -213,7 +213,7 @@ The logic proceeds through four steps:
 1. **Get a list of genes mapped to AD** via colocalisation.
 2. **Rank genes by pleiotropy score** — low-pleiotropy genes are more specific to the indication.
 3. **Assess variant-level specificity** — if a variant associates with many cis-genes, it provides weaker evidence for any single target.
-4. **Check consistency across multiple variants and rare results** — concordant signals from independent loci and rare variant evidence strengthen the target–indication link.
+4. **Check consistency across multiple variants and rare results** - concordant signals from independent loci and rare variant evidence strengthen the target-indication link.
 
 ## Step 1: Genes mapped to Alzheimer's disease
 

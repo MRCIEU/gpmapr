@@ -169,7 +169,7 @@ or a rare-disease result row.
   those in `coloc_groups` is possible.
 - **Neither table:** Some extractions appear only under
   **`study_extractions`**. They are still tied to the trait or gene in
-  the genotype–phenotype map (for example via **locus tagging,
+  the genotype-phenotype map (for example via **locus tagging,
   proximity, or other association logic** in the pipeline), but they do
   not currently carry a coloc-group row or a rare-result group row.
   Treat those as “present on the map at this locus” rather than “absent

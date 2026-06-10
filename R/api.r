@@ -543,26 +543,49 @@ upload_gwas_api <- function(file,
   return(gwas)
 }
 
-#' @title Get Pathway Enrichment API
-#' @description Get pathway enrichment results from the API for a set of gene IDs.
-#' @param gene_ids A vector of numeric gene IDs (from gene annotations)
+#' @title Pathway Enrichment API
+#' @description Post pathway enrichment request to the API for a set of genes.
+#' @param genes A vector of numeric gene IDs or gene names
 #' @param source Optional pathway source to filter by (Reactome, KEGG, or HP)
 #' @param p_value_threshold FDR-adjusted p-value threshold for filtering results. Defaults to 0.05.
+#' @param minimum_count_in_network Optional minimum input gene overlap per pathway
 #' @return A list containing pathway enrichment results and metadata
 #' @noRd
-pathway_enrichment_api <- function(gene_ids,
+pathway_enrichment_api <- function(genes,
                                    source = NULL,
-                                   p_value_threshold = 0.05) {
-  gene_ids <- paste(gene_ids, collapse = "&gene_ids=")
-  url <- paste0(getOption("gpmap_url"), "/v1/pathways/enrichment?gene_ids=", gene_ids)
+                                   p_value_threshold = 0.05,
+                                   minimum_count_in_network = NULL) {
+  url <- paste0(getOption("gpmap_url"), "/v1/pathways/enrichment")
 
+  body <- list(
+    genes = if (is.numeric(genes)) as.integer(genes) else as.character(genes),
+    p_value_threshold = p_value_threshold
+  )
   if (!is.null(source)) {
-    url <- paste0(url, "&source=", source)
+    body$source <- source
   }
-  url <- paste0(url, "&p_value_threshold=", p_value_threshold)
+  if (!is.null(minimum_count_in_network)) {
+    body$minimum_count_in_network <- as.integer(minimum_count_in_network)
+  }
 
-  response <- httr::GET(url, httr::timeout(timeout_seconds))
-  response <- httr::content(response, "text", encoding = "UTF-8")
-  response <- jsonlite::fromJSON(response)
+  http_response <- httr::POST(
+    url,
+    body = jsonlite::toJSON(body, auto_unbox = TRUE),
+    httr::content_type_json(),
+    httr::timeout(timeout_seconds)
+  )
+  status <- httr::status_code(http_response)
+  response_text <- httr::content(http_response, "text", encoding = "UTF-8")
+  if (status >= 400) {
+    stop("Pathway enrichment API request failed (HTTP ", status, "): ", response_text)
+  }
+
+  response <- jsonlite::fromJSON(response_text)
+  if (is.null(response$results)) {
+    response$results <- data.frame()
+  } else if (is.list(response$results) && !is.data.frame(response$results) &&
+             length(response$results) == 0) {
+    response$results <- data.frame()
+  }
   return(response)
 }

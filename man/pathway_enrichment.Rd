@@ -4,24 +4,35 @@
 \alias{pathway_enrichment}
 \title{Pathway Enrichment}
 \usage{
-pathway_enrichment(gene_ids, source = NULL, p_value_threshold = 0.05)
+pathway_enrichment(
+  genes,
+  source = NULL,
+  p_value_threshold = 0.05,
+  minimum_count_in_network = NULL
+)
 }
 \arguments{
-\item{gene_ids}{A vector of numeric gene IDs (from \code{all_genes()$id} or coloc group \code{gene_id} values).}
+\item{genes}{A vector of numeric gene IDs (from \code{all_genes()$id} or coloc group \code{gene_id}
+values) or gene names (e.g. \code{"APOE"}).}
 
 \item{source}{Optional pathway source to filter by: \code{"Reactome"}, \code{"KEGG"}, or \code{"HP"}.}
 
 \item{p_value_threshold}{FDR-adjusted p-value threshold for filtering results. Defaults to 0.05.}
+
+\item{minimum_count_in_network}{Optional minimum number of input genes that must overlap a
+pathway for it to be tested. If \code{NULL}, the API default is used.}
 }
 \value{
 A list with:
 \itemize{
 \item results: a dataframe of enriched pathways with columns term_id, source,
 description, pathway_size, background_size, overlap, p_value, fdr, gene_ids
-\item input_gene_count: number of gene IDs submitted
-\item matched_gene_count: number of gene IDs matched in the pathway database
+(input genes overlapping the pathway), and pathway_gene_ids (all genes in the pathway)
+\item input_gene_count: number of genes submitted
+\item matched_gene_count: number of genes matched in the pathway database
 \item source: pathway source filter applied (if any)
 \item p_value_threshold: FDR threshold used
+\item minimum_count_in_network: minimum overlap threshold used (if returned by API)
 \item total_terms_tested: total pathway terms tested
 }
 }

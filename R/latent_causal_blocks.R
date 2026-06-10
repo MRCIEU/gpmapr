@@ -136,40 +136,41 @@ build_locus_zscore_matrix <- function(trait_ids,
 latent_causal_blocks <- function(z_matrix,
                                  n_profiles = 2:6,
                                  models = c(1, 2, 3)) {
-  if (!requireNamespace("tidyLPA", quietly = TRUE)) {
-    stop("Package 'tidyLPA' is required. Install with: install.packages('tidyLPA')")
-  }
-
   z_df <- as.data.frame(z_matrix)
   z_df$locus_id <- rownames(z_matrix)
 
-  fit <- tidyLPA::estimate_profiles(
+  # tidyLPA::get_data() looks up a caller variable named "fit"; use a different name.
+  lpa_fit <- tidyLPA::estimate_profiles(
     z_df[, colnames(z_matrix), drop = FALSE],
     n_profiles = n_profiles,
     models = models
   )
 
-  best <- tidyLPA::get_fit(fit)
+  best <- tidyLPA::get_fit(lpa_fit)
   best_idx <- which.min(best$BIC)
   best_model_info <- best[best_idx, ]
 
-  best_fit <- tidyLPA::get_data(fit)
+  # Force evaluation of x; tidyLPA::get_data() passes unevaluated symbols to do.call.
+  best_fit <- do.call(tidyLPA::get_data, list(x = lpa_fit))
   # get_data returns a tibble with Class column for the best-fitting model
   # Filter to the best model
   best_fit_filtered <- best_fit |>
     dplyr::filter(
       .data$classes_number == best_model_info$Classes,
-      .data$model_number == best_model_info$Model
-    )
+      .data$model_number == best_model_info$Model,
+      .data$id <= nrow(z_df)
+    ) |>
+    dplyr::distinct(.data$id, .keep_all = TRUE) |>
+    dplyr::arrange(.data$id)
 
   assignments <- data.frame(
-    locus_id = z_df$locus_id,
-    profile = best_fit_filtered$Class,
+    locus_id = z_df$locus_id[best_fit_filtered$id],
+    profile = as.integer(best_fit_filtered$Class),
     stringsAsFactors = FALSE
   )
 
   list(
-    fit = fit,
+    fit = lpa_fit,
     best_model = best_model_info,
     assignments = assignments
   )
