@@ -1,0 +1,359 @@
+---
+title: "Investigation of univariate analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Investigation of univariate analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+```{r libraries}
+pkg_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("devtools", quietly = TRUE)) {
+  devtools::load_all(pkg_root, quiet = TRUE)
+} else {
+  library(gpmapr)
+}
+library(dplyr)
+library(tidyr)
+library(igraph)
+library(mclust)
+```
+
+This vignette builds a bivariate/univariate pleiotropy analysis from GPMap colocalisation data.
+
+## Step 1: Construct the pleiotropy matrix (X)
+
+**Goal:** Build a matrix where each **column** is a target-trait SNP and each **row** is a background trait. Values are signed z-scores (`beta / se`) describing that trait's association at the SNP's colocalisation locus — a phenome-wide fingerprint per SNP.
+
+We use **HDL cholesterol** (trait id `1630`) as the target trait.
+
+```{r step1-fetch}
+target_trait_id <- 1630
+
+target_trait <- trait(
+  target_trait_id,
+  include_associations = TRUE
+)
+cg <- target_trait$coloc_groups
+```
+
+### Target SNPs
+
+SNPs are taken from loci for the target trait (for now, all loci).
+
+```{r step1-target-snps}
+target_snps <- cg |>
+  dplyr::filter(
+    trait_id == target_trait_id,
+    !is.na(beta),
+    !is.na(se),
+    se > 0
+  ) |>
+  dplyr::distinct(variant_id, display_snp, coloc_group_id, chr, bp)
+
+```
+
+### Build matrix X (traits x SNPs)
+
+`build_pleiotropy_matrix()` extracts z-scores for every trait that colocalises at each target SNP locus and arranges them into a traits-by-SNPs matrix.
+
+```{r step1-pleiotropy-matrix}
+pleiotropy <- build_pleiotropy_matrix(
+  trait_id = target_trait_id,
+  coloc_groups = cg,
+  snp_key = "variant_id"
+)
+
+X <- pleiotropy$x_matrix
+
+list(
+  target_trait = target_trait$trait$trait_name,
+  n_traits = nrow(X),
+  n_snps = ncol(X),
+  fraction_non_na = mean(!is.na(X))
+)
+```
+
+Rows are background traits (`n_trait`); columns are target SNPs (`n_snp`). Entries are `NA` when a trait has no colocalisation signal at that SNP's locus.
+
+```{r step1-dim}
+dim(X)
+```
+
+Each column of `X` is one SNP's signed association profile across the colocalising phenome.
+
+## Step 2: Orient profiles relative to the target trait (X\*)
+
+**Goal:** Remove arbitrary allele-swapping noise so each SNP profile reflects what happens to the phenome when that variant **increases liability** for the target trait.
+
+For each SNP column \(j\):
+
+\[
+X^*_{tj} = \mathrm{sign}(z_j) \cdot X_{tj}
+\]
+
+where \(z_j\) is the target trait's signed z-score at SNP \(j\).
+
+```{r step2-z-target}
+z_target <- X[as.character(target_trait_id), ]
+
+head(z_target)
+```
+
+```{r step2-signs}
+target_signs <- sign(z_target)
+
+table(target_signs, useNA = "ifany")
+```
+
+```{r step2-orient}
+X_star <- sweep(X, 2, target_signs, `*`)
+
+# equivalent helper:
+oriented <- orient_pleiotropy_matrix(X, target_trait_id = target_trait_id)
+stopifnot(all.equal(X_star, oriented$x_matrix, check.attributes = FALSE))
+```
+
+After orientation, the target trait row is non-negative (magnitude preserved, sign unified). Background trait effects are flipped where needed so they align with the target's direction of effect.
+
+```{r step2-check}
+target_row <- X_star[as.character(target_trait_id), ]
+
+list(
+  n_negative_target_z = sum(target_row < 0, na.rm = TRUE),
+  n_positive_target_z = sum(target_row > 0, na.rm = TRUE),
+  mean_abs_target_z = mean(abs(target_row), na.rm = TRUE)
+)
+```
+
+## Step 3: Calculate the SNP-SNP similarity matrix (S)
+
+**Goal:** Measure how parallel the multi-trait trajectories are between every pair of SNPs. Cosine similarity scales each profile to unit length so highly pleiotropic variants do not dominate.
+
+For SNPs \(j\) and \(k\):
+
+\[
+S_{jk} = \frac{{x^*_j}^{\top} x^*_k}{\|x^*_j\| \|x^*_k\|}
+\]
+
+```{r step3-col-norms}
+X_star_filled <- X_star
+X_star_filled[is.na(X_star_filled)] <- 0
+
+col_norms <- sqrt(colSums(X_star_filled^2))
+
+summary(col_norms)
+```
+
+```{r step3-normalize}
+X_star_norm <- sweep(X_star_filled, 2, col_norms, "/")
+```
+
+```{r step3-similarity}
+S <- crossprod(X_star_norm)
+
+# equivalent helper:
+similarity <- snp_similarity_matrix(X_star)
+stopifnot(all.equal(S, similarity$s_matrix, check.attributes = FALSE))
+```
+
+`S` is symmetric with values in \([-1, 1]\). The diagonal is 1 (each SNP is identical to itself).
+
+```{r step3-dim}
+dim(S)
+```
+
+```{r step3-summary}
+list(
+  diag_all_one = all(abs(diag(S) - 1) < 1e-10),
+  min_similarity = min(S[upper.tri(S)], na.rm = TRUE),
+  max_similarity = max(S[upper.tri(S)], na.rm = TRUE),
+  mean_similarity = mean(S[upper.tri(S)], na.rm = TRUE)
+)
+```
+
+Interpretation:
+
+- `diag_all_one`: the diagonal of `S` should be 1
+- `min_similarity`: strong anti-parallelism: pairs of SNPs where one variant drives background traits in the exact opposite direction of the other, even though they both ultimately cause the target trait to increase.
+- `max_similarity`: If high, there are independent SNPs in your dataset that possess near identical pleiotropic footprints
+- `mean_similarity`: On average, how any two random SNPs chosen from your total pool are similar to each other.
+
+If there is high max similarity and low mean similarity, this suggests that there is mechanistic heterogeneity in the SNPs.
+
+## Step 4: Cluster the SNPs
+
+**Goal:** Group variants into distinct functional classes based on the geometric parallelism of their pleiotropy profiles.
+
+We compare four clustering approaches:
+
+1. **Hierarchical clustering** on distance `1 - S` (average linkage)
+2. **Spectral clustering** on the similarity graph
+3. **Community detection** (Louvain) on a weighted similarity graph
+4. **Gaussian mixture models** in latent space (PCA of unit-normalised profiles + `mclust`)
+
+```{r step4-k}
+k <- 3
+```
+
+### Hierarchical clustering
+
+```{r step4-hierarchical}
+D <- 1 - S
+dist_snp <- as.dist(D)
+
+hc <- hclust(dist_snp, method = "average")
+clusters_hierarchical <- cutree(hc, k = k)
+
+table(clusters_hierarchical)
+
+# equivalent helper:
+hclust_result <- cluster_snp_profiles(S, k = k, method = "hierarchical")
+stopifnot(identical(clusters_hierarchical, hclust_result$cluster))
+```
+
+```{r step4-dendrogram, fig.height = 6, fig.width = 10}
+plot(hc, labels = names(clusters_hierarchical), cex = 0.4, main = "SNP hierarchical clustering")
+rect.hclust(hc, k = k, border = 2:4)
+```
+
+### Spectral clustering
+
+```{r step4-spectral}
+clusters_spectral <- cluster_snp_profiles(S, k = k, method = "spectral")
+
+table(clusters_spectral$cluster)
+```
+
+### Community detection
+
+Louvain finds a data-driven number of modules (does not take a fixed `k`). Leading-eigenvector clustering performs `k - 1` recursive graph splits (`steps = k - 1` in **igraph**); the resulting module count may be fewer than `k` if a split is not supported.
+
+```{r step4-community}
+clusters_louvain <- cluster_snp_profiles(
+  S,
+  method = "community",
+  community_algorithm = "louvain"
+)
+
+clusters_leading_eigen <- cluster_snp_profiles(
+  S,
+  k = k,
+  method = "community",
+  community_algorithm = "leading_eigen"
+)
+
+list(
+  louvain_n_modules = clusters_louvain$n_clusters,
+  louvain_sizes = table(clusters_louvain$cluster),
+  leading_eigen_sizes = table(clusters_leading_eigen$cluster)
+)
+```
+
+### Gaussian mixture models in latent space
+
+SNP coordinates are taken from a PCA of the unit-normalised oriented profiles (`traits × SNPs` transposed to `SNPs × traits`), then `mclust` fits a `k`-component GMM.
+
+```{r step4-gmm}
+clusters_gmm <- cluster_snp_profiles(
+  S,
+  k = k,
+  method = "gmm",
+  x_matrix = X_star
+)
+
+table(clusters_gmm$cluster)
+```
+
+### Compare methods
+
+```{r step4-compare}
+comparison <- data.frame(
+  snp_id = names(clusters_hierarchical),
+  hierarchical = clusters_hierarchical,
+  spectral = clusters_spectral$cluster,
+  leading_eigen = clusters_leading_eigen$cluster,
+  louvain = clusters_louvain$cluster[names(clusters_hierarchical)],
+  gmm = clusters_gmm$cluster,
+  stringsAsFactors = FALSE
+)
+
+head(comparison, 10)
+```
+
+```{r step4-agreement}
+# pairwise agreement (identical assignment rate)
+methods <- c("hierarchical", "spectral", "leading_eigen", "gmm")
+agreement <- outer(methods, methods, Vectorize(function(a, b) {
+  mean(comparison[[a]] == comparison[[b]])
+}))
+
+rownames(agreement) <- methods
+colnames(agreement) <- methods
+
+round(agreement, 2)
+```
+
+High agreement between methods suggests robust functional modules; disagreement may reflect SNPs on cluster boundaries or methods with different assumptions (e.g. Louvain's variable module count).
+
+For interpretation below we use the hierarchical clusters (`clusters_hierarchical`) and the dendrogram `hc` from Step 4.
+
+## Step 5: Interpret biological modules
+
+**Goal:** Identify which background pathways or clinical traits drive each clustered SNP module.
+
+For each cluster, we take the mean oriented profile across member SNPs (rows of `X_star`) and rank traits by absolute magnitude.
+
+```{r step5-summarise}
+module_drivers <- summarise_snp_modules(
+  x_matrix = X_star,
+  cluster = clusters_hierarchical,
+  trait_info = pleiotropy$trait_info,
+  exclude_trait_id = target_trait_id,
+  top_n = 10
+)
+
+module_drivers
+```
+
+```{r step5-by-cluster}
+module_drivers |>
+  dplyr::group_by(cluster) |>
+  dplyr::slice_head(n = 5) |>
+  dplyr::select(cluster, trait_name, mean_z, abs_mean_z, n_snps) |>
+  dplyr::mutate(
+    mean_z = round(mean_z, 2),
+    abs_mean_z = round(abs_mean_z, 2)
+  )
+```
+
+Positive `mean_z` means traits tend to increase when the module's SNPs increase target-trait liability; negative values indicate inverse associations.
+
+### Heatmap of SNP similarity
+
+```{r step5-heatmap, fig.height = 7, fig.width = 7}
+heatmap(
+  S,
+  Rowv = as.dendrogram(hc),
+  Colv = as.dendrogram(hc),
+  scale = "none",
+  main = "SNP functional clustering",
+  xlab = "SNPs",
+  ylab = "SNPs"
+)
+```
+
+The dendrogram ordering groups SNPs with parallel pleiotropy footprints; block structure along the diagonal indicates distinct functional modules.

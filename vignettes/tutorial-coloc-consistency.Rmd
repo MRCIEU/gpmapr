@@ -147,14 +147,15 @@ Profile 1 loci tend toward positive LDL and HDL z-scores; profile 2 loci tend to
 `pathway_enrichment()` tests a gene set against Reactome, KEGG, and HP pathway databases via the GPMap API. We use numeric `gene_id` values here, but the API also accepts gene names.
 
 Why can this be useful?
-- We are asking slightly different questions here.
-  - Among my input genes, is overlap with this pathway larger than expected by chance, given pathway size and background?
-- it can provide different results due to:
-  - a. how many genes you are testing against
-  - b. which genes you are testing
-- In a big mixed list, many genes hit many pathways weakly
-- In a small coherent LPA list, overlap with the "right" pathway can be a higher fraction of the input set
-  - That can produce stronger p-values for those specific pathways
+
+* We are asking slightly different questions here.
+  * Among my input genes, is overlap with this pathway larger than expected by chance, given pathway size and background?
+* it can provide different results due to:
+  * a. how many genes you are testing against
+  * b. which genes you are testing
+* In a big mixed list, many genes hit many pathways weakly
+* In a small coherent LPA list, overlap with the "right" pathway can be a higher fraction of the input set
+  * That can produce stronger p-values for those specific pathways
 
 ```{r gene-sets}
 locus_genes <- cg |>

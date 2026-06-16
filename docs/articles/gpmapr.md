@@ -424,21 +424,21 @@ forest_row_label <- function(trait_name, data_type, tissue) {
 }
 
 trem2_forest_coloc <- trem2_alzheimer_groups |>
-  dplyr::filter(!is.na(.data$beta), !is.na(.data$se), .data$se > 0) |>
+  dplyr::filter(!is.na(beta), !is.na(se), se > 0) |>
   dplyr::mutate(
-    lo = .data$beta - 1.96 * .data$se,
-    hi = .data$beta + 1.96 * .data$se,
-    row_label = forest_row_label(.data$trait_name, .data$data_type, .data$tissue),
+    lo = beta - 1.96 * se,
+    hi = beta + 1.96 * se,
+    row_label = forest_row_label(trait_name, data_type, tissue),
     panel_id = dplyr::coalesce(
-      as.character(.data$display_snp),
-      paste0("variant ", as.character(.data$variant_id))
+      as.character(display_snp),
+      paste0("variant ", as.character(variant_id))
     ),
     analysis = "Colocalisation"
   ) |>
-  dplyr::group_by(.data$coloc_group_id) |>
-  dplyr::arrange(.data$beta, .by_group = TRUE) |>
+  dplyr::group_by(coloc_group_id) |>
+  dplyr::arrange(beta, .by_group = TRUE) |>
   dplyr::mutate(
-    row_label = factor(.data$row_label, levels = unique(.data$row_label))
+    row_label = factor(row_label, levels = unique(row_label))
   ) |>
   dplyr::ungroup()
 
@@ -450,21 +450,21 @@ trem2_forest_rare <- if (is.null(trem2_alzheimer_rare_results) || nrow(trem2_alz
     rr$tissue <- NA_character_
   }
   rr |>
-    dplyr::filter(!is.na(.data$beta), !is.na(.data$se), .data$se > 0) |>
+    dplyr::filter(!is.na(beta), !is.na(se), se > 0) |>
     dplyr::mutate(
-      lo = .data$beta - 1.96 * .data$se,
-      hi = .data$beta + 1.96 * .data$se,
-      row_label = forest_row_label(.data$trait_name, .data$data_type, .data$tissue),
+      lo = beta - 1.96 * se,
+      hi = beta + 1.96 * se,
+      row_label = forest_row_label(trait_name, data_type, tissue),
       panel_id = dplyr::coalesce(
-        as.character(.data$display_snp),
-        paste0("variant ", as.character(.data$variant_id))
+        as.character(display_snp),
+        paste0("variant ", as.character(variant_id))
       ),
       analysis = "Rare result"
     ) |>
-    dplyr::group_by(.data$panel_id) |>
-    dplyr::arrange(.data$beta, .by_group = TRUE) |>
+    dplyr::group_by(panel_id) |>
+    dplyr::arrange(beta, .by_group = TRUE) |>
     dplyr::mutate(
-      row_label = factor(.data$row_label, levels = unique(.data$row_label))
+      row_label = factor(row_label, levels = unique(row_label))
     ) |>
     dplyr::ungroup()
 }
@@ -474,7 +474,7 @@ trem2_forest <- dplyr::bind_rows(
   trem2_forest_rare
 ) |>
   dplyr::mutate(
-    panel_id = factor(.data$panel_id, levels = unique(.data$panel_id))
+    panel_id = factor(panel_id, levels = unique(panel_id))
   )
 
 ggplot2::ggplot(trem2_forest, ggplot2::aes(x = beta, y = row_label, colour = analysis)) +

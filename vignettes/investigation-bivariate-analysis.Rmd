@@ -1,0 +1,243 @@
+---
+title: "Investigation of bivariate analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Investigation of bivariate analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+```{r libraries}
+pkg_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("devtools", quietly = TRUE)) {
+  devtools::load_all(pkg_root, quiet = TRUE)
+} else {
+  library(gpmapr)
+}
+library(dplyr)
+library(tidyr)
+```
+
+This vignette builds a bivariate pleiotropy analysis from GPMap colocalisation data. We use **LDL cholesterol** (trait id `1486`) and **HDL cholesterol** (trait id `1630`) as the target pair.
+
+## Step 1: Construct the pleiotropy matrices (X₁ and X₂)
+
+**Goal:** Build two baseline matrices. `X₁` contains pleiotropic profiles for the SNPs associated with Trait 1; `X₂` for Trait 2. Both must share the same background trait rows.
+
+```{r step1-fetch}
+trait_id_1 <- 1630
+trait_id_2 <- 1486
+
+traits_data <- traits(
+  c(trait_id_1, trait_id_2),
+  include_associations = TRUE
+)
+cg <- traits_data$coloc_groups
+```
+
+### Union of background traits
+
+Background rows are the union of traits with a colocalisation signal at any SNP locus linked to either target.
+
+```{r step1-build}
+bivariate <- build_bivariate_pleiotropy_matrices(
+  trait_id_1 = trait_id_1,
+  trait_id_2 = trait_id_2,
+  coloc_groups = cg,
+  snp_key = "variant_id"
+)
+
+X1 <- bivariate$x1_matrix
+X2 <- bivariate$x2_matrix
+
+list(
+  trait_1 = traits_data$traits$trait_name[traits_data$traits$id == trait_id_1],
+  trait_2 = traits_data$traits$trait_name[traits_data$traits$id == trait_id_2],
+  n_background_traits = nrow(X1),
+  n_snps_trait_1 = ncol(X1),
+  n_snps_trait_2 = ncol(X2),
+  shared_rows = identical(rownames(X1), rownames(X2))
+)
+```
+
+```{r step1-dims}
+dim(X1)
+dim(X2)
+```
+
+Each column is one target SNP's signed z-score profile (`beta / se`) across the shared background traits. Entries are `NA` where a trait has no colocalisation signal at that SNP's locus.
+
+## Step 2: Orient profiles relative to each target trait (X₁\* and X₂\*)
+
+**Goal:** Independently calibrate each matrix so columns reflect what happens when the variant **increases liability** for that matrix's target trait.
+
+For Trait 1:
+
+\[
+X^*_{1,tj} = \mathrm{sign}(z_{1j}) \cdot X_{1,tj}
+\]
+
+And analogously for Trait 2 using \(z_2\).
+
+```{r step2-z-targets}
+z1 <- X1[as.character(trait_id_1), ]
+z2 <- X2[as.character(trait_id_2), ]
+
+list(
+  trait_1_signs = table(sign(z1), useNA = "ifany"),
+  trait_2_signs = table(sign(z2), useNA = "ifany")
+)
+```
+
+```{r step2-orient}
+X1_star <- sweep(X1, 2, sign(z1), `*`)
+X2_star <- sweep(X2, 2, sign(z2), `*`)
+
+oriented_1 <- orient_pleiotropy_matrix(X1, target_trait_id = trait_id_1)
+oriented_2 <- orient_pleiotropy_matrix(X2, target_trait_id = trait_id_2)
+stopifnot(
+  all.equal(X1_star, oriented_1$x_matrix, check.attributes = FALSE),
+  all.equal(X2_star, oriented_2$x_matrix, check.attributes = FALSE)
+)
+```
+
+After orientation, each target trait's own row is non-negative within its matrix; background traits are flipped to align with that target's direction of effect.
+
+```{r step2-check}
+list(
+  trait_1_negative = sum(X1_star[as.character(trait_id_1), ] < 0, na.rm = TRUE),
+  trait_2_negative = sum(X2_star[as.character(trait_id_2), ] < 0, na.rm = TRUE)
+)
+```
+
+## Step 3: Calculate cross-trait SNP similarity matrix (S\*)
+
+**Goal:** Build a rectangular Trait-1 SNPs × Trait-2 SNPs matrix where each cell measures functional similarity between one variant from each disease.
+
+\[
+S_{jk} = \frac{{x^*_{1,j}}^{\top} x^*_{2,k}}{\|x^*_{1,j}\| \|x^*_{2,k}\|}
+\]
+
+```{r step3-normalize}
+X1_filled <- X1_star
+X1_filled[is.na(X1_filled)] <- 0
+X2_filled <- X2_star
+X2_filled[is.na(X2_filled)] <- 0
+
+col_norms_1 <- sqrt(colSums(X1_filled^2))
+col_norms_2 <- sqrt(colSums(X2_filled^2))
+
+A <- sweep(X1_filled, 2, col_norms_1, "/")
+B <- sweep(X2_filled, 2, col_norms_2, "/")
+```
+
+```{r step3-similarity}
+S_star <- crossprod(A, B)
+
+cross_similarity <- cross_snp_similarity_matrix(X1_star, X2_star)
+stopifnot(all.equal(S_star, cross_similarity$s_matrix, check.attributes = FALSE))
+```
+
+```{r step3-summary}
+list(
+  dim = dim(S_star),
+  min_similarity = min(S_star, na.rm = TRUE),
+  max_similarity = max(S_star, na.rm = TRUE),
+  mean_similarity = mean(S_star, na.rm = TRUE)
+)
+```
+
+## Step 4: Identify shared biological modules
+
+**Goal:** Cluster Trait-1 and Trait-2 SNPs independently to reveal block structure in the cross-similarity landscape. Because `S_star` is rectangular, we use dual hierarchical clustering on row and column distance spaces.
+
+```{r step4-cluster}
+dist_rows <- dist(S_star, method = "euclidean")
+dist_cols <- dist(t(S_star), method = "euclidean")
+
+hc1 <- hclust(dist_rows, method = "average")
+hc2 <- hclust(dist_cols, method = "average")
+
+cross_clusters <- cluster_cross_trait_snps(S_star, linkage = "average")
+stopifnot(
+  identical(hc1$labels, cross_clusters$hclust_rows$labels),
+  identical(hc2$labels, cross_clusters$hclust_cols$labels)
+)
+```
+
+```{r step4-heatmap, fig.height = 7, fig.width = 9}
+heatmap(
+  S_star,
+  Rowv = as.dendrogram(hc1),
+  Colv = as.dendrogram(hc2),
+  scale = "none",
+  main = "Clustered cross-trait SNP similarity blocks",
+  xlab = "Trait 2 SNPs",
+  ylab = "Trait 1 SNPs"
+)
+```
+
+Bright blocks along the diagonal of the reordered heatmap indicate groups of SNPs from each trait with parallel pleiotropy footprints.
+
+## Step 5: Interpret the bivariate blocks
+
+Inspecting the clustered heatmap, SNP pairs segregate into structural blocks that describe how the two traits genetically intersect.
+
+### Block A: Shared concordant modules (cells ≈ +0.5 to +1.0)
+
+Trait-1 and Trait-2 SNP groups with highly parallel pleiotropy profiles. These variants drive downstream traits in the same direction — a shared biological highway increasing risk for both diseases through the same mechanism.
+
+### Block B: Shared discordant / antagonistic modules (cells ≈ −0.5 to −1.0)
+
+Intensely negative cosine blocks. A biological toggle: variants that increase risk for one trait while protecting against the other — a genetic trade-off signature.
+
+### Block C: Trait-specific modules (cells ≈ 0)
+
+Flat, near-zero panels. Variants acting through isolated mechanisms unique to each trait, largely independent of the other disease network.
+
+```{r step5-cut}
+k1 <- 3
+k2 <- 3
+
+cross_modules <- cluster_cross_trait_snps(
+  S_star,
+  linkage = "average",
+  k1 = k1,
+  k2 = k2
+)
+```
+
+```{r step5-summarise}
+module_summary <- summarise_cross_trait_modules(
+  S_star,
+  clusters_rows = cross_modules$clusters_rows,
+  clusters_cols = cross_modules$clusters_cols
+)
+
+module_summary |>
+  dplyr::mutate(
+    mean_similarity = round(mean_similarity, 2),
+    min_similarity = round(min_similarity, 2),
+    max_similarity = round(max_similarity, 2)
+  )
+```
+
+```{r step5-by-type}
+module_summary |>
+  dplyr::count(block_type, name = "n_blocks") |>
+  dplyr::arrange(dplyr::desc(n_blocks))
+```
+
+Concordant blocks are candidates for shared causal pathways; discordant blocks for opposing lipid/lipid-related biology between LDL and HDL; trait-specific blocks highlight mechanisms that do not translate across the trait pair.

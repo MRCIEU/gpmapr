@@ -226,11 +226,11 @@ ad_trait_ids <- ad_search$type_id
 ad_coloc <- dplyr::bind_rows(lapply(ad_trait_ids, function(tid) {
   tryCatch(trait(tid)$coloc_groups, error = function(e) NULL)
 })) |>
-  dplyr::filter(!grepl("methyl", .data$data_type, ignore.case = TRUE))
+  dplyr::filter(!grepl("methyl", data_type, ignore.case = TRUE))
 
 ad_genes <- ad_coloc |>
-  dplyr::filter(!is.na(.data$gene_id)) |>
-  dplyr::distinct(.data$gene_id, .data$gene)
+  dplyr::filter(!is.na(gene_id)) |>
+  dplyr::distinct(gene_id, gene)
 
 nrow(ad_genes)
 ```
@@ -250,7 +250,7 @@ ad_genes_ranked <- ad_genes |>
     all_pleiotropy[, c("gene_id", "distinct_trait_categories", "distinct_protein_coding_genes")],
     by = "gene_id"
   ) |>
-  dplyr::arrange(.data$distinct_trait_categories)
+  dplyr::arrange(distinct_trait_categories)
 ```
 
 There are a total of `r nrow(ad_genes_ranked)` genes mapped to Alzheimer's disease.  We can see some of the genes that are mapped to AD, and the number of colocalisation groups that each gene has.
@@ -302,11 +302,11 @@ gene_evidence <- lapply(top_genes$gene, function(g) {
 }) |> dplyr::bind_rows()
 
 ad_summary <- ad_genes_ranked |>
-  dplyr::filter(.data$gene %in% gene_evidence$gene) |>
+  dplyr::filter(gene %in% gene_evidence$gene) |>
   dplyr::left_join(gene_evidence, by = "gene") |>
   dplyr::select("gene", "distinct_trait_categories", "distinct_protein_coding_genes",
                 "n_tissues", "n_coloc_groups", "n_rare_groups") |>
-  dplyr::arrange(.data$distinct_trait_categories, .data$gene)
+  dplyr::arrange(distinct_trait_categories, gene)
 
 ad_summary_long <- ad_summary |>
   tidyr::pivot_longer(
@@ -316,13 +316,13 @@ ad_summary_long <- ad_summary |>
     values_to = "value"
   ) |>
   dplyr::mutate(
-    metric = factor(.data$metric,
+    metric = factor(metric,
       levels = c("distinct_trait_categories", "distinct_protein_coding_genes",
                  "n_tissues", "n_coloc_groups", "n_rare_groups"),
       labels = c("Trait categories", "Protein-coding genes",
                  "Distinct tissues", "Colocalization groups", "Rare result groups")
     ),
-    gene = factor(.data$gene, levels = rev(ad_summary$gene))
+    gene = factor(gene, levels = rev(ad_summary$gene))
   )
 ```
 
@@ -426,10 +426,10 @@ trem2_all_rows <- dplyr::bind_rows(
 )
 
 variant_maf <- trem2_all_rows |>
-  dplyr::filter(!is.na(.data$eaf)) |>
-  dplyr::mutate(maf = pmin(.data$eaf, 1 - .data$eaf)) |>
-  dplyr::group_by(.data$variant_id) |>
-  dplyr::summarise(maf = min(.data$maf, na.rm = TRUE), .groups = "drop")
+  dplyr::filter(!is.na(eaf)) |>
+  dplyr::mutate(maf = pmin(eaf, 1 - eaf)) |>
+  dplyr::group_by(variant_id) |>
+  dplyr::summarise(maf = min(maf, na.rm = TRUE), .groups = "drop")
 
 make_panel_label <- function(display_snp, variant_id, maf_lookup) {
   snp <- dplyr::coalesce(as.character(display_snp), paste0("variant ", as.character(variant_id)))
@@ -439,17 +439,17 @@ make_panel_label <- function(display_snp, variant_id, maf_lookup) {
 }
 
 trem2_forest_coloc <- trem2_ad_groups |>
-  dplyr::filter(!is.na(.data$beta), !is.na(.data$se), .data$se > 0) |>
+  dplyr::filter(!is.na(beta), !is.na(se), se > 0) |>
   dplyr::mutate(
-    lo = .data$beta - 1.96 * .data$se,
-    hi = .data$beta + 1.96 * .data$se,
-    row_label = forest_row_label(.data$trait_name, .data$data_type, .data$tissue),
-    panel_id = make_panel_label(.data$display_snp, .data$variant_id, variant_maf),
-    data_type_label = label_data_type(.data$data_type)
+    lo = beta - 1.96 * se,
+    hi = beta + 1.96 * se,
+    row_label = forest_row_label(trait_name, data_type, tissue),
+    panel_id = make_panel_label(display_snp, variant_id, variant_maf),
+    data_type_label = label_data_type(data_type)
   ) |>
-  dplyr::group_by(.data$coloc_group_id) |>
-  dplyr::arrange(.data$beta, .by_group = TRUE) |>
-  dplyr::mutate(row_label = factor(.data$row_label, levels = unique(.data$row_label))) |>
+  dplyr::group_by(coloc_group_id) |>
+  dplyr::arrange(beta, .by_group = TRUE) |>
+  dplyr::mutate(row_label = factor(row_label, levels = unique(row_label))) |>
   dplyr::ungroup()
 
 trem2_forest_rare <- if (is.null(trem2_ad_rare) || nrow(trem2_ad_rare) == 0L) {
@@ -459,22 +459,22 @@ trem2_forest_rare <- if (is.null(trem2_ad_rare) || nrow(trem2_ad_rare) == 0L) {
   if (!"tissue" %in% names(rr)) rr$tissue <- NA_character_
   if (!"eaf" %in% names(rr)) rr$eaf <- NA_real_
   rr |>
-    dplyr::filter(!is.na(.data$beta), !is.na(.data$se), .data$se > 0) |>
+    dplyr::filter(!is.na(beta), !is.na(se), se > 0) |>
     dplyr::mutate(
-      lo = .data$beta - 1.96 * .data$se,
-      hi = .data$beta + 1.96 * .data$se,
-      row_label = forest_row_label(.data$trait_name, .data$data_type, .data$tissue),
-      panel_id = make_panel_label(.data$display_snp, .data$variant_id, variant_maf),
-      data_type_label = label_data_type(.data$data_type)
+      lo = beta - 1.96 * se,
+      hi = beta + 1.96 * se,
+      row_label = forest_row_label(trait_name, data_type, tissue),
+      panel_id = make_panel_label(display_snp, variant_id, variant_maf),
+      data_type_label = label_data_type(data_type)
     ) |>
-    dplyr::group_by(.data$panel_id) |>
-    dplyr::arrange(.data$beta, .by_group = TRUE) |>
-    dplyr::mutate(row_label = factor(.data$row_label, levels = unique(.data$row_label))) |>
+    dplyr::group_by(panel_id) |>
+    dplyr::arrange(beta, .by_group = TRUE) |>
+    dplyr::mutate(row_label = factor(row_label, levels = unique(row_label))) |>
     dplyr::ungroup()
 }
 
 trem2_forest <- dplyr::bind_rows(trem2_forest_coloc, trem2_forest_rare) |>
-  dplyr::mutate(panel_id = factor(.data$panel_id, levels = unique(.data$panel_id)))
+  dplyr::mutate(panel_id = factor(panel_id, levels = unique(panel_id)))
 
 cbf_palette <- c(
   "Gene Expression" = "#0072B2",

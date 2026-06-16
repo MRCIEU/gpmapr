@@ -21,7 +21,9 @@ Imports:
 Suggests: 
     ggplot2,
     ggrepel,
+    igraph,
     knitr,
+    mclust,
     RColorBrewer,
     reshape2,
     rmarkdown,

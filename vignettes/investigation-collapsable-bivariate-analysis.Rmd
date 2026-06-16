@@ -1,0 +1,194 @@
+---
+title: "Investigation of collapsable bivariate analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Investigation of collapsable bivariate analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+```{r libraries}
+pkg_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("devtools", quietly = TRUE)) {
+  devtools::load_all(pkg_root, quiet = TRUE)
+} else {
+  library(gpmapr)
+}
+library(dplyr)
+library(tidyr)
+```
+
+This vignette extends the bivariate pleiotropy workflow by replacing sparse individual QTL/trait rows with **`collapsed_trait`** rows. Gene-linked signals are merged by `gene_id` (across QTL types and coloc groups), then grouped into enriched pathways. The downstream similarity, clustering, and block interpretation steps are unchanged.
+
+We use **HDL cholesterol** (trait id `1630`) and **LDL cholesterol** (trait id `1486`).
+
+## Step 1: Construct collapsed pleiotropy matrices (X₁ and X₂)
+
+**Goal:** Build two matrices whose columns are target-trait SNPs and whose rows are shared `collapsed_trait` groups rather than individual background traits.
+
+```{r step1-fetch}
+trait_id_1 <- 1630
+trait_id_2 <- 1486
+
+traits_data <- traits(
+  c(trait_id_1, trait_id_2),
+  include_associations = TRUE
+)
+cg <- traits_data$coloc_groups
+```
+
+### Gene collapse and pathway mapping
+
+1. At each target SNP locus, merge all gene-linked QTL rows by `gene_id` (eQTL, pQTL, etc. in different coloc groups → one z-score per gene × SNP).
+2. Run pathway enrichment on the union of those genes.
+3. Map each gene to one or more enriched pathways (`collapsed_trait_id = source:term_id`).
+4. Genes outside enriched pathways remain as gene-level collapsed traits (`gene:<gene_id>`).
+
+```{r step1-build}
+bivariate <- build_bivariate_collapsed_pleiotropy_matrices(
+  trait_id_1 = trait_id_1,
+  trait_id_2 = trait_id_2,
+  coloc_groups = cg,
+  snp_key = "variant_id",
+  minimum_count_in_network = 2
+)
+
+X1 <- bivariate$x1_matrix
+X2 <- bivariate$x2_matrix
+
+list(
+  trait_1 = traits_data$traits$trait_name[traits_data$traits$id == trait_id_1],
+  trait_2 = traits_data$traits$trait_name[traits_data$traits$id == trait_id_2],
+  n_collapsed_traits = nrow(X1),
+  n_pathway_traits = sum(bivariate$collapsed_trait_info$source != "gene"),
+  n_gene_traits = sum(bivariate$collapsed_trait_info$source == "gene"),
+  n_snps_trait_1 = ncol(X1),
+  n_snps_trait_2 = ncol(X2),
+  shared_rows = identical(rownames(X1), rownames(X2))
+)
+```
+
+```{r step1-collapsed-traits}
+head(bivariate$collapsed_trait_info, 10)
+```
+
+```{r step1-dims}
+dim(X1)
+dim(X2)
+```
+
+Each column is still one target SNP's profile, but rows now summarise pathway- or gene-level pleiotropy rather than isolated single-trait QTL rows.
+
+## Step 2: Orient profiles relative to each target trait (X₁\* and X₂\*)
+
+Target-trait orientation uses the original GWAS z-scores (`z_target_1`, `z_target_2`), not the collapsed rows.
+
+```{r step2-orient}
+oriented_1 <- orient_pleiotropy_matrix(
+  X1,
+  target_trait_id = trait_id_1,
+  z_target = bivariate$z_target_1
+)
+oriented_2 <- orient_pleiotropy_matrix(
+  X2,
+  target_trait_id = trait_id_2,
+  z_target = bivariate$z_target_2
+)
+
+X1_star <- oriented_1$x_matrix
+X2_star <- oriented_2$x_matrix
+```
+
+## Step 3: Calculate cross-trait SNP similarity matrix (S\*)
+
+```{r step3-similarity}
+S_star <- cross_snp_similarity_matrix(X1_star, X2_star)$s_matrix
+
+list(
+  dim = dim(S_star),
+  min_similarity = min(S_star, na.rm = TRUE),
+  max_similarity = max(S_star, na.rm = TRUE),
+  mean_similarity = mean(S_star, na.rm = TRUE)
+)
+```
+
+## Step 4: Identify shared biological modules
+
+```{r step4-cluster}
+cross_clusters <- cluster_cross_trait_snps(S_star, linkage = "average")
+hc1 <- cross_clusters$hclust_rows
+hc2 <- cross_clusters$hclust_cols
+```
+
+```{r step4-heatmap, fig.height = 7, fig.width = 9}
+heatmap(
+  S_star,
+  Rowv = as.dendrogram(hc1),
+  Colv = as.dendrogram(hc2),
+  scale = "none",
+  main = "Clustered cross-trait SNP similarity blocks",
+  xlab = "Trait 2 SNPs",
+  ylab = "Trait 1 SNPs"
+)
+```
+
+## Step 5: Interpret the bivariate blocks
+
+### Block A: Shared concordant modules (cells ≈ +0.5 to +1.0)
+
+Parallel pleiotropy footprints across traits — a shared biological highway.
+
+### Block B: Shared discordant modules (cells ≈ −0.5 to −1.0)
+
+Antagonistic blocks — genetic trade-offs between the two traits.
+
+### Block C: Trait-specific modules (cells ≈ 0)
+
+Near-zero similarity — largely independent mechanisms.
+
+```{r step5-cut}
+k1 <- 3
+k2 <- 3
+
+cross_modules <- cluster_cross_trait_snps(
+  S_star,
+  linkage = "average",
+  k1 = k1,
+  k2 = k2
+)
+```
+
+```{r step5-summarise}
+module_summary <- summarise_cross_trait_modules(
+  S_star,
+  clusters_rows = cross_modules$clusters_rows,
+  clusters_cols = cross_modules$clusters_cols
+)
+
+module_summary |>
+  dplyr::mutate(
+    mean_similarity = round(mean_similarity, 2),
+    min_similarity = round(min_similarity, 2),
+    max_similarity = round(max_similarity, 2)
+  )
+```
+
+```{r step5-by-type}
+module_summary |>
+  dplyr::count(block_type, name = "n_blocks") |>
+  dplyr::arrange(dplyr::desc(n_blocks))
+```
+
+Using pathway-collapsed rows densifies the background profile space, so block structure reflects shared biology rather than sparse one-off QTL entries.

@@ -28,7 +28,7 @@ build_locus_zscore_matrix <- function(trait_ids,
   if (is.null(coloc_groups)) {
     if (length(trait_ids) > 10) {
       coloc_groups <- dplyr::bind_rows(lapply(trait_ids, function(tid) {
-        tryCatch(trait(tid, include_associations = TRUE)$coloc_groups, error = function(e) NULL)
+        tryCatch(trait(tid, include_associations = TRUE)$coloc_groups, error = function(e) return(NULL))
       }))
     } else {
       coloc_groups <- traits(trait_ids, include_associations = TRUE)$coloc_groups
@@ -45,28 +45,28 @@ build_locus_zscore_matrix <- function(trait_ids,
 
   cg <- coloc_groups |>
     dplyr::filter(
-      .data$trait_id %in% trait_ids,
-      .data$min_p <= p_threshold,
-      !is.na(.data$beta),
-      !is.na(.data$se),
-      .data$se > 0
+      trait_id %in% trait_ids,
+      min_p <= p_threshold,
+      !is.na(beta),
+      !is.na(se),
+      se > 0
     ) |>
-    dplyr::mutate(z = .data$beta / .data$se)
+    dplyr::mutate(z = beta / se)
 
   # For each locus-trait pair, take the z-score with the smallest p-value
   cg_summary <- cg |>
-    dplyr::group_by(.data$coloc_group_id, .data$trait_id) |>
-    dplyr::slice_min(.data$min_p, n = 1, with_ties = FALSE) |>
+    dplyr::group_by(coloc_group_id, trait_id) |>
+    dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
     dplyr::ungroup()
 
   # Filter loci present in at least min_traits
   locus_trait_counts <- cg_summary |>
-    dplyr::group_by(.data$coloc_group_id) |>
-    dplyr::summarise(n_traits = dplyr::n_distinct(.data$trait_id), .groups = "drop") |>
-    dplyr::filter(.data$n_traits >= min_traits)
+    dplyr::group_by(coloc_group_id) |>
+    dplyr::summarise(n_traits = dplyr::n_distinct(trait_id), .groups = "drop") |>
+    dplyr::filter(n_traits >= min_traits)
 
   cg_summary <- cg_summary |>
-    dplyr::filter(.data$coloc_group_id %in% locus_trait_counts$coloc_group_id)
+    dplyr::filter(coloc_group_id %in% locus_trait_counts$coloc_group_id)
 
   if (nrow(cg_summary) == 0) {
     stop("No loci with signals in >= min_traits traits after filtering")
@@ -96,19 +96,19 @@ build_locus_zscore_matrix <- function(trait_ids,
 
   # Build locus metadata
   locus_info <- cg_summary |>
-    dplyr::distinct(.data$coloc_group_id, .keep_all = TRUE) |>
+    dplyr::distinct(coloc_group_id, .keep_all = TRUE) |>
     dplyr::select(dplyr::any_of(c("coloc_group_id", "chr", "bp", "display_snp", "ld_block"))) |>
-    dplyr::filter(.data$coloc_group_id %in% locus_ids)
+    dplyr::filter(coloc_group_id %in% locus_ids)
 
   # Build trait metadata
   trait_info <- cg_summary |>
-    dplyr::distinct(.data$trait_id, .data$trait_name)
+    dplyr::distinct(trait_id, trait_name)
 
-  list(
+  return(list(
     z_matrix = z_matrix,
     locus_info = locus_info,
     trait_info = trait_info
-  )
+  ))
 }
 
 
@@ -156,12 +156,12 @@ latent_causal_blocks <- function(z_matrix,
   # Filter to the best model
   best_fit_filtered <- best_fit |>
     dplyr::filter(
-      .data$classes_number == best_model_info$Classes,
-      .data$model_number == best_model_info$Model,
-      .data$id <= nrow(z_df)
+      classes_number == best_model_info$Classes,
+      model_number == best_model_info$Model,
+      id <= nrow(z_df)
     ) |>
-    dplyr::distinct(.data$id, .keep_all = TRUE) |>
-    dplyr::arrange(.data$id)
+    dplyr::distinct(id, .keep_all = TRUE) |>
+    dplyr::arrange(id)
 
   assignments <- data.frame(
     locus_id = z_df$locus_id[best_fit_filtered$id],
@@ -169,11 +169,11 @@ latent_causal_blocks <- function(z_matrix,
     stringsAsFactors = FALSE
   )
 
-  list(
+  return(list(
     fit = lpa_fit,
     best_model = best_model_info,
     assignments = assignments
-  )
+  ))
 }
 
 
@@ -199,10 +199,10 @@ summarise_latent_blocks <- function(z_matrix, assignments, trait_info = NULL) {
       names_to = "trait_id",
       values_to = "z"
     ) |>
-    dplyr::group_by(.data$profile, .data$trait_id) |>
+    dplyr::group_by(profile, trait_id) |>
     dplyr::summarise(
-      mean_z = mean(.data$z, na.rm = TRUE),
-      sd_z = stats::sd(.data$z, na.rm = TRUE),
+      mean_z = mean(z, na.rm = TRUE),
+      sd_z = stats::sd(z, na.rm = TRUE),
       n_loci = dplyr::n(),
       .groups = "drop"
     )
@@ -210,10 +210,10 @@ summarise_latent_blocks <- function(z_matrix, assignments, trait_info = NULL) {
   if (!is.null(trait_info)) {
     long <- long |>
       dplyr::left_join(
-        trait_info |> dplyr::mutate(trait_id = as.character(.data$trait_id)),
+        trait_info |> dplyr::mutate(trait_id = as.character(trait_id)),
         by = "trait_id"
       )
   }
 
-  long
+  return(long)
 }

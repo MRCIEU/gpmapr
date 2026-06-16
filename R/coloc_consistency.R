@@ -41,17 +41,17 @@ pleiotropic_consistency_score <- function(trait_id_1,
   }
 
   cg <- coloc_groups |>
-    dplyr::filter(.data$min_p <= p_threshold)
+    dplyr::filter(min_p <= p_threshold)
 
   t1_loci <- cg |>
-    dplyr::filter(.data$trait_id == trait_id_1) |>
-    dplyr::distinct(.data$coloc_group_id) |>
-    dplyr::pull(.data$coloc_group_id)
+    dplyr::filter(trait_id == trait_id_1) |>
+    dplyr::distinct(coloc_group_id) |>
+    dplyr::pull(coloc_group_id)
 
   t2_loci <- cg |>
-    dplyr::filter(.data$trait_id == trait_id_2) |>
-    dplyr::distinct(.data$coloc_group_id) |>
-    dplyr::pull(.data$coloc_group_id)
+    dplyr::filter(trait_id == trait_id_2) |>
+    dplyr::distinct(coloc_group_id) |>
+    dplyr::pull(coloc_group_id)
 
   n_shared <- length(intersect(t1_loci, t2_loci))
   m1 <- length(setdiff(t1_loci, t2_loci))
@@ -60,14 +60,14 @@ pleiotropic_consistency_score <- function(trait_id_1,
   denom <- n_shared + m1 + m2
   pcs <- if (denom == 0) 0 else n_shared / denom
 
-  list(
+  return(list(
     pcs = pcs,
     n_shared = n_shared,
     m1 = m1,
     m2 = m2,
     trait_1_loci = length(t1_loci),
     trait_2_loci = length(t2_loci)
-  )
+  ))
 }
 
 
@@ -85,7 +85,7 @@ pcs_matrix <- function(trait_ids, coloc_groups = NULL, p_threshold = 5e-8) {
   if (is.null(coloc_groups)) {
     if (length(trait_ids) > 10) {
       coloc_groups <- dplyr::bind_rows(lapply(trait_ids, function(tid) {
-        tryCatch(trait(tid)$coloc_groups, error = function(e) NULL)
+        tryCatch(trait(tid)$coloc_groups, error = function(e) return(NULL))
       }))
     } else {
       coloc_groups <- traits(trait_ids)$coloc_groups
@@ -109,7 +109,7 @@ pcs_matrix <- function(trait_ids, coloc_groups = NULL, p_threshold = 5e-8) {
     }
   }
 
-  mat
+  return(mat)
 }
 
 
@@ -149,14 +149,14 @@ net_directionality_score <- function(trait_id_1,
   }
 
   cg <- coloc_groups |>
-    dplyr::filter(.data$min_p <= p_threshold, !is.na(.data$beta))
+    dplyr::filter(min_p <= p_threshold, !is.na(beta))
 
   t1 <- cg |>
-    dplyr::filter(.data$trait_id == trait_id_1) |>
+    dplyr::filter(trait_id == trait_id_1) |>
     dplyr::select("coloc_group_id", beta_1 = "beta")
 
   t2 <- cg |>
-    dplyr::filter(.data$trait_id == trait_id_2) |>
+    dplyr::filter(trait_id == trait_id_2) |>
     dplyr::select("coloc_group_id", beta_2 = "beta")
 
   shared <- dplyr::inner_join(t1, t2, by = "coloc_group_id")
@@ -166,7 +166,7 @@ net_directionality_score <- function(trait_id_1,
   }
 
   shared <- shared |>
-    dplyr::mutate(concordant = sign(.data$beta_1) == sign(.data$beta_2))
+    dplyr::mutate(concordant = sign(beta_1) == sign(beta_2))
 
   n_pos <- sum(shared$concordant)
   n_neg <- sum(!shared$concordant)
@@ -174,12 +174,12 @@ net_directionality_score <- function(trait_id_1,
 
   nds <- if (n_total == 0) NA_real_ else (n_pos - n_neg) / n_total
 
-  list(
+  return(list(
     nds = nds,
     n_pos = n_pos,
     n_neg = n_neg,
     n_total = n_total
-  )
+  ))
 }
 
 
@@ -198,7 +198,7 @@ nds_matrix <- function(trait_ids, coloc_groups = NULL, p_threshold = 5e-8) {
   if (is.null(coloc_groups)) {
     if (length(trait_ids) > 10) {
       coloc_groups <- dplyr::bind_rows(lapply(trait_ids, function(tid) {
-        tryCatch(trait(tid, include_associations = TRUE)$coloc_groups, error = function(e) NULL)
+        tryCatch(trait(tid, include_associations = TRUE)$coloc_groups, error = function(e) return(NULL))
       }))
     } else {
       coloc_groups <- traits(trait_ids, include_associations = TRUE)$coloc_groups
@@ -222,5 +222,5 @@ nds_matrix <- function(trait_ids, coloc_groups = NULL, p_threshold = 5e-8) {
     }
   }
 
-  mat
+  return(mat)
 }
