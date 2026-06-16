@@ -221,35 +221,36 @@ build_bivariate_pleiotropy_matrices <- function(trait_id_1,
 }
 
 
-#' @title Build Collapsed-Trait Pleiotropy Matrix
-#' @description Construct a pleiotropy matrix whose rows are `collapsed_trait`
-#' groups rather than individual background traits. Gene-linked QTL signals are
-#' first merged by `gene_id` (across QTL types and coloc groups), then mapped to
-#' enriched pathways. Genes outside enriched pathways remain as gene-level
-#' collapsed traits.
+#' @title Build Feature Pleiotropy Matrix
+#' @description Construct a pleiotropy matrix with standard background **trait** rows
+#' plus dense **feature** rows. Gene-linked molecular QTL signals are merged by
+#' `gene_id`, mapped to enriched pathways (`feature_type = "pathway"`), or kept as
+#' gene-level features. Non-molecular background traits are retained unchanged.
+#' Matrix values use gene contributions \eqn{z_{gj} \cdot P_{gt}} aggregated by
+#' mean within each pathway feature; orientation applies \eqn{\mathrm{sign}(z_j)}
+#' in `orient_pleiotropy_matrix()`.
 #' @inheritParams build_pleiotropy_matrix
-#' @param collapsed_trait_map Optional gene-to-collapsed-trait mapping from
-#'   `build_pathway_collapsed_trait_map()`. If NULL, it is built from genes at
-#'   the target SNP loci.
+#' @param feature_map Optional gene-to-feature mapping from `build_pathway_feature_map()`.
+#'   If NULL, built from genes at the target SNP loci.
 #' @param pathway_source Optional pathway source passed to `pathway_enrichment()`.
 #' @param pathway_p_value_threshold FDR threshold for pathway enrichment.
 #' @param minimum_count_in_network Minimum gene overlap per pathway term.
 #' @return A list with:
 #'   \itemize{
-#'     \item x_matrix: collapsed traits x SNPs matrix
-#'     \item collapsed_trait_info: metadata for each collapsed_trait row
+#'     \item x_matrix: features x SNPs matrix (traits + pathway/gene features)
+#'     \item feature_info: metadata with `feature_id`, `feature_name`, `feature_type`
 #'     \item z_target: target-trait z-scores per SNP column (for orientation)
-#'     \item snp_info, target_trait_id, pathway_enrichment, collapsed_trait_map
+#'     \item snp_info, target_trait_id, pathway_enrichment, feature_map
 #'   }
 #' @export
-build_collapsed_pleiotropy_matrix <- function(trait_id,
-                                               coloc_groups = NULL,
-                                               p_threshold = NULL,
-                                               snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-                                               collapsed_trait_map = NULL,
-                                               pathway_source = NULL,
-                                               pathway_p_value_threshold = 0.05,
-                                               minimum_count_in_network = NULL) {
+build_feature_pleiotropy_matrix <- function(trait_id,
+                                            coloc_groups = NULL,
+                                            p_threshold = NULL,
+                                            snp_key = c("variant_id", "display_snp", "coloc_group_id"),
+                                            feature_map = NULL,
+                                            pathway_source = NULL,
+                                            pathway_p_value_threshold = 0.05,
+                                            minimum_count_in_network = NULL) {
   if (missing(trait_id) || is.null(trait_id)) {
     stop("trait_id is required")
   }
@@ -268,32 +269,26 @@ build_collapsed_pleiotropy_matrix <- function(trait_id,
     snp_key = snp_key
   )
 
-  if (!"gene_id" %in% names(locus_data$cg)) {
-    stop("coloc_groups must include gene_id for collapsed_trait matrices")
-  }
-
+  snp_ids <- as.character(unique(locus_data$target_snps$snp_id))
   gene_z <- .collapse_gene_z_scores(locus_data$cg)
-  if (nrow(gene_z) == 0) {
-    stop("No gene-linked colocalisation signals available for collapsed_trait matrix")
-  }
+  pathway_enrichment <- NULL
 
-  if (is.null(collapsed_trait_map)) {
-    map_result <- build_pathway_collapsed_trait_map(
+  if (is.null(feature_map) && nrow(gene_z) > 0) {
+    map_result <- build_pathway_feature_map(
       genes = unique(gene_z$gene_id),
       source = pathway_source,
       p_value_threshold = pathway_p_value_threshold,
       minimum_count_in_network = minimum_count_in_network
     )
-    collapsed_trait_map <- map_result$collapsed_trait_map
+    feature_map <- map_result$feature_map
     pathway_enrichment <- map_result$pathway_enrichment
-  } else {
-    pathway_enrichment <- NULL
   }
 
-  matrix_result <- .collapsed_z_to_matrix(
+  matrix_result <- .build_feature_pleiotropy_from_locus(
+    cg = locus_data$cg,
     gene_z = gene_z,
-    collapsed_trait_map = collapsed_trait_map,
-    snp_ids = as.character(unique(locus_data$target_snps$snp_id))
+    feature_map = feature_map,
+    snp_ids = snp_ids
   )
 
   z_target <- stats::setNames(
@@ -308,30 +303,30 @@ build_collapsed_pleiotropy_matrix <- function(trait_id,
 
   return(list(
     x_matrix = matrix_result$x_matrix,
-    collapsed_trait_info = matrix_result$collapsed_trait_info,
+    feature_info = matrix_result$feature_info,
     z_target = z_target,
     snp_info = snp_info,
     target_trait_id = target_id,
     pathway_enrichment = pathway_enrichment,
-    collapsed_trait_map = collapsed_trait_map
+    feature_map = feature_map
   ))
 }
 
 
-#' @title Build Pathway Collapsed-Trait Map
-#' @description Map genes to enriched pathway terms (`collapsed_trait`) and retain
-#' gene-level collapsed traits for genes not assigned to any enriched pathway.
+#' @title Build Pathway Feature Map
+#' @description Map genes to enriched pathway features. Genes not in any enriched
+#' pathway are represented as gene-level features when building the matrix.
 #' @param genes Numeric gene IDs or gene names accepted by `pathway_enrichment()`.
 #' @param source Optional pathway source: `"Reactome"`, `"KEGG"`, or `"HP"`.
 #' @param p_value_threshold FDR threshold for enriched pathways.
 #' @param minimum_count_in_network Minimum overlap per pathway term.
-#' @return A list with `collapsed_trait_map` (gene_id, collapsed_trait_id,
-#'   collapsed_trait_name, source) and `pathway_enrichment`.
+#' @return A list with `feature_map` (gene_id, feature_id, feature_name, source)
+#'   and `pathway_enrichment`.
 #' @export
-build_pathway_collapsed_trait_map <- function(genes,
-                                              source = NULL,
-                                              p_value_threshold = 0.05,
-                                              minimum_count_in_network = NULL) {
+build_pathway_feature_map <- function(genes,
+                                    source = NULL,
+                                    p_value_threshold = 0.05,
+                                    minimum_count_in_network = NULL) {
   if (is.null(genes) || length(genes) == 0) {
     stop("genes is required")
   }
@@ -343,10 +338,10 @@ build_pathway_collapsed_trait_map <- function(genes,
     minimum_count_in_network = minimum_count_in_network
   )
 
-  collapsed_trait_map <- data.frame(
+  feature_map <- data.frame(
     gene_id = integer(0),
-    collapsed_trait_id = character(0),
-    collapsed_trait_name = character(0),
+    feature_id = character(0),
+    feature_name = character(0),
     source = character(0),
     stringsAsFactors = FALSE
   )
@@ -360,39 +355,39 @@ build_pathway_collapsed_trait_map <- function(genes,
       }
       data.frame(
         gene_id = overlap_genes,
-        collapsed_trait_id = paste0(row$source, ":", row$term_id),
-        collapsed_trait_name = row$description,
+        feature_id = paste0(row$source, ":", row$term_id),
+        feature_name = row$description,
         source = row$source,
         stringsAsFactors = FALSE
       )
     })
-    collapsed_trait_map <- dplyr::bind_rows(pathway_rows)
+    feature_map <- dplyr::bind_rows(pathway_rows)
   }
 
   return(list(
-    collapsed_trait_map = collapsed_trait_map,
+    feature_map = feature_map,
     pathway_enrichment = pathway_enrichment
   ))
 }
 
 
-#' @title Build Bivariate Collapsed-Trait Pleiotropy Matrices
-#' @description Like `build_bivariate_pleiotropy_matrices()`, but rows are shared
-#' `collapsed_trait` groups derived from pathway enrichment on the union of
-#' gene-linked signals at both target SNP sets.
+#' @title Build Bivariate Feature Pleiotropy Matrices
+#' @description Like `build_bivariate_pleiotropy_matrices()`, but gene-linked molecular
+#' QTL rows are collapsed into pathway/gene **features** while standard background
+#' trait rows are retained. Row names are aligned across both matrices.
 #' @inheritParams build_bivariate_pleiotropy_matrices
-#' @inheritParams build_collapsed_pleiotropy_matrix
-#' @return A list with aligned `x1_matrix`, `x2_matrix`, `collapsed_trait_info`,
-#'   `z_target_1`, `z_target_2`, SNP metadata, and the shared `collapsed_trait_map`.
+#' @inheritParams build_feature_pleiotropy_matrix
+#' @return A list with aligned `x1_matrix`, `x2_matrix`, `feature_info`, `z_target_1`,
+#'   `z_target_2`, SNP metadata, and the shared `feature_map`.
 #' @export
-build_bivariate_collapsed_pleiotropy_matrices <- function(trait_id_1,
-                                                          trait_id_2,
-                                                          coloc_groups = NULL,
-                                                          p_threshold = NULL,
-                                                          snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-                                                          pathway_source = NULL,
-                                                          pathway_p_value_threshold = 0.05,
-                                                          minimum_count_in_network = NULL) {
+build_bivariate_feature_pleiotropy_matrices <- function(trait_id_1,
+                                                        trait_id_2,
+                                                        coloc_groups = NULL,
+                                                        p_threshold = NULL,
+                                                        snp_key = c("variant_id", "display_snp", "coloc_group_id"),
+                                                        pathway_source = NULL,
+                                                        pathway_p_value_threshold = 0.05,
+                                                        minimum_count_in_network = NULL) {
   if (missing(trait_id_1) || is.null(trait_id_1) ||
       missing(trait_id_2) || is.null(trait_id_2)) {
     stop("trait_id_1 and trait_id_2 are required")
@@ -422,52 +417,57 @@ build_bivariate_collapsed_pleiotropy_matrices <- function(trait_id_1,
 
   gene_z_1 <- .collapse_gene_z_scores(locus_data_1$cg)
   gene_z_2 <- .collapse_gene_z_scores(locus_data_2$cg)
-
-  if (!"gene_id" %in% names(locus_data_1$cg)) {
-    stop("coloc_groups must include gene_id for collapsed_trait matrices")
-  }
-
   shared_genes <- union(gene_z_1$gene_id, gene_z_2$gene_id)
 
-  if (length(shared_genes) == 0) {
-    stop("No gene-linked colocalisation signals available for collapsed_trait matrices")
+  feature_map <- data.frame(
+    gene_id = integer(0),
+    feature_id = character(0),
+    feature_name = character(0),
+    source = character(0),
+    stringsAsFactors = FALSE
+  )
+  pathway_enrichment <- NULL
+
+  if (length(shared_genes) > 0) {
+    map_result <- build_pathway_feature_map(
+      genes = shared_genes,
+      source = pathway_source,
+      p_value_threshold = pathway_p_value_threshold,
+      minimum_count_in_network = minimum_count_in_network
+    )
+    feature_map <- map_result$feature_map
+    pathway_enrichment <- map_result$pathway_enrichment
   }
 
-  map_result <- build_pathway_collapsed_trait_map(
-    genes = shared_genes,
-    source = pathway_source,
-    p_value_threshold = pathway_p_value_threshold,
-    minimum_count_in_network = minimum_count_in_network
-  )
-  collapsed_trait_map <- map_result$collapsed_trait_map
-
-  matrix_1 <- .collapsed_z_to_matrix(
+  matrix_1 <- .build_feature_pleiotropy_from_locus(
+    cg = locus_data_1$cg,
     gene_z = gene_z_1,
-    collapsed_trait_map = collapsed_trait_map,
+    feature_map = feature_map,
     snp_ids = as.character(unique(locus_data_1$target_snps$snp_id))
   )
-  matrix_2 <- .collapsed_z_to_matrix(
+  matrix_2 <- .build_feature_pleiotropy_from_locus(
+    cg = locus_data_2$cg,
     gene_z = gene_z_2,
-    collapsed_trait_map = collapsed_trait_map,
+    feature_map = feature_map,
     snp_ids = as.character(unique(locus_data_2$target_snps$snp_id))
   )
 
-  shared_collapsed_trait_ids <- union(
+  shared_feature_ids <- union(
     rownames(matrix_1$x_matrix),
     rownames(matrix_2$x_matrix)
   )
 
-  collapsed_trait_info <- dplyr::bind_rows(
-    matrix_1$collapsed_trait_info,
-    matrix_2$collapsed_trait_info
+  feature_info <- dplyr::bind_rows(
+    matrix_1$feature_info,
+    matrix_2$feature_info
   ) |>
-    dplyr::distinct(collapsed_trait_id, .keep_all = TRUE) |>
-    dplyr::filter(collapsed_trait_id %in% shared_collapsed_trait_ids)
+    dplyr::distinct(feature_id, .keep_all = TRUE) |>
+    dplyr::filter(feature_id %in% shared_feature_ids)
 
   return(list(
-    x1_matrix = .align_pleiotropy_rows(matrix_1$x_matrix, shared_collapsed_trait_ids),
-    x2_matrix = .align_pleiotropy_rows(matrix_2$x_matrix, shared_collapsed_trait_ids),
-    collapsed_trait_info = collapsed_trait_info,
+    x1_matrix = .align_pleiotropy_rows(matrix_1$x_matrix, shared_feature_ids),
+    x2_matrix = .align_pleiotropy_rows(matrix_2$x_matrix, shared_feature_ids),
+    feature_info = feature_info,
     z_target_1 = stats::setNames(locus_data_1$z_target$z, as.character(locus_data_1$z_target$snp_id))[
       colnames(matrix_1$x_matrix)
     ],
@@ -478,9 +478,245 @@ build_bivariate_collapsed_pleiotropy_matrices <- function(trait_id_1,
     snp_info_2 = locus_data_2$target_snps |> dplyr::distinct(),
     trait_id_1 = trait_id_1,
     trait_id_2 = trait_id_2,
-    collapsed_trait_map = collapsed_trait_map,
-    pathway_enrichment = map_result$pathway_enrichment
+    feature_map = feature_map,
+    pathway_enrichment = pathway_enrichment
   ))
+}
+
+
+.is_molecular_gene_row <- function(cg) {
+  if (!"gene_id" %in% names(cg)) {
+    return(rep(FALSE, nrow(cg)))
+  }
+  !is.na(cg$gene_id)
+}
+
+
+.build_feature_pleiotropy_from_locus <- function(cg, gene_z, feature_map, snp_ids) {
+  snp_ids <- as.character(snp_ids)
+  trait_part <- .trait_z_to_matrix(cg, snp_ids)
+
+  if (nrow(gene_z) > 0 && !is.null(feature_map) && nrow(feature_map) > 0) {
+    feature_part <- .pathway_feature_z_to_matrix(gene_z, feature_map, snp_ids)
+  } else if (nrow(gene_z) > 0) {
+    feature_part <- .pathway_feature_z_to_matrix(
+      gene_z,
+      data.frame(
+        gene_id = integer(0),
+        feature_id = character(0),
+        feature_name = character(0),
+        source = character(0),
+        stringsAsFactors = FALSE
+      ),
+      snp_ids
+    )
+  } else {
+    feature_part <- list(
+      x_matrix = matrix(numeric(0), nrow = 0, ncol = length(snp_ids)),
+      feature_info = data.frame(
+        feature_id = character(0),
+        feature_name = character(0),
+        feature_type = character(0),
+        source = character(0),
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+
+  return(.combine_row_matrices(trait_part, feature_part, snp_ids))
+}
+
+
+.trait_z_to_matrix <- function(cg, snp_ids) {
+  snp_ids <- as.character(snp_ids)
+  molecular <- .is_molecular_gene_row(cg)
+  trait_cg <- cg[!molecular, , drop = FALSE]
+
+  empty_info <- data.frame(
+    feature_id = character(0),
+    feature_name = character(0),
+    feature_type = character(0),
+    source = character(0),
+    stringsAsFactors = FALSE
+  )
+
+  if (nrow(trait_cg) == 0) {
+    return(list(
+      x_matrix = matrix(numeric(0), nrow = 0, ncol = length(snp_ids)),
+      feature_info = empty_info
+    ))
+  }
+
+  z_long <- trait_cg |>
+    dplyr::group_by(trait_id, trait_name, snp_id) |>
+    dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(snp_id = as.character(snp_id)) |>
+    dplyr::select("trait_id", "trait_name", "snp_id", "z")
+
+  z_wide <- z_long |>
+    tidyr::pivot_wider(
+      names_from = "snp_id",
+      values_from = "z",
+      values_fn = mean
+    )
+
+  feature_info <- z_wide |>
+    dplyr::transmute(
+      feature_id = as.character(trait_id),
+      feature_name = trait_name,
+      feature_type = "trait",
+      source = "trait"
+    ) |>
+    dplyr::distinct(feature_id, .keep_all = TRUE)
+
+  snp_cols <- intersect(snp_ids, setdiff(names(z_wide), c("trait_id", "trait_name")))
+  x_matrix <- matrix(numeric(0), nrow = 0, ncol = length(snp_ids))
+  dimnames(x_matrix) <- list(character(0), snp_ids)
+
+  if (length(snp_cols) > 0) {
+    x_matrix <- as.matrix(z_wide[, snp_cols, drop = FALSE])
+    rownames(x_matrix) <- as.character(z_wide$trait_id)
+    x_matrix <- .ensure_matrix_columns(x_matrix, snp_ids)
+  }
+
+  return(list(
+    x_matrix = x_matrix,
+    feature_info = feature_info
+  ))
+}
+
+
+.pathway_feature_z_to_matrix <- function(gene_z, feature_map, snp_ids) {
+  snp_ids <- as.character(snp_ids)
+  gene_z <- gene_z |> dplyr::mutate(snp_id = as.character(snp_id))
+
+  if (nrow(feature_map) > 0) {
+    pathway_z <- gene_z |>
+      dplyr::inner_join(feature_map, by = "gene_id") |>
+      dplyr::mutate(contribution = z) |>
+      dplyr::group_by(feature_id, feature_name, source, snp_id) |>
+      dplyr::summarise(z = mean(contribution), .groups = "drop") |>
+      dplyr::mutate(feature_type = "pathway")
+  } else {
+    pathway_z <- data.frame(
+      feature_id = character(0),
+      feature_name = character(0),
+      source = character(0),
+      snp_id = character(0),
+      z = numeric(0),
+      feature_type = character(0),
+      stringsAsFactors = FALSE
+    )
+  }
+
+  mapped_genes <- if (nrow(feature_map) > 0) {
+    unique(feature_map$gene_id)
+  } else {
+    integer(0)
+  }
+
+  gene_only_z <- gene_z |>
+    dplyr::filter(!gene_id %in% mapped_genes) |>
+    dplyr::transmute(
+      feature_id = paste0("gene:", gene_id),
+      feature_name = paste0("gene:", gene),
+      source = "gene",
+      snp_id = snp_id,
+      z = z,
+      feature_type = "gene"
+    )
+
+  feature_long <- dplyr::bind_rows(pathway_z, gene_only_z)
+
+  if (nrow(feature_long) == 0) {
+    return(list(
+      x_matrix = matrix(numeric(0), nrow = 0, ncol = length(snp_ids)),
+      feature_info = data.frame(
+        feature_id = character(0),
+        feature_name = character(0),
+        feature_type = character(0),
+        source = character(0),
+        stringsAsFactors = FALSE
+      )
+    ))
+  }
+
+  feature_wide <- feature_long |>
+    tidyr::pivot_wider(
+      id_cols = c("feature_id", "feature_name", "feature_type", "source"),
+      names_from = "snp_id",
+      values_from = "z",
+      values_fn = mean
+    )
+
+  feature_info <- feature_wide |>
+    dplyr::select("feature_id", "feature_name", "feature_type", "source")
+
+  snp_cols <- intersect(snp_ids, setdiff(names(feature_wide), c(
+    "feature_id", "feature_name", "feature_type", "source"
+  )))
+
+  x_matrix <- matrix(numeric(0), nrow = 0, ncol = length(snp_ids))
+  dimnames(x_matrix) <- list(character(0), snp_ids)
+
+  if (length(snp_cols) > 0) {
+    x_matrix <- as.matrix(feature_wide[, snp_cols, drop = FALSE])
+    rownames(x_matrix) <- feature_wide$feature_id
+    x_matrix <- .ensure_matrix_columns(x_matrix, snp_ids)
+  }
+
+  return(list(
+    x_matrix = x_matrix,
+    feature_info = feature_info
+  ))
+}
+
+
+.combine_row_matrices <- function(trait_part, feature_part, snp_ids) {
+  snp_ids <- as.character(snp_ids)
+  parts <- list()
+
+  if (nrow(trait_part$x_matrix) > 0) {
+    parts[[length(parts) + 1L]] <- list(
+      x_matrix = .ensure_matrix_columns(trait_part$x_matrix, snp_ids),
+      feature_info = trait_part$feature_info
+    )
+  }
+  if (nrow(feature_part$x_matrix) > 0) {
+    parts[[length(parts) + 1L]] <- list(
+      x_matrix = .ensure_matrix_columns(feature_part$x_matrix, snp_ids),
+      feature_info = feature_part$feature_info
+    )
+  }
+
+  if (length(parts) == 0) {
+    stop("No trait or feature rows could be constructed")
+  }
+
+  x_matrix <- do.call(rbind, lapply(parts, `[[`, "x_matrix"))
+  feature_info <- dplyr::bind_rows(lapply(parts, `[[`, "feature_info"))
+
+  return(list(
+    x_matrix = x_matrix,
+    feature_info = feature_info
+  ))
+}
+
+
+.ensure_matrix_columns <- function(x_matrix, snp_ids) {
+  snp_ids <- as.character(snp_ids)
+  missing_cols <- setdiff(snp_ids, colnames(x_matrix))
+  if (length(missing_cols) > 0) {
+    na_cols <- matrix(
+      NA_real_,
+      nrow = nrow(x_matrix),
+      ncol = length(missing_cols),
+      dimnames = list(NULL, missing_cols)
+    )
+    x_matrix <- cbind(x_matrix, na_cols)
+  }
+  return(x_matrix[, snp_ids, drop = FALSE])
 }
 
 
@@ -546,87 +782,6 @@ build_bivariate_collapsed_pleiotropy_matrices <- function(trait_id_1,
 }
 
 
-.collapsed_z_to_matrix <- function(gene_z, collapsed_trait_map, snp_ids) {
-  snp_ids <- as.character(snp_ids)
-  gene_z <- gene_z |> dplyr::mutate(snp_id = as.character(snp_id))
-  if (nrow(collapsed_trait_map) > 0) {
-    pathway_z <- gene_z |>
-      dplyr::inner_join(collapsed_trait_map, by = "gene_id") |>
-      dplyr::group_by(collapsed_trait_id, collapsed_trait_name, source, snp_id) |>
-      dplyr::summarise(z = mean(z), .groups = "drop")
-  } else {
-    pathway_z <- data.frame(
-      collapsed_trait_id = character(0),
-      collapsed_trait_name = character(0),
-      source = character(0),
-      snp_id = character(0),
-      z = numeric(0),
-      stringsAsFactors = FALSE
-    )
-  }
-
-  mapped_genes <- if (nrow(collapsed_trait_map) > 0) {
-    unique(collapsed_trait_map$gene_id)
-  } else {
-    integer(0)
-  }
-
-  gene_only_z <- gene_z |>
-    dplyr::filter(!gene_id %in% mapped_genes) |>
-    dplyr::mutate(
-      collapsed_trait_id = paste0("gene:", gene_id),
-      collapsed_trait_name = paste0("gene:", gene),
-      source = "gene"
-    ) |>
-    dplyr::select("collapsed_trait_id", "collapsed_trait_name", "source", "snp_id", "z")
-
-  collapsed_long <- dplyr::bind_rows(pathway_z, gene_only_z)
-
-  if (nrow(collapsed_long) == 0) {
-    stop("No collapsed_trait rows could be constructed from gene-linked signals")
-  }
-
-  collapsed_wide <- collapsed_long |>
-    tidyr::pivot_wider(
-      id_cols = c("collapsed_trait_id", "collapsed_trait_name", "source"),
-      names_from = "snp_id",
-      values_from = "z",
-      values_fn = mean
-    )
-
-  collapsed_trait_info <- collapsed_wide |>
-    dplyr::select("collapsed_trait_id", "collapsed_trait_name", "source")
-
-  snp_cols <- intersect(snp_ids, setdiff(names(collapsed_wide), c(
-    "collapsed_trait_id", "collapsed_trait_name", "source"
-  )))
-
-  if (length(snp_cols) == 0) {
-    stop("No collapsed_trait rows could be constructed from gene-linked signals")
-  }
-
-  x_matrix <- as.matrix(collapsed_wide[, snp_cols, drop = FALSE])
-  rownames(x_matrix) <- collapsed_wide$collapsed_trait_id
-
-  missing_cols <- setdiff(snp_ids, colnames(x_matrix))
-  if (length(missing_cols) > 0) {
-    na_cols <- matrix(
-      NA_real_,
-      nrow = nrow(x_matrix),
-      ncol = length(missing_cols),
-      dimnames = list(NULL, missing_cols)
-    )
-    x_matrix <- cbind(x_matrix, na_cols)
-  }
-  x_matrix <- x_matrix[, snp_ids, drop = FALSE]
-
-  return(list(
-    x_matrix = x_matrix,
-    collapsed_trait_info = collapsed_trait_info
-  ))
-}
-
-
 .align_pleiotropy_rows <- function(x_matrix, trait_ids) {
   aligned <- matrix(
     NA_real_,
@@ -655,12 +810,24 @@ build_bivariate_collapsed_pleiotropy_matrices <- function(trait_id_1,
   }
 
   col_norms <- sqrt(colSums(x^2))
-  if (any(col_norms == 0)) {
-    warning("One or more SNP columns have zero norm; similarities involving them are set to NA")
-    col_norms[col_norms == 0] <- NA_real_
+  zero_cols <- col_norms == 0
+  if (any(zero_cols)) {
+    warning(
+      "One or more SNP columns have zero norm; those columns are treated as zero vectors"
+    )
   }
 
-  x_norm <- sweep(x, 2, col_norms, "/")
+  col_norms_div <- col_norms
+  col_norms_div[zero_cols] <- 1
+  x_norm <- sweep(x, 2, col_norms_div, "/")
+  if (!is.matrix(x_norm)) {
+    x_norm <- matrix(x_norm, nrow = nrow(x), dimnames = dimnames(x))
+  }
+  if (any(zero_cols)) {
+    col_mask <- rep(1, ncol(x_norm))
+    col_mask[zero_cols] <- 0
+    x_norm <- sweep(x_norm, 2, col_mask, "*")
+  }
 
   return(list(
     x_norm = x_norm,
@@ -734,7 +901,7 @@ cluster_cross_trait_snps <- function(s_matrix,
   }
 
   s <- s_matrix
-  s[is.na(s)] <- 0
+  s[!is.finite(s)] <- 0
 
   dist_rows <- stats::dist(s, method = "euclidean")
   hclust_rows <- stats::hclust(dist_rows, method = linkage)
@@ -920,7 +1087,7 @@ cluster_snp_profiles <- function(s_matrix,
   S <- s_matrix
   dimnames(S) <- list(snp_ids, snp_ids)
   diag(S) <- 1
-  S[is.na(S)] <- 0
+  S[!is.finite(S)] <- 0
 
   if (method == "hierarchical") {
     result <- .cluster_snps_hierarchical(S, k = k, linkage = linkage)

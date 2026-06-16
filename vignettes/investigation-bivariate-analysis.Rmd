@@ -7,6 +7,8 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
+Consider changing this to the SCZ GWAS that I uploaded: c12cb4ba-7216-49ef-9332-b75592fac586
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
@@ -138,9 +140,15 @@ X2_filled[is.na(X2_filled)] <- 0
 
 col_norms_1 <- sqrt(colSums(X1_filled^2))
 col_norms_2 <- sqrt(colSums(X2_filled^2))
+zero_cols_1 <- col_norms_1 == 0
+zero_cols_2 <- col_norms_2 == 0
+col_norms_1[zero_cols_1] <- 1
+col_norms_2[zero_cols_2] <- 1
 
 A <- sweep(X1_filled, 2, col_norms_1, "/")
 B <- sweep(X2_filled, 2, col_norms_2, "/")
+A[, zero_cols_1] <- 0
+B[, zero_cols_2] <- 0
 ```
 
 ```{r step3-similarity}

@@ -7,6 +7,8 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
+Consider changing this to the SCZ GWAS that I uploaded: c12cb4ba-7216-49ef-9332-b75592fac586
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
@@ -30,13 +32,13 @@ library(dplyr)
 library(tidyr)
 ```
 
-This vignette extends the bivariate pleiotropy workflow by replacing sparse individual QTL/trait rows with **`collapsed_trait`** rows. Gene-linked signals are merged by `gene_id` (across QTL types and coloc groups), then grouped into enriched pathways. The downstream similarity, clustering, and block interpretation steps are unchanged.
+This vignette extends the bivariate pleiotropy workflow. Standard background **trait** rows are kept (as in the standard bivariate analysis), while sparse gene-linked molecular QTL rows are collapsed into dense **feature** rows — enriched pathways or gene-level fallbacks. The downstream similarity, clustering, and block interpretation steps are unchanged.
 
 We use **HDL cholesterol** (trait id `1630`) and **LDL cholesterol** (trait id `1486`).
 
-## Step 1: Construct collapsed pleiotropy matrices (X₁ and X₂)
+## Step 1: Construct feature pleiotropy matrices (X₁ and X₂)
 
-**Goal:** Build two matrices whose columns are target-trait SNPs and whose rows are shared `collapsed_trait` groups rather than individual background traits.
+**Goal:** Build two matrices whose columns are target-trait SNPs and whose rows are shared **features**: background traits plus pathway/gene features derived from molecular QTL signals.
 
 ```{r step1-fetch}
 trait_id_1 <- 1630
@@ -51,13 +53,14 @@ cg <- traits_data$coloc_groups
 
 ### Gene collapse and pathway mapping
 
-1. At each target SNP locus, merge all gene-linked QTL rows by `gene_id` (eQTL, pQTL, etc. in different coloc groups → one z-score per gene × SNP).
-2. Run pathway enrichment on the union of those genes.
-3. Map each gene to one or more enriched pathways (`collapsed_trait_id = source:term_id`).
-4. Genes outside enriched pathways remain as gene-level collapsed traits (`gene:<gene_id>`).
+1. **Background traits:** non-molecular colocalisation rows (no `gene_id`) are kept as individual trait rows, same as standard bivariate analysis.
+2. **Molecular QTL:** at each target SNP locus, merge all gene-linked rows by `gene_id` (eQTL, pQTL, etc. in different coloc groups → one z-score per gene × SNP).
+3. Run pathway enrichment on the union of those genes.
+4. Map each gene to enriched pathways (`feature_id = source:term_id`); aggregate gene z-scores by mean within each pathway feature.
+5. Genes outside enriched pathways remain as gene-level features (`gene:<gene_id>`).
 
 ```{r step1-build}
-bivariate <- build_bivariate_collapsed_pleiotropy_matrices(
+bivariate <- build_bivariate_feature_pleiotropy_matrices(
   trait_id_1 = trait_id_1,
   trait_id_2 = trait_id_2,
   coloc_groups = cg,
@@ -71,17 +74,18 @@ X2 <- bivariate$x2_matrix
 list(
   trait_1 = traits_data$traits$trait_name[traits_data$traits$id == trait_id_1],
   trait_2 = traits_data$traits$trait_name[traits_data$traits$id == trait_id_2],
-  n_collapsed_traits = nrow(X1),
-  n_pathway_traits = sum(bivariate$collapsed_trait_info$source != "gene"),
-  n_gene_traits = sum(bivariate$collapsed_trait_info$source == "gene"),
+  n_features = nrow(X1),
+  n_trait_rows = sum(bivariate$feature_info$feature_type == "trait"),
+  n_pathway_rows = sum(bivariate$feature_info$feature_type == "pathway"),
+  n_gene_rows = sum(bivariate$feature_info$feature_type == "gene"),
   n_snps_trait_1 = ncol(X1),
   n_snps_trait_2 = ncol(X2),
   shared_rows = identical(rownames(X1), rownames(X2))
 )
 ```
 
-```{r step1-collapsed-traits}
-head(bivariate$collapsed_trait_info, 10)
+```{r step1-features}
+head(bivariate$feature_info, 10)
 ```
 
 ```{r step1-dims}
@@ -89,11 +93,11 @@ dim(X1)
 dim(X2)
 ```
 
-Each column is still one target SNP's profile, but rows now summarise pathway- or gene-level pleiotropy rather than isolated single-trait QTL rows.
+Each column is still one target SNP's profile. Rows combine standard background traits with denser pathway- or gene-level features summarising molecular pleiotropy.
 
 ## Step 2: Orient profiles relative to each target trait (X₁\* and X₂\*)
 
-Target-trait orientation uses the original GWAS z-scores (`z_target_1`, `z_target_2`), not the collapsed rows.
+Target-trait orientation uses the original GWAS z-scores (`z_target_1`, `z_target_2`) via `sign(z_j)` on columns — applied to trait and feature rows alike.
 
 ```{r step2-orient}
 oriented_1 <- orient_pleiotropy_matrix(
@@ -191,4 +195,4 @@ module_summary |>
   dplyr::arrange(dplyr::desc(n_blocks))
 ```
 
-Using pathway-collapsed rows densifies the background profile space, so block structure reflects shared biology rather than sparse one-off QTL entries.
+Pathway features densify the molecular QTL portion of the profile space while background traits remain available for comparison — block structure can reflect both shared biology and trait-specific mechanisms.

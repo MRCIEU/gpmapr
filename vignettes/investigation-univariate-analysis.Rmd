@@ -159,7 +159,12 @@ summary(col_norms)
 ```
 
 ```{r step3-normalize}
-X_star_norm <- sweep(X_star_filled, 2, col_norms, "/")
+zero_cols <- col_norms == 0
+col_norms_div <- col_norms
+col_norms_div[zero_cols] <- 1
+
+X_star_norm <- sweep(X_star_filled, 2, col_norms_div, "/")
+X_star_norm[, zero_cols] <- 0
 ```
 
 ```{r step3-similarity}
@@ -205,13 +210,10 @@ We compare four clustering approaches:
 3. **Community detection** (Louvain) on a weighted similarity graph
 4. **Gaussian mixture models** in latent space (PCA of unit-normalised profiles + `mclust`)
 
-```{r step4-k}
-k <- 3
-```
-
 ### Hierarchical clustering
 
 ```{r step4-hierarchical}
+k <- 3
 D <- 1 - S
 dist_snp <- as.dist(D)
 
