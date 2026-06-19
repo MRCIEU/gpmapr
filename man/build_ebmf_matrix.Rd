@@ -9,6 +9,7 @@ build_ebmf_matrix(
   coloc_groups = NULL,
   p_threshold = NULL,
   snp_key = c("variant_id", "display_snp", "coloc_group_id"),
+  label_scheme = c("pathway_gene_tissue", "pathway_gene", "tissue"),
   pathway_source = NULL,
   pathway_p_value_threshold = 0.05,
   minimum_count_in_network = NULL
@@ -26,6 +27,9 @@ will fetch via \code{trait(trait_id, include_associations = TRUE)}.}
 \item{snp_key}{Column used to name SNP columns: \code{"variant_id"}, \code{"display_snp"}, or
 \code{"coloc_group_id"}. Defaults to \code{"variant_id"}.}
 
+\item{label_scheme}{Row and SNP annotation scheme: \code{"pathway_gene_tissue"},
+\code{"pathway_gene"}, or \code{"tissue"}. Defaults to \code{"pathway_gene_tissue"}.}
+
 \item{pathway_source}{Optional pathway source for enrichment annotation.}
 
 \item{pathway_p_value_threshold}{FDR threshold for pathway enrichment annotation.
@@ -36,7 +40,8 @@ Defaults to 0.05.}
 \value{
 A list with:
 \itemize{
-\item x_matrix: traits x SNPs z-score matrix
+\item beta_matrix: traits x SNPs matrix of signed effect sizes
+\item se_matrix: traits x SNPs matrix of standard errors (for \code{S})
 \item trait_annotations: named character vector of row annotations
 \item snp_annotations: named character vector of column annotations
 \item trait_info: dataframe of trait metadata
@@ -46,15 +51,21 @@ A list with:
 }
 }
 \description{
-Construct a flat traits x SNPs z-score matrix and annotation vectors
+Construct a flat traits x SNPs matrix and annotation vectors
 for Empirical Bayes Matrix Factorization (EBMF). Rows represent traits (uncollapsed),
-columns represent variants. Cell values are signed z-scores (\code{beta / se}).
+columns represent variants. Cell values are signed GWAS effect sizes (\code{beta});
+matching standard errors are returned in \code{se_matrix} for use as the
+\code{S} argument in \code{run_ebmf()}.
 Rows and columns that are entirely missing or zero are removed before the
 matrix is returned.
 
-Annotations encode biological metadata for each row and column:
+Annotations encode biological metadata for each row and column. Row labels
+depend on \code{label_scheme}; SNP columns are labelled by coloc group only.
 \itemize{
-\item Trait (row): \code{Tissue__Gene__EnrichedPathway__TraitCategory}
-\item SNP (column): \code{ColocGroup\{ID\}__VariantConsequence}
+\item Trait row: \code{trait_category}
+\item Molecular QTL row (\code{pathway_gene_tissue}): \code{PathwayOrGene_Tissue}
+\item Molecular QTL row (\code{pathway_gene}): \code{PathwayOrGene}
+\item Molecular QTL row (\code{tissue}): \code{Tissue}
+\item SNP column: \code{ColocGroup\{ID\}}
 }
 }

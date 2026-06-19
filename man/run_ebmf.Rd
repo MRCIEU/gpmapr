@@ -5,7 +5,8 @@
 \title{Run EBMF Factorization}
 \usage{
 run_ebmf(
-  x_matrix,
+  beta_matrix,
+  se_matrix,
   greedy_Kmax = 50L,
   backfit = TRUE,
   ebnm_fn = NULL,
@@ -14,10 +15,13 @@ run_ebmf(
 )
 }
 \arguments{
-\item{x_matrix}{Traits x SNPs z-score matrix, typically from
-\code{build_ebmf_matrix()$x_matrix}. Rows and columns that are entirely
+\item{beta_matrix}{Traits x SNPs matrix of signed effect sizes, typically
+\code{build_ebmf_matrix()$beta_matrix}. Rows and columns that are entirely
 missing or zero are removed before fitting. \code{NA} entries are treated
 as missing data.}
+
+\item{se_matrix}{Traits x SNPs matrix of standard errors aligned with
+\code{beta_matrix}. Passed to flashier as \code{S}.}
 
 \item{greedy_Kmax}{Maximum number of factors to add greedily. Factors are
 only added while they improve the variational lower bound. Defaults to 50.}
@@ -48,13 +52,12 @@ A \code{flash} object from \pkg{flashier}. Key elements:
 }
 \description{
 Fit an Empirical Bayes Matrix Factorization model using
-\pkg{flashier}. The model decomposes the traits x SNPs z-score matrix
+\pkg{flashier}. The model decomposes the traits x SNPs effect matrix
 \eqn{Y = LF' + E} into latent factors (\eqn{F}, SNP programs) and
 loadings (\eqn{L}, trait contributions), with sparse priors estimated
 from the data.
 
-By default a Kronecker (two-way) residual variance structure is used,
-estimating per-row and per-column variance parameters. This naturally
-down-weights noisy rows (singleton/unannotated traits) and columns
-(intergenic SNPs), acting as an automatic noise shield.
+Known per-observation standard errors are passed to flashier via \code{S}
+(typically \code{build_ebmf_matrix()$se_matrix}). Residual variance structure
+is controlled by \code{var_type}.
 }
