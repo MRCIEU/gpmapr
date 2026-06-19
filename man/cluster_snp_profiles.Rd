@@ -19,8 +19,8 @@ cluster_snp_profiles(
 \item{s_matrix}{Symmetric SNP-by-SNP cosine similarity matrix from
 \code{snp_similarity_matrix()$s_matrix}.}
 
-\item{k}{Number of clusters (biological modules). For Louvain community detection,
-\code{k} is ignored and the number of modules is data-driven.}
+\item{k}{Number of clusters (biological modules). For signed Louvain community
+detection, \code{k} is ignored and the number of modules is data-driven.}
 
 \item{method}{Clustering method: \code{"hierarchical"}, \code{"spectral"}, \code{"community"},
 or \code{"gmm"}.}
@@ -32,8 +32,10 @@ or \code{"gmm"}.}
 \code{method = "hierarchical"}. Defaults to \code{"average"}.}
 
 \item{community_algorithm}{Community detection algorithm when
-\code{method = "community"}: \code{"leading_eigen"} (recursive splits via \code{steps = k - 1})
-or \code{"louvain"} (data-driven module count; requires the \strong{igraph} package).}
+\code{method = "community"}: \code{"leading_eigen"} (recursive splits via \code{steps = k - 1}
+on the positive similarity subgraph; requires \strong{igraph}) or \code{"louvain"}
+(signed Louvain maximising Gomez signed modularity on the full cosine
+similarity matrix, including negative anti-parallel edges).}
 
 \item{na_as_zero}{Treat \code{NA} entries as zero when building latent coordinates
 for GMM clustering.}

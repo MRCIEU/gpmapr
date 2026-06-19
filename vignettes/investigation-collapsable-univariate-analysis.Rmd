@@ -1,8 +1,8 @@
 ---
-title: "Investigation of univariate analysis"
+title: "Investigation of collapsable univariate analysis"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Investigation of univariate analysis}
+  %\VignetteIndexEntry{Investigation of collapsable univariate analysis}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -31,13 +31,13 @@ library(tidyr)
 library(igraph)
 ```
 
-This vignette builds a bivariate/univariate pleiotropy analysis from GPMap colocalisation data.
-
-## Step 1: Construct the pleiotropy matrix (X)
-
-**Goal:** Build a matrix where each **column** is a target-trait SNP and each **row** is a background trait. Values are signed z-scores (`beta / se`) describing that trait's association at the SNP's colocalisation locus — a phenome-wide fingerprint per SNP.
+This vignette combines the **univariate** SNP-clustering workflow with **pathway collapse** from the collapsable bivariate analysis. Gene-linked molecular QTL rows are merged into pathway/gene **features** first; singleton filtering and downstream similarity clustering then operate on the denser feature matrix.
 
 We use **HDL cholesterol** (trait id `1630`) as the target trait.
+
+## Step 1: Construct the feature pleiotropy matrix (X)
+
+**Goal:** Build a matrix where each **column** is a target-trait SNP and each **row** is a **feature**: standard background traits plus pathway/gene features summarising molecular QTL signals.
 
 ```{r step1-fetch}
 target_trait_id <- 1630
@@ -49,78 +49,73 @@ target_trait <- trait(
 cg <- target_trait$coloc_groups
 ```
 
-### Target SNPs
+### Gene collapse and pathway mapping
 
-SNPs are taken from loci for the target trait (for now, all loci).
+1. **Background traits:** non-molecular colocalisation rows (no `gene_id`) are kept as individual trait rows.
+2. **Molecular QTL:** merge gene-linked rows by `gene_id` (eQTL, pQTL, etc.) → one z-score per gene × SNP.
+3. Run pathway enrichment on genes at target SNP loci.
+4. Map genes to enriched pathways (`feature_id = source:term_id`); aggregate by mean within each pathway.
+5. Genes outside enriched pathways remain as gene-level features (`gene:<gene_id>`).
 
-```{r step1-target-snps}
-target_snps <- cg |>
-  dplyr::filter(
-    trait_id == target_trait_id,
-    !is.na(beta),
-    !is.na(se),
-    se > 0
-  ) |>
-  dplyr::distinct(variant_id, display_snp, coloc_group_id, chr, bp)
-
-```
-
-### Build matrix X (traits x SNPs)
-
-`build_pleiotropy_matrix()` extracts z-scores for every trait that colocalises at each target SNP locus and arranges them into a traits-by-SNPs matrix.
-
-```{r step1-pleiotropy-matrix}
-pleiotropy <- build_pleiotropy_matrix(
+```{r step1-feature-matrix}
+pleiotropy <- build_feature_pleiotropy_matrix(
   trait_id = target_trait_id,
   coloc_groups = cg,
-  snp_key = "variant_id"
+  snp_key = "variant_id",
+  minimum_count_in_network = 2
 )
 
 X <- pleiotropy$x_matrix
 
 list(
   target_trait = target_trait$trait$trait_name,
-  n_traits = nrow(X),
+  n_features = nrow(X),
+  n_trait_rows = sum(pleiotropy$feature_info$feature_type == "trait"),
+  n_pathway_rows = sum(pleiotropy$feature_info$feature_type == "pathway"),
+  n_gene_rows = sum(pleiotropy$feature_info$feature_type == "gene"),
   n_snps = ncol(X),
   fraction_non_na = mean(!is.na(X))
 )
 ```
 
-Rows are background traits (`n_trait`); columns are target SNPs (`n_snp`). Entries are `NA` when a trait has no colocalisation signal at that SNP's locus.
+```{r step1-features}
+head(pleiotropy$feature_info, 10)
+```
 
 ```{r step1-dim}
 dim(X)
 ```
 
-Each column of `X` is one SNP's signed association profile across the colocalising phenome.
+Each column is one SNP's profile across features (traits + collapsed molecular networks). Entries are `NA` where a feature has no signal at that SNP's locus.
 
-## Step 1.5: Remove singleton background traits
+## Step 1.5: Remove singleton background features
 
-Many background traits colocalise at **a single SNP locus only**. Each contributes one non-zero coordinate to one SNP column and is `NA` everywhere else. Those rows inflate sparsity without helping compare SNP profiles — cosine similarity becomes dominated by accidental overlap and clustering breaks down.
-
-We drop trait rows with a signal at exactly one SNP (the target trait row is kept regardless).
+After pathway collapse, many rows still colocalise at **a single SNP only**. Those singleton rows add sparsity without helping compare SNP profiles. We drop feature rows with a signal at exactly one SNP (the target trait row is kept regardless).
 
 ```{r step1-filter-singletons}
-trait_snp_counts <- rowSums(!is.na(X))
-singleton_trait_ids <- names(trait_snp_counts)[trait_snp_counts == 1]
-singleton_trait_ids <- setdiff(singleton_trait_ids, as.character(target_trait_id))
+feature_snp_counts <- rowSums(!is.na(X))
+singleton_feature_ids <- names(feature_snp_counts)[feature_snp_counts == 1]
+singleton_feature_ids <- setdiff(singleton_feature_ids, as.character(target_trait_id))
 
 list(
-  n_traits_before = nrow(X),
-  n_singleton_traits_removed = length(singleton_trait_ids),
-  n_traits_after = nrow(X) - length(singleton_trait_ids),
+  n_features_before = nrow(X),
+  n_singleton_features_removed = length(singleton_feature_ids),
+  n_features_after = nrow(X) - length(singleton_feature_ids),
   fraction_non_na_before = mean(!is.na(X))
 )
 ```
 
 ```{r step1-filter-apply}
-X <- X[!rownames(X) %in% singleton_trait_ids, , drop = FALSE]
+X <- X[!rownames(X) %in% singleton_feature_ids, , drop = FALSE]
 
-pleiotropy$trait_info <- pleiotropy$trait_info |>
-  dplyr::filter(!as.character(trait_id) %in% singleton_trait_ids)
+pleiotropy$feature_info <- pleiotropy$feature_info |>
+  dplyr::filter(!feature_id %in% singleton_feature_ids)
 
 list(
-  n_traits = nrow(X),
+  n_features = nrow(X),
+  n_trait_rows = sum(pleiotropy$feature_info$feature_type == "trait"),
+  n_pathway_rows = sum(pleiotropy$feature_info$feature_type == "pathway"),
+  n_gene_rows = sum(pleiotropy$feature_info$feature_type == "gene"),
   n_snps = ncol(X),
   fraction_non_na = mean(!is.na(X))
 )
@@ -132,37 +127,27 @@ dim(X)
 
 ## Step 2: Orient profiles relative to the target trait (X\*)
 
-**Goal:** Remove arbitrary allele-swapping noise so each SNP profile reflects what happens to the phenome when that variant **increases liability** for the target trait.
-
-For each SNP column \(j\):
+**Goal:** Calibrate each SNP column so profiles reflect what happens when the variant **increases liability** for the target trait.
 
 \[
-X^*_{tj} = \mathrm{sign}(z_j) \cdot X_{tj}
+X^*_{fj} = \mathrm{sign}(z_j) \cdot X_{fj}
 \]
 
-where \(z_j\) is the target trait's signed z-score at SNP \(j\).
+where \(z_j\) is the target trait's GWAS z-score at SNP \(j\) (`pleiotropy$z_target`).
 
-```{r step2-z-target}
-z_target <- X[as.character(target_trait_id), ]
+```{r step2-orient}
+oriented <- orient_pleiotropy_matrix(
+  X,
+  target_trait_id = target_trait_id,
+  z_target = pleiotropy$z_target
+)
 
-head(z_target)
-```
-
-```{r step2-signs}
-target_signs <- sign(z_target)
+X_star <- oriented$x_matrix
+z_target <- oriented$z_target
+target_signs <- oriented$target_signs
 
 table(target_signs, useNA = "ifany")
 ```
-
-```{r step2-orient}
-X_star <- sweep(X, 2, target_signs, `*`)
-
-# equivalent helper:
-oriented <- orient_pleiotropy_matrix(X, target_trait_id = target_trait_id)
-stopifnot(all.equal(X_star, oriented$x_matrix, check.attributes = FALSE))
-```
-
-After orientation, the target trait row is non-negative (magnitude preserved, sign unified). Background trait effects are flipped where needed so they align with the target's direction of effect.
 
 ```{r step2-check}
 target_row <- X_star[as.character(target_trait_id), ]
@@ -176,9 +161,7 @@ list(
 
 ## Step 3: Calculate the SNP-SNP similarity matrix (S)
 
-**Goal:** Measure how parallel the multi-trait trajectories are between every pair of SNPs. Cosine similarity scales each profile to unit length so highly pleiotropic variants do not dominate.
-
-For SNPs \(j\) and \(k\):
+**Goal:** Cosine similarity between SNP feature profiles.
 
 \[
 S_{jk} = \frac{{x^*_j}^{\top} x^*_k}{\|x^*_j\| \|x^*_k\|}
@@ -205,12 +188,9 @@ X_star_norm[, zero_cols] <- 0
 ```{r step3-similarity}
 S <- crossprod(X_star_norm)
 
-# equivalent helper:
 similarity <- snp_similarity_matrix(X_star)
 stopifnot(all.equal(S, similarity$s_matrix, check.attributes = FALSE))
 ```
-
-`S` is symmetric with values in \([-1, 1]\). The diagonal is 1 (each SNP is identical to itself).
 
 ```{r step3-dim}
 dim(S)
@@ -227,19 +207,11 @@ list(
 )
 ```
 
-Interpretation:
-
-- `diag_all_one`: the diagonal of `S` should be 1
-- `min_similarity`: strong anti-parallelism: pairs of SNPs where one variant drives background traits in the exact opposite direction of the other, even though they both ultimately cause the target trait to increase.
-- `max_similarity`: If high, there are independent SNPs in your dataset that possess near identical pleiotropic footprints
-- `mean_similarity`: On average, how any two random SNPs chosen from your total pool are similar to each other.
-- `matrix_density`: proportion of SNP pairs with strictly positive off-diagonal similarity (a sparsity summary of the positive similarity subgraph).
-
-If there is high max similarity and low mean similarity, this suggests that there is mechanistic heterogeneity in the SNPs.
+`matrix_density` is the proportion of SNP pairs with strictly positive off-diagonal similarity (a sparsity summary of the positive similarity subgraph).
 
 ## Step 4: Cluster the SNPs
 
-**Goal:** Group variants into distinct functional classes based on the geometric parallelism of their pleiotropy profiles.
+**Goal:** Group variants into functional classes from the geometry of their feature profiles.
 
 We run several clustering methods and compare how many modules each finds. **Signed Louvain** (Gomez signed modularity on the full cosine similarity matrix, including anti-parallel edges) drives module interpretation in Step 5 (modules with more than three SNPs only). A Ward.D2 dendrogram is shown for visual exploration.
 
@@ -298,29 +270,41 @@ rect.hclust(hc, k = k, border = 2:4)
 
 ## Step 5: Interpret biological modules
 
-**Goal:** Identify which background pathways or clinical traits drive each signed Louvain SNP module (modules with more than three SNPs only).
+**Goal:** Identify which background traits and collapsed pathway/gene features drive each signed Louvain module.
 
-For each retained cluster, we take the mean oriented profile across member SNPs (rows of `X_star`) and rank traits by absolute magnitude.
+```{r step5-driver-info}
+driver_info <- pleiotropy$feature_info |>
+  dplyr::transmute(
+    trait_id = feature_id,
+    trait_name = feature_name,
+    feature_type = feature_type
+  )
+```
 
 ```{r step5-summarise}
 module_drivers <- summarise_snp_modules(
   x_matrix = X_star[, names(clusters_analysis), drop = FALSE],
   cluster = clusters_analysis,
-  trait_info = pleiotropy$trait_info,
+  trait_info = driver_info,
   exclude_trait_id = target_trait_id,
   top_n = 10
 )
+
+module_drivers
+```
+
+```{r step5-by-cluster}
 module_drivers |>
-  dplyr::group_by(cluster) |>
+  dplyr::group_by(cluster, feature_type) |>
   dplyr::slice_head(n = 5) |>
-  dplyr::select(cluster, trait_name, mean_z, abs_mean_z, n_snps) |>
+  dplyr::select(cluster, feature_type, trait_name, mean_z, abs_mean_z, n_snps) |>
   dplyr::mutate(
     mean_z = round(mean_z, 2),
     abs_mean_z = round(abs_mean_z, 2)
   )
 ```
 
-Positive `mean_z` means traits tend to increase when the module's SNPs increase target-trait liability; negative values indicate inverse associations.
+Pathway and gene rows in `module_drivers` reflect collapsed molecular QTL networks; trait rows are standard background phenotypes. Positive `mean_z` means the feature tends to increase when module SNPs increase target-trait liability.
 
 ### Heatmap of SNP similarity (signed Louvain modules > 3 SNPs)
 
@@ -337,4 +321,4 @@ heatmap(
 )
 ```
 
-SNPs are ordered by signed Louvain module id; block structure along the diagonal indicates distinct functional modules among the retained variants.
+Collapsing molecular QTLs into pathway features before singleton filtering reduces row sparsity and lets signed Louvain modules reflect shared biology at both the phenotypic and pathway level.

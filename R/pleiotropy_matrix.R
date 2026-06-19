@@ -1037,8 +1037,8 @@ snp_similarity_matrix <- function(x_matrix, na_as_zero = TRUE) {
 #' mixture models in a latent space derived from the oriented pleiotropy matrix.
 #' @param s_matrix Symmetric SNP-by-SNP cosine similarity matrix from
 #'   `snp_similarity_matrix()$s_matrix`.
-#' @param k Number of clusters (biological modules). For Louvain community detection,
-#'   `k` is ignored and the number of modules is data-driven.
+#' @param k Number of clusters (biological modules). For signed Louvain community
+#'   detection, `k` is ignored and the number of modules is data-driven.
 #' @param method Clustering method: `"hierarchical"`, `"spectral"`, `"community"`,
 #'   or `"gmm"`.
 #' @param x_matrix Oriented pleiotropy matrix (traits x SNPs). Required for
@@ -1046,8 +1046,10 @@ snp_similarity_matrix <- function(x_matrix, na_as_zero = TRUE) {
 #' @param linkage Linkage method passed to `stats::hclust()` when
 #'   `method = "hierarchical"`. Defaults to `"average"`.
 #' @param community_algorithm Community detection algorithm when
-#'   `method = "community"`: `"leading_eigen"` (recursive splits via `steps = k - 1`)
-#'   or `"louvain"` (data-driven module count; requires the **igraph** package).
+#'   `method = "community"`: `"leading_eigen"` (recursive splits via `steps = k - 1`
+#'   on the positive similarity subgraph; requires **igraph**) or `"louvain"`
+#'   (signed Louvain maximising Gomez signed modularity on the full cosine
+#'   similarity matrix, including negative anti-parallel edges).
 #' @param na_as_zero Treat `NA` entries as zero when building latent coordinates
 #'   for GMM clustering.
 #' @param n_latent Number of latent dimensions for GMM clustering. Defaults to
@@ -1162,6 +1164,169 @@ cluster_snp_profiles <- function(s_matrix,
 }
 
 
+.igraph_from_signed_adjacency <- function(affinity) {
+  adj <- affinity
+  diag(adj) <- 0
+  adj[!is.finite(adj)] <- 0
+
+  presence <- abs(adj) > 0
+  graph <- igraph::graph_from_adjacency_matrix(
+    presence * 1,
+    mode = "undirected",
+    weighted = FALSE,
+    diag = FALSE
+  )
+
+  if (igraph::ecount(graph) > 0) {
+    edge_ends <- igraph::as_edgelist(graph)
+    edge_weights <- adj[cbind(edge_ends[, 1], edge_ends[, 2])]
+    igraph::E(graph)$weight <- edge_weights
+  }
+
+  graph
+}
+
+
+.cluster_louvain_signed <- function(s_matrix, gamma = 1, qtype = "sta", seed = NULL) {
+  W <- s_matrix
+  diag(W) <- 0
+  W[!is.finite(W)] <- 0
+
+  n <- nrow(W)
+  W0 <- W * (W > 0)
+  W1 <- -W * (W < 0)
+  s0 <- sum(W0)
+  s1 <- sum(W1)
+
+  qtype <- match.arg(qtype, c("sta", "pos", "smp", "gja", "neg"))
+
+  if (qtype == "smp") {
+    d0 <- if (s0 > 0) 1 / s0 else 0
+    d1 <- if (s1 > 0) 1 / s1 else 0
+  } else if (qtype == "gja") {
+    denom <- s0 + s1
+    d0 <- if (denom > 0) 1 / denom else 0
+    d1 <- d0
+  } else if (qtype == "sta") {
+    d0 <- if (s0 > 0) 1 / s0 else 0
+    d1 <- if ((s0 + s1) > 0) 1 / (s0 + s1) else 0
+  } else if (qtype == "pos") {
+    d0 <- if (s0 > 0) 1 / s0 else 0
+    d1 <- 0
+  } else if (qtype == "neg") {
+    d0 <- 0
+    d1 <- if (s1 > 0) 1 / s1 else 0
+  }
+
+  if (s0 == 0) {
+    s0 <- 1
+    d0 <- 0
+  }
+  if (s1 == 0) {
+    s1 <- 1
+    d1 <- 0
+  }
+
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
+
+  h <- 1L
+  nh <- n
+  ci <- list(NULL, seq_len(n))
+  q <- c(-1, 0)
+
+  while (q[h + 1L] - q[h] > 1e-10) {
+    if (h > 300L) {
+      stop("Signed Louvain exceeded maximum hierarchy depth", call. = FALSE)
+    }
+
+    kn0 <- colSums(W0)
+    kn1 <- colSums(W1)
+    km0 <- kn0
+    km1 <- kn1
+    knm0 <- W0
+    knm1 <- W1
+
+    m <- seq_len(nh)
+    flag <- TRUE
+    it <- 0L
+
+    while (flag) {
+      it <- it + 1L
+      if (it > 1000L) {
+        stop("Signed Louvain iteration limit exceeded", call. = FALSE)
+      }
+      flag <- FALSE
+
+      for (u in sample(nh)) {
+        ma <- m[u]
+        dQ0 <- (knm0[u, ] + W0[u, u] - knm0[u, ma]) -
+          gamma * kn0[u] * (km0 + kn0[u] - km0[ma]) / s0
+        dQ1 <- (knm1[u, ] + W1[u, u] - knm1[u, ma]) -
+          gamma * kn1[u] * (km1 + kn1[u] - km1[ma]) / s1
+
+        dQ <- d0 * dQ0 - d1 * dQ1
+        dQ[ma] <- 0
+
+        if (max(dQ) > 1e-10) {
+          flag <- TRUE
+          mb <- which.max(dQ)
+
+          knm0[, mb] <- knm0[, mb] + W0[, u]
+          knm0[, ma] <- knm0[, ma] - W0[, u]
+          knm1[, mb] <- knm1[, mb] + W1[, u]
+          knm1[, ma] <- knm1[, ma] - W1[, u]
+          km0[mb] <- km0[mb] + kn0[u]
+          km0[ma] <- km0[ma] - kn0[u]
+          km1[mb] <- km1[mb] + kn1[u]
+          km1[ma] <- km1[ma] - kn1[u]
+          m[u] <- mb
+        }
+      }
+    }
+
+    h <- h + 1L
+    ci[[h + 1L]] <- numeric(n)
+    m_factor <- as.integer(as.factor(m))
+
+    for (u in seq_len(nh)) {
+      ci[[h + 1L]][ci[[h]] == u] <- m_factor[u]
+    }
+
+    nh <- max(m_factor)
+    wn0 <- matrix(0, nh, nh)
+    wn1 <- matrix(0, nh, nh)
+    for (u in seq_len(nh)) {
+      for (v in u:nh) {
+        idx_u <- m_factor == u
+        idx_v <- m_factor == v
+        val0 <- sum(W0[idx_u, idx_v, drop = FALSE])
+        val1 <- sum(W1[idx_u, idx_v, drop = FALSE])
+        wn0[u, v] <- val0
+        wn0[v, u] <- val0
+        wn1[u, v] <- val1
+        wn1[v, u] <- val1
+      }
+    }
+    W0 <- wn0
+    W1 <- wn1
+
+    q0 <- sum(diag(W0)) - sum(W0 %*% W0) / s0
+    q1 <- sum(diag(W1)) - sum(W1 %*% W1) / s1
+    q <- c(q, d0 * q0 - d1 * q1)
+  }
+
+  membership <- as.integer(as.factor(ci[[h + 1L]]))
+
+  list(
+    cluster = membership,
+    modularity = q[length(q)],
+    qtype = qtype
+  )
+}
+
+
 .cluster_snps_community <- function(s_matrix, k, algorithm) {
   if (!requireNamespace("igraph", quietly = TRUE)) {
     stop("Package 'igraph' is required for community detection", call. = FALSE)
@@ -1169,26 +1334,39 @@ cluster_snp_profiles <- function(s_matrix,
 
   affinity <- s_matrix
   diag(affinity) <- 0
-  affinity[affinity < 0] <- 0
+  affinity[!is.finite(affinity)] <- 0
+
+  if (algorithm == "louvain") {
+    signed <- .cluster_louvain_signed(affinity, seed = 1L)
+    graph <- .igraph_from_signed_adjacency(affinity)
+
+    return(list(
+      cluster = as.integer(signed$cluster),
+      details = list(
+        igraph = graph,
+        modularity = signed$modularity,
+        qtype = signed$qtype,
+        algorithm = "signed_louvain"
+      )
+    ))
+  }
+
+  affinity_pos <- affinity
+  affinity_pos[affinity_pos < 0] <- 0
 
   graph <- igraph::graph_from_adjacency_matrix(
-    affinity,
+    affinity_pos,
     mode = "undirected",
     weighted = TRUE,
     diag = FALSE
   )
 
-  if (algorithm == "louvain") {
-    communities <- igraph::cluster_louvain(graph, weights = igraph::E(graph)$weight)
-    membership <- igraph::membership(communities)
-  } else {
-    communities <- igraph::cluster_leading_eigen(
-      graph,
-      steps = k - 1L,
-      weights = igraph::E(graph)$weight
-    )
-    membership <- igraph::membership(communities)
-  }
+  communities <- igraph::cluster_leading_eigen(
+    graph,
+    steps = k - 1L,
+    weights = igraph::E(graph)$weight
+  )
+  membership <- igraph::membership(communities)
 
   return(list(
     cluster = as.integer(membership),

@@ -1,0 +1,392 @@
+---
+title: "Investigation of EBMF analysis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Investigation of EBMF analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+```{r libraries}
+pkg_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("devtools", quietly = TRUE)) {
+  devtools::load_all(pkg_root, quiet = TRUE)
+} else {
+  library(gpmapr)
+}
+library(dplyr)
+library(tidyr)
+library(flashier)
+library(ebnm)
+```
+
+This vignette clusters SNPs using **Empirical Bayes Matrix Factorization (EBMF)** via `flashier`. Rather than computing pairwise SNP similarity and then clustering, EBMF discovers latent "programs" directly from the trait x SNP z-score matrix. Each program captures a group of SNPs that share a common pattern of pleiotropic effects, and SNPs can belong to multiple programs (overlapping clusters).
+
+We use **BMI** (trait id `1992`) as the target trait.
+
+## Step 1: Construct the trait x SNP matrix (Y)
+
+**Goal:** Build a flat matrix where each **row** is a background trait and each **column** is a target-trait SNP. Cell values are signed z-scores (`beta / se`). No rows are collapsed, pruned, or filtered based on pathway or gene boundaries.
+
+```{r step1-fetch}
+target_trait_id <- 1992
+
+target_trait <- trait(
+  target_trait_id,
+  include_associations = TRUE
+)
+cg <- target_trait$coloc_groups
+```
+
+### Build the matrix
+
+`build_ebmf_matrix()` constructs the pleiotropy matrix, removes rows and columns that are entirely missing or zero (required by `flashier`), and builds annotation vectors for rows (traits) and columns (SNPs).
+
+```{r step1-ebmf-matrix}
+ebmf_data <- build_ebmf_matrix(
+  trait_id = target_trait_id,
+  coloc_groups = cg,
+  snp_key = "variant_id",
+  minimum_count_in_network = 2
+)
+
+Y <- ebmf_data$x_matrix
+
+list(
+  target_trait = target_trait$trait$trait_name,
+  n_traits = nrow(Y),
+  n_snps = ncol(Y),
+  fraction_non_na = round(mean(!is.na(Y)), 3)
+)
+```
+
+```{r step1-dim}
+dim(Y)
+```
+
+Each column of `Y` is one SNP's signed association profile across the colocalising phenome. `NA` entries indicate no colocalisation signal for that trait at that SNP's locus.
+
+## Step 2: Inspect the annotation layer
+
+**Goal:** Each row and column carries a concatenated metadata string that encodes its biological profile. These annotations are stored alongside the matrix for downstream interpretation.
+
+### Trait (row) annotations
+
+Format: `Tissue__Gene__EnrichedPathway__TraitCategory`. Traits without a specific annotation receive `"None"` or `"Unannotated"` tokens.
+
+```{r step2-trait-annotations}
+head(ebmf_data$trait_annotations, 10)
+```
+
+```{r step2-trait-annotation-summary}
+annotation_parts <- strsplit(ebmf_data$trait_annotations, "__")
+trait_tissues <- vapply(annotation_parts, `[`, character(1), 1)
+trait_categories <- vapply(annotation_parts, `[`, character(1), 4)
+
+list(
+  n_with_tissue = sum(trait_tissues != "None"),
+  n_without_tissue = sum(trait_tissues == "None"),
+  top_categories = head(sort(table(trait_categories), decreasing = TRUE), 5)
+)
+```
+
+### SNP (column) annotations
+
+Format: `ColocGroup{ID}__VariantConsequence` where consequence is `"Genic"` or `"Intergenic"`.
+
+```{r step2-snp-annotations}
+head(ebmf_data$snp_annotations, 10)
+```
+
+```{r step2-snp-annotation-summary}
+snp_parts <- strsplit(ebmf_data$snp_annotations, "__")
+snp_consequences <- vapply(snp_parts, `[`, character(1), 2)
+
+table(snp_consequences)
+```
+
+## Step 3: Run the EBMF factorization
+
+**Goal:** Decompose the trait x SNP matrix \(Y = LF' + E\) into latent factors using `flashier`. The Kronecker (two-way) residual variance structure estimates per-row and per-column variance parameters, naturally down-weighting noisy singleton traits and intergenic SNPs.
+
+- **L** (traits x K): how each trait loads on each discovered program
+- **F** (SNPs x K): how each SNP loads on each program
+- **E**: residual noise with Kronecker variance structure \(s_{ij} = a_i \cdot b_j\)
+
+The algorithm greedily adds factors while they improve the variational lower bound (ELBO), then backfits all factors cyclically until convergence.
+
+```{r step3-run-ebmf}
+flash_fit <- run_ebmf(
+  x_matrix = Y,
+  greedy_Kmax = 20L,
+  backfit = TRUE,
+  var_type = 1L,
+  verbose = 1L
+)
+```
+
+```{r step3-fit-summary}
+list(
+  n_factors = flash_fit$n_factors,
+  elbo = flash_fit$elbo,
+  pve = round(flash_fit$pve, 4)
+)
+```
+
+Each factor represents a discovered "program" -- a latent axis of shared pleiotropy among a subset of SNPs.
+
+### Residual variance structure
+
+The Kronecker variance estimates per-row (trait) and per-column (SNP) residual standard deviations. Traits/SNPs with high residual SD contribute less to the factorization.
+
+```{r step3-residual-sd}
+res_sd <- flash_fit$residuals_sd
+
+if (is.matrix(res_sd)) {
+  row_sd <- rowMeans(res_sd, na.rm = TRUE)
+  col_sd <- colMeans(res_sd, na.rm = TRUE)
+} else if (is.numeric(res_sd) && length(res_sd) == 1) {
+  row_sd <- rep(res_sd, nrow(Y))
+  col_sd <- rep(res_sd, ncol(Y))
+} else {
+  row_sd <- res_sd
+  col_sd <- NULL
+}
+
+list(
+  row_sd_summary = summary(row_sd),
+  col_sd_summary = if (!is.null(col_sd)) summary(col_sd) else "constant"
+)
+```
+
+## Step 4: Extract overlapping SNP clusters
+
+**Goal:** For each discovered program, select SNPs with high-confidence non-zero loadings. A SNP is assigned to a program if:
+
+1. **lFSR < 0.05** (local false sign rate -- the probability that the sign of the loading is wrong)
+2. **|loading| > 0.10** (magnitude threshold to exclude negligibly small effects)
+
+SNPs may belong to multiple programs, producing **overlapping clusters**.
+
+```{r step4-extract-clusters}
+ebmf_clusters <- extract_ebmf_clusters(
+  flash_fit,
+  lfsr_threshold = 0.05,
+  magnitude_threshold = 0.10
+)
+
+list(
+  n_programs = ebmf_clusters$n_programs,
+  n_snps_total = ncol(Y),
+  n_assigned = ebmf_clusters$n_assigned,
+  n_multi_program = ebmf_clusters$n_multi_program,
+  n_unassigned = ncol(Y) - ebmf_clusters$n_assigned
+)
+```
+
+### Program membership summary
+
+```{r step4-membership-summary}
+program_sizes <- colSums(ebmf_clusters$membership)
+data.frame(
+  program = names(program_sizes),
+  n_snps = as.integer(program_sizes),
+  pve = round(flash_fit$pve, 4)
+) |>
+  dplyr::arrange(dplyr::desc(n_snps))
+```
+
+### Cluster assignments
+
+```{r step4-cluster-table}
+ebmf_clusters$clusters |>
+  dplyr::group_by(program) |>
+  dplyr::summarise(
+    n_snps = dplyr::n(),
+    mean_loading = round(mean(loading), 3),
+    mean_abs_loading = round(mean(abs(loading)), 3),
+    mean_lfsr = round(mean(lfsr), 4),
+    .groups = "drop"
+  )
+```
+
+### Multi-program SNPs
+
+SNPs assigned to more than one program represent variants with complex pleiotropic roles spanning multiple biological axes.
+
+```{r step4-multi-program}
+multi_snps <- rownames(ebmf_clusters$membership)[rowSums(ebmf_clusters$membership) > 1]
+
+if (length(multi_snps) > 0) {
+  ebmf_clusters$clusters |>
+    dplyr::filter(snp_id %in% multi_snps) |>
+    dplyr::arrange(snp_id, program) |>
+    dplyr::mutate(
+      loading = round(loading, 3),
+      lfsr = round(lfsr, 4)
+    )
+} else {
+  cat("No SNPs assigned to multiple programs.\n")
+}
+```
+
+## Step 5: Interpret biological programs
+
+**Goal:** Identify which background traits drive each discovered program. For each program, we examine the trait loadings (L matrix) to find traits with the strongest contributions.
+
+```{r step5-trait-loadings}
+L_pm <- flash_fit$L_pm
+L_lfsr <- flash_fit$L_lfsr
+K <- flash_fit$n_factors
+
+trait_ids <- rownames(Y)
+trait_info <- ebmf_data$trait_info |>
+  dplyr::mutate(trait_id = as.character(trait_id))
+
+program_drivers <- lapply(seq_len(K), function(k) {
+  sig <- !is.na(L_lfsr[, k]) & L_lfsr[, k] < 0.05 & abs(L_pm[, k]) > 0.05
+  if (sum(sig) == 0) {
+    return(NULL)
+  }
+  result <- data.frame(
+    program = k,
+    trait_id = trait_ids[sig],
+    loading = L_pm[sig, k],
+    lfsr = L_lfsr[sig, k],
+    stringsAsFactors = FALSE
+  ) |>
+    dplyr::left_join(trait_info, by = "trait_id") |>
+    dplyr::arrange(dplyr::desc(abs(loading)))
+  return(result)
+}) |>
+  dplyr::bind_rows()
+
+if (nrow(program_drivers) > 0) {
+  program_drivers |>
+    dplyr::slice_head(n = 10) |>
+    dplyr::select(program, trait_name, loading, lfsr) |>
+    dplyr::mutate(
+      loading = round(loading, 3),
+      lfsr = round(lfsr, 4)
+    )
+} else {
+  cat("No significant trait drivers found.\n")
+}
+```
+
+Positive loadings indicate traits that co-vary with the program's SNP factor; negative loadings indicate inverse associations.
+
+### Heatmap of SNP factor loadings
+
+```{r step5-loading-heatmap, fig.height = 7, fig.width = 7}
+if (K > 0 && ebmf_clusters$n_assigned > 0) {
+  F_pm <- flash_fit$F_pm
+  assigned_snps <- rownames(ebmf_clusters$membership)[rowSums(ebmf_clusters$membership) > 0]
+  F_assigned <- F_pm[assigned_snps, , drop = FALSE]
+  colnames(F_assigned) <- paste0("Program ", seq_len(K))
+
+  heatmap(
+    F_assigned,
+    scale = "none",
+    main = "SNP factor loadings (assigned SNPs)",
+    xlab = "Programs",
+    ylab = "SNPs",
+    cexCol = 0.8
+  )
+} else {
+  cat("No assigned SNPs to plot.\n")
+}
+```
+
+SNPs cluster along columns by their program membership. Overlapping SNPs (those assigned to multiple programs) will show non-zero loadings in multiple columns.
+
+## Step 6: SNP membership by program
+
+**Goal:** List the SNPs assigned to each EBMF program using readable SNP names (`display_snp`) and the genes linked to each SNP's colocalisation group.
+
+```{r step6-snp-lookup}
+snp_lookup <- ebmf_data$snp_info |>
+  dplyr::transmute(
+    snp_id = as.character(snp_id),
+    display_snp = display_snp,
+    coloc_group_id = coloc_group_id,
+    chr = chr,
+    bp = bp
+  )
+
+coloc_group_genes <- cg |>
+  dplyr::filter(coloc_group_id %in% snp_lookup$coloc_group_id) |>
+  dplyr::filter(!is.na(gene), gene != "") |>
+  dplyr::group_by(coloc_group_id) |>
+  dplyr::summarise(
+    genes = paste(sort(unique(gene)), collapse = ", "),
+    .groups = "drop"
+  )
+
+program_snp_catalogue <- ebmf_clusters$clusters |>
+  dplyr::left_join(snp_lookup, by = "snp_id") |>
+  dplyr::left_join(coloc_group_genes, by = "coloc_group_id") |>
+  dplyr::mutate(
+    genes = dplyr::if_else(is.na(genes), "None", genes),
+    loading = round(loading, 3),
+    lfsr = round(lfsr, 4)
+  ) |>
+  dplyr::arrange(program, dplyr::desc(abs(loading)))
+```
+
+```{r step6-program-summary}
+program_snp_catalogue |>
+  dplyr::group_by(program) |>
+  dplyr::summarise(
+    n_snps = dplyr::n(),
+    display_snps = paste(display_snp, collapse = ", "),
+    genes = paste(unique(unlist(strsplit(genes, ", "))), collapse = ", "),
+    .groups = "drop"
+  )
+```
+
+### SNPs by program
+
+```{r step6-program-tables, results='asis'}
+for (prog in sort(unique(program_snp_catalogue$program))) {
+  prog_table <- program_snp_catalogue |>
+    dplyr::filter(program == prog) |>
+    dplyr::select(display_snp, genes, loading, lfsr)
+
+  cat("\n\n#### Program ", prog, "\n\n", sep = "")
+  print(knitr::kable(
+    prog_table,
+    caption = paste0("Program ", prog, " (n = ", nrow(prog_table), " SNPs)")
+  ))
+}
+```
+
+SNPs appearing in more than one program above reflect overlapping EBMF membership (see Step 4). The `genes` column lists all distinct genes associated with that SNP's colocalisation group across the GPMap coloc data at that locus.
+
+## Step 7: Save results
+
+```{r step7-save-results}
+ebmf_results <- list(
+  flash_fit = flash_fit,
+  ebmf_clusters = ebmf_clusters,
+  program_drivers = program_drivers
+)
+
+results_path <- file.path(pkg_root, "vignettes", "investigation-ebmf-analysis-results.rds")
+saveRDS(ebmf_results, results_path)
+
+results_path
+```
+

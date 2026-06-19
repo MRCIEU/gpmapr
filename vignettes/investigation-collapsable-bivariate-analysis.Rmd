@@ -150,6 +150,8 @@ heatmap(
 
 ## Step 5: Interpret the bivariate blocks
 
+Each heatmap panel is a **block**: one cluster of HDL SNPs (rows) crossed with one cluster of LDL SNPs (columns). Blocks with high positive mean similarity contain SNP groups whose **feature profiles** point in the same direction; negative blocks indicate trade-offs; near-zero blocks are largely trait-specific.
+
 ### Block A: Shared concordant modules (cells ≈ +0.5 to +1.0)
 
 Parallel pleiotropy footprints across traits — a shared biological highway.
@@ -195,4 +197,161 @@ module_summary |>
   dplyr::arrange(dplyr::desc(n_blocks))
 ```
 
-Pathway features densify the molecular QTL portion of the profile space while background traits remain available for comparison — block structure can reflect both shared biology and trait-specific mechanisms.
+### SNP groups, trait categories, and pathway features
+
+Pathway features densify the molecular QTL layer, but we can still read blocks at two levels:
+
+1. **SNP membership** — which variants fall in each cluster?
+2. **Coloc-group trait categories** — which phenotypic themes appear at those SNP loci?
+3. **Pathway features** — which collapsed molecular networks drive the oriented profiles for SNPs in a block?
+
+```{r step5-block-helpers}
+blocks_of_interest <- module_summary |>
+  dplyr::filter(block_type %in% c("concordant", "discordant", "trait_specific")) |>
+  dplyr::group_by(block_type) |>
+  dplyr::slice_max(abs(mean_similarity), n = 1, with_ties = FALSE) |>
+  dplyr::ungroup()
+
+snp_category_profile <- function(snp_ids, target_trait_id, coloc_groups) {
+  snp_ids <- as.character(snp_ids)
+  coloc_groups |>
+    dplyr::filter(as.character(variant_id) %in% snp_ids) |>
+    dplyr::filter(trait_id != target_trait_id, !is.na(trait_category)) |>
+    dplyr::mutate(
+      category = dplyr::if_else(data_type != "Phenotype", "Molecular", trait_category)
+    ) |>
+    dplyr::count(category, name = "n_coloc_signals") |>
+    dplyr::arrange(dplyr::desc(n_coloc_signals))
+}
+
+snp_examples <- function(snp_ids, snp_info) {
+  snp_info |>
+    dplyr::filter(as.character(variant_id) %in% as.character(snp_ids)) |>
+    dplyr::distinct(display_snp, variant_id, chr, bp) |>
+    dplyr::slice_head(n = 6)
+}
+
+top_pathway_features <- function(x_oriented, snp_ids, feature_info, n = 8) {
+  snp_ids <- intersect(as.character(snp_ids), colnames(x_oriented))
+  feature_ids <- feature_info |>
+    dplyr::filter(feature_type %in% c("pathway", "gene")) |>
+    dplyr::pull(feature_id)
+  feature_ids <- intersect(feature_ids, rownames(x_oriented))
+  if (length(snp_ids) == 0 || length(feature_ids) == 0) {
+    return(data.frame())
+  }
+  feat_mat <- x_oriented[feature_ids, snp_ids, drop = FALSE]
+  data.frame(
+    feature_id = rownames(feat_mat),
+    mean_abs_z = rowMeans(abs(feat_mat), na.rm = TRUE),
+    stringsAsFactors = FALSE
+  ) |>
+    dplyr::left_join(feature_info, by = "feature_id") |>
+    dplyr::arrange(dplyr::desc(mean_abs_z)) |>
+    dplyr::slice_head(n = n) |>
+    dplyr::select(feature_id, feature_name, feature_type, source, mean_abs_z)
+}
+```
+
+```{r step5-block-details}
+block_details <- lapply(seq_len(nrow(blocks_of_interest)), function(i) {
+  block <- blocks_of_interest[i, , drop = FALSE]
+  row_snps <- names(cross_modules$clusters_rows)[
+    cross_modules$clusters_rows == block$row_cluster
+  ]
+  col_snps <- names(cross_modules$clusters_cols)[
+    cross_modules$clusters_cols == block$col_cluster
+  ]
+
+  cat_trait_1 <- snp_category_profile(row_snps, trait_id_1, cg)
+  cat_trait_2 <- snp_category_profile(col_snps, trait_id_2, cg)
+  shared_cats <- dplyr::inner_join(
+    cat_trait_1 |> dplyr::rename(trait_1_signals = n_coloc_signals),
+    cat_trait_2 |> dplyr::rename(trait_2_signals = n_coloc_signals),
+    by = "category"
+  ) |>
+    dplyr::mutate(total_signals = trait_1_signals + trait_2_signals) |>
+    dplyr::arrange(dplyr::desc(total_signals))
+
+  list(
+    block_type = block$block_type,
+    mean_similarity = block$mean_similarity,
+    row_cluster = block$row_cluster,
+    col_cluster = block$col_cluster,
+    n_snps_trait_1 = length(row_snps),
+    n_snps_trait_2 = length(col_snps),
+    example_snps_trait_1 = snp_examples(row_snps, bivariate$snp_info_1),
+    example_snps_trait_2 = snp_examples(col_snps, bivariate$snp_info_2),
+    top_categories_trait_1 = dplyr::slice_head(cat_trait_1, n = 8),
+    top_categories_trait_2 = dplyr::slice_head(cat_trait_2, n = 8),
+    shared_categories = dplyr::slice_head(shared_cats, n = 10),
+    top_pathways_trait_1 = top_pathway_features(
+      X1_star, row_snps, bivariate$feature_info
+    ),
+    top_pathways_trait_2 = top_pathway_features(
+      X2_star, col_snps, bivariate$feature_info
+    )
+  )
+})
+names(block_details) <- blocks_of_interest$block_type
+```
+
+```{r step5-block-overview}
+dplyr::bind_rows(lapply(block_details, function(b) {
+  data.frame(
+    block_type = b$block_type,
+    mean_similarity = round(b$mean_similarity, 2),
+    n_snps_trait_1 = b$n_snps_trait_1,
+    n_snps_trait_2 = b$n_snps_trait_2,
+    example_snps_trait_1 = paste(b$example_snps_trait_1$display_snp, collapse = ", "),
+    example_snps_trait_2 = paste(b$example_snps_trait_2$display_snp, collapse = ", "),
+    stringsAsFactors = FALSE
+  )
+}))
+```
+
+**Concordant block** — shared trait categories and pathway features that both SNP clusters load on:
+
+```{r step5-concordant-detail, echo=FALSE, results='asis'}
+b <- block_details$concordant
+if (!is.null(b)) {
+  if (nrow(b$shared_categories) > 0) {
+    cat("\n\nShared trait categories:\n\n")
+    knitr::kable(b$shared_categories)
+  }
+  if (nrow(b$top_pathways_trait_1) > 0) {
+    cat("\n\nTop pathway/gene features (HDL SNP cluster):\n\n")
+    knitr::kable(b$top_pathways_trait_1)
+  }
+  if (nrow(b$top_pathways_trait_2) > 0) {
+    cat("\n\nTop pathway/gene features (LDL SNP cluster):\n\n")
+    knitr::kable(b$top_pathways_trait_2)
+  }
+}
+```
+
+**Discordant block** — categories present at both loci but with opposing oriented similarity in `S*`:
+
+```{r step5-discordant-detail, echo=FALSE, results='asis'}
+b <- block_details$discordant
+if (!is.null(b) && nrow(b$shared_categories) > 0) {
+  knitr::kable(b$shared_categories, caption = "Shared trait categories in the strongest discordant block")
+}
+```
+
+**Trait-specific block** — weak cross-trait alignment; categories may differ between the two SNP groups:
+
+```{r step5-specific-detail, echo=FALSE, results='asis'}
+b <- block_details$trait_specific
+if (!is.null(b)) {
+  knitr::kable(
+    dplyr::bind_rows(
+      b$top_categories_trait_1 |> dplyr::mutate(trait = "HDL SNPs"),
+      b$top_categories_trait_2 |> dplyr::mutate(trait = "LDL SNPs")
+    ),
+    caption = "Top colocalisation categories in the strongest trait-specific block"
+  )
+}
+```
+
+Concordant blocks link SNP groups that share both **phenotypic colocalisation themes** and **pathway-level molecular features**. Discordant blocks reuse some of the same categories but with opposite profile directions. Trait-specific blocks highlight HDL-only or LDL-only biology in the collapsed feature space.
