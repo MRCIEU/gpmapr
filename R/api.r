@@ -143,6 +143,24 @@ trait_coloc_pairs_api <- function(trait_id, h4_threshold = 0.8) {
   return(to_dataframe)
 }
 
+#' @title Get Trait Full Associations API
+#' @description Get full trait associations from the API
+#' @param trait_id A character string specifying the trait ID
+#' @return A dataframe containing full trait associations
+#' @noRd
+trait_associations_full_api <- function(trait_id) {
+  url <- paste0(
+    getOption("gpmap_url"),
+    "/v1/traits/", trait_id, "/associations-full"
+  )
+  response <- httr::GET(url, httr::timeout(timeout_seconds))
+  response <- httr::content(response, "text", encoding = "UTF-8")
+  response <- jsonlite::fromJSON(response)
+  to_dataframe <- as.data.frame(response$associations_full_rows)
+  names(to_dataframe) <- response$associations_full_column_names
+  return(to_dataframe)
+}
+
 #' @title Get Gene Information
 #' @description Get gene information from the API
 #' @return A list containing the genes

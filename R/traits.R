@@ -31,6 +31,8 @@ all_traits <- function() {
 #' @param trait_id A numeric value or GUID (from GWAS upload) specifying the trait id
 #' @param include_associations A logical value specifying whether to include associations
 #' (BETA, SE, P), defaults to FALSE
+#' @param include_full_associations A logical value specifying whether to include full
+#' trait associations from \code{/associations-full}, defaults to FALSE
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8
 #' @return A list which contains the following elements:
@@ -43,6 +45,8 @@ all_traits <- function() {
 #' See below for details.
 #'   \item rare_results: (optional) a list of dataframes containing the rare results for this trait
 #'   \item coloc_pairs: (optional) a dataframe containing all pairwise coloc results for this trait.
+#'   \item full_associations: (optional) a dataframe of full trait associations from
+#' \code{/associations-full}.
 #' }
 #' See below for details.
 #' @details
@@ -55,6 +59,7 @@ all_traits <- function() {
 #' @export
 trait <- function(trait_id,
                   include_associations = FALSE,
+                  include_full_associations = FALSE,
                   include_coloc_pairs = FALSE,
                   h4_threshold = 0.8) {
   if (is.null(trait_id)) {
@@ -72,6 +77,10 @@ trait <- function(trait_id,
     if (include_coloc_pairs) {
       response <- trait_coloc_pairs_api(trait_id, h4_threshold)
       trait_info$coloc_pairs <- response
+    }
+
+    if (include_full_associations) {
+      trait_info$full_associations <- trait_associations_full_api(trait_id)
     }
 
     if (include_associations) {

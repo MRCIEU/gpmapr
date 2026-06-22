@@ -7,6 +7,7 @@
 trait(
   trait_id,
   include_associations = FALSE,
+  include_full_associations = FALSE,
   include_coloc_pairs = FALSE,
   h4_threshold = 0.8
 )
@@ -16,6 +17,9 @@ trait(
 
 \item{include_associations}{A logical value specifying whether to include associations
 (BETA, SE, P), defaults to FALSE}
+
+\item{include_full_associations}{A logical value specifying whether to include full
+trait associations from \code{/associations-full}, defaults to FALSE}
 
 \item{include_coloc_pairs}{A logical value specifying whether to include coloc pairs, defaults to FALSE}
 
@@ -32,6 +36,8 @@ See below for details.
 See below for details.
 \item rare_results: (optional) a list of dataframes containing the rare results for this trait
 \item coloc_pairs: (optional) a dataframe containing all pairwise coloc results for this trait.
+\item full_associations: (optional) a dataframe of full trait associations from
+\code{/associations-full}.
 }
 See below for details.
 }
