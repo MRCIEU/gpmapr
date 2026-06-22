@@ -189,38 +189,32 @@ run_ebmf <- function(beta_matrix,
 
 
 #' @title Run EBMF Comparison Grid
-#' @description Fit a grid of EBMF models varying EBNM prior and residual
-#' variance structure. The beta and SE matrices are built once by the caller
-#' via \code{build_ebmf_matrix()} and reused across all runs.
-#' @param beta_matrix Traits x SNPs matrix of effect sizes from
-#'   \code{build_ebmf_matrix()$beta_matrix}.
-#' @param se_matrix Traits x SNPs matrix of standard errors from
-#'   \code{build_ebmf_matrix()$se_matrix}.
-#' @param trait_info Optional trait metadata (with \code{trait_id} and
-#'   \code{trait_name}) for driver summarisation.
+#' @description Fit a grid of EBMF models varying label scheme, EBNM prior, and
+#' residual variance structure. Each label scheme is built via
+#' \code{build_ebmf_matrix()} once and reused across matching runs.
+#' @inheritParams build_ebmf_matrix
+#' @inheritParams run_ebmf
+#' @param label_schemes Character vector of row-labelling schemes to compare.
 #' @param ebnm_fns Character vector of EBNM priors: \code{"point_normal"} and/or
 #'   \code{"point_laplace"}.
 #' @param var_types List of \code{var_type} values passed to \code{run_ebmf()}.
 #'   Defaults to per-row (\code{1L}) and Kronecker (\code{c(1L, 2L)}).
-#' @param greedy_Kmax Maximum greedy factors. Defaults to 20.
-#' @param backfit Logical; backfit after greedy phase.
 #' @param lfsr_threshold Passed to \code{extract_ebmf_clusters()}.
 #' @param magnitude_threshold Passed to \code{extract_ebmf_clusters()}.
 #' @param save_path Optional path to save results as \code{.rds}.
-#' @param verbose Verbosity passed to \code{run_ebmf()}.
 #' @return A list with \code{summary} (one-row-per-run dataframe) and
-#'   \code{results} (named list of per-run outputs). Each result contains
-#'   \code{flash_fit}, \code{ebmf_clusters}, and \code{program_drivers} on
-#'   success, or \code{error} on failure.
+#'   \code{results} (named list of per-run outputs).
 #' @export
-run_ebmf_comparison <- function(beta_matrix,
-                                se_matrix,
-                                trait_info = NULL,
+run_ebmf_comparison <- function(trait_id,
+                                coloc_groups = NULL,
+                                p_threshold = NULL,
+                                snp_key = c("variant_id", "display_snp", "coloc_group_id"),
                                 label_schemes = c(
-                                  "pathway_gene_tissue",
-                                  "pathway_gene",
-                                  "tissue"
+                                  "pathway_gene_tissue", "pathway_gene", "tissue"
                                 ),
+                                pathway_source = NULL,
+                                pathway_p_value_threshold = 0.05,
+                                minimum_count_in_network = NULL,
                                 ebnm_fns = c("point_normal", "point_laplace"),
                                 var_types = list(c(1L), c(1L, 2L)),
                                 greedy_Kmax = 20L,
@@ -229,10 +223,19 @@ run_ebmf_comparison <- function(beta_matrix,
                                 magnitude_threshold = 0.10,
                                 save_path = NULL,
                                 verbose = 0L) {
-  if (!is.matrix(beta_matrix)) stop("beta_matrix must be a matrix")
-  if (!is.matrix(se_matrix)) stop("se_matrix must be a matrix")
+  if (missing(trait_id) || is.null(trait_id)) {
+    stop("trait_id is required")
+  }
+
+  snp_key <- match.arg(snp_key)
+  label_schemes <- match.arg(
+    label_schemes,
+    c("pathway_gene_tissue", "pathway_gene", "tissue"),
+    several.ok = TRUE
+  )
 
   configs <- expand.grid(
+    label_scheme = label_schemes,
     ebnm_fn = ebnm_fns,
     var_type_idx = seq_along(var_types),
     stringsAsFactors = FALSE
@@ -242,22 +245,42 @@ run_ebmf_comparison <- function(beta_matrix,
     function(i) return(paste(var_types[[i]], collapse = ",")),
     character(1)
   )
-  configs$run_id <- paste0("ebnm_", configs$ebnm_fn, "__var_", configs$var_type)
+  configs$run_id <- paste0(
+    "labels_", configs$label_scheme,
+    "__ebnm_", configs$ebnm_fn,
+    "__var_", configs$var_type
+  )
 
   n_runs <- nrow(configs)
   results <- vector("list", n_runs)
   names(results) <- configs$run_id
   summary_rows <- vector("list", n_runs)
+  ebmf_data_by_scheme <- list()
 
   for (i in seq_len(n_runs)) {
     cfg <- configs[i, , drop = FALSE]
     run_id <- cfg$run_id
+    label_scheme <- cfg$label_scheme
     message("EBMF run ", i, "/", n_runs, ": ", run_id)
 
     run_result <- tryCatch({
+      if (is.null(ebmf_data_by_scheme[[label_scheme]])) {
+        ebmf_data_by_scheme[[label_scheme]] <- build_ebmf_matrix(
+          trait_id = trait_id,
+          coloc_groups = coloc_groups,
+          p_threshold = p_threshold,
+          snp_key = snp_key,
+          label_scheme = label_scheme,
+          pathway_source = pathway_source,
+          pathway_p_value_threshold = pathway_p_value_threshold,
+          minimum_count_in_network = minimum_count_in_network
+        )
+      }
+      ebmf_data <- ebmf_data_by_scheme[[label_scheme]]
+
       flash_fit <- run_ebmf(
-        beta_matrix = beta_matrix,
-        se_matrix = se_matrix,
+        beta_matrix = ebmf_data$beta_matrix,
+        se_matrix = ebmf_data$se_matrix,
         greedy_Kmax = greedy_Kmax,
         backfit = backfit,
         ebnm_fn = .resolve_ebnm_fn(cfg$ebnm_fn),
@@ -273,12 +296,14 @@ run_ebmf_comparison <- function(beta_matrix,
 
       drivers <- summarise_ebmf_program_drivers(
         flash_fit = flash_fit,
-        trait_info = trait_info
+        trait_info = ebmf_data$trait_info
       )
 
       list(
+        label_scheme = label_scheme,
         ebnm_fn = cfg$ebnm_fn,
         var_type = var_types[[cfg$var_type_idx]],
+        ebmf_data = ebmf_data,
         flash_fit = flash_fit,
         ebmf_clusters = clusters,
         program_drivers = drivers
@@ -286,6 +311,7 @@ run_ebmf_comparison <- function(beta_matrix,
     }, error = function(e) {
       warning("Run '", run_id, "' failed: ", conditionMessage(e), call. = FALSE)
       return(list(
+        label_scheme = label_scheme,
         ebnm_fn = cfg$ebnm_fn,
         var_type = var_types[[cfg$var_type_idx]],
         error = conditionMessage(e)
@@ -311,8 +337,8 @@ run_ebmf_comparison <- function(beta_matrix,
 #' @title Summarise EBMF Comparison Results
 #' @description Rebuild or return the summary table from a comparison result.
 #' @param comparison Output list from \code{run_ebmf_comparison()}.
-#' @return A dataframe with one row per run: \code{run_id}, \code{ebnm_fn},
-#'   \code{var_type}, \code{n_factors}, \code{n_programs_with_snps},
+#' @return A dataframe with one row per run: \code{run_id}, \code{label_scheme},
+#'   \code{ebnm_fn}, \code{var_type}, \code{n_factors}, \code{n_programs_with_snps},
 #'   \code{n_assigned}, \code{n_multi_program}, \code{program_sizes},
 #'   \code{status}, and \code{error}.
 #' @export
@@ -504,11 +530,20 @@ extract_ebmf_clusters <- function(flash_fit,
 
 
 .ebmf_run_summary_row <- function(run_id, run_result) {
+  label_scheme <- if (is.null(run_result$label_scheme)) {
+    NA_character_
+  } else {
+    as.character(run_result$label_scheme)
+  }
+
   if (!is.null(run_result$error)) {
+    ebnm_fn <- if (is.null(run_result$ebnm_fn)) NA_character_ else as.character(run_result$ebnm_fn)
+    var_type <- if (is.null(run_result$var_type)) NA_character_ else paste(run_result$var_type, collapse = ",")
     return(data.frame(
       run_id = run_id,
-      ebnm_fn = as.character(run_result$ebnm_fn %||% NA_character_),
-      var_type = paste(run_result$var_type %||% NA, collapse = ","),
+      label_scheme = label_scheme,
+      ebnm_fn = ebnm_fn,
+      var_type = var_type,
       n_factors = NA_integer_,
       n_programs_with_snps = NA_integer_,
       n_assigned = NA_integer_,
@@ -528,6 +563,7 @@ extract_ebmf_clusters <- function(flash_fit,
 
   return(data.frame(
     run_id = run_id,
+    label_scheme = label_scheme,
     ebnm_fn = as.character(run_result$ebnm_fn),
     var_type = paste(run_result$var_type, collapse = ","),
     n_factors = run_result$flash_fit$n_factors,

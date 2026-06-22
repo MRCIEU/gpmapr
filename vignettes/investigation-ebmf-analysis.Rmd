@@ -54,7 +54,7 @@ cg <- target_trait$coloc_groups
 
 `build_ebmf_matrix()` constructs the pleiotropy matrix, removes rows and columns that are entirely missing or zero (required by `flashier`), and builds annotation vectors for rows (traits) and columns (SNPs).
 
-```{r step1-ebmf-matrix}
+```{r step1-ebmf-matrix, eval = FALSE}
 ebmf_data <- build_ebmf_matrix(
   trait_id = target_trait_id,
   coloc_groups = cg,
@@ -97,23 +97,21 @@ Format: `ColocGroup{ID}`.
 
 ## Step 3: Run EBMF comparison grid
 
-**Goal:** Compare EBMF configurations by varying the EBNM prior and residual variance structure. The beta/SE matrices from Step 1 are reused across all runs -- no redundant matrix rebuilding.
+**Goal:** Compare EBMF configurations by varying label scheme, EBNM prior, and residual variance structure. Each label scheme is built via `build_ebmf_matrix()` inside the comparison.
 
 Grid:
 
+- **Labels:** `pathway_gene_tissue`, `pathway_gene`, `tissue`
 - **EBNM priors:** `point_normal`, `point_laplace`
 - **Variance:** `var_type = 1` (per-row) and `var_type = c(1, 2)` (Kronecker)
 
 ```{r step3-comparison}
 ebmf_comparison <- run_ebmf_comparison(
-  beta_matrix = Y,
-  se_matrix = S,
-  label_schemes = c(
-    "pathway_gene_tissue",
-    "pathway_gene",
-    "tissue"
-  ),
-  trait_info = ebmf_data$trait_info,
+  trait_id = target_trait_id,
+  coloc_groups = cg,
+  snp_key = "variant_id",
+  minimum_count_in_network = 2,
+  label_schemes = c("pathway_gene_tissue", "pathway_gene", "tissue"),
   ebnm_fns = c("point_normal", "point_laplace"),
   var_types = list(c(1L), c(1L, 2L)),
   greedy_Kmax = 20L,
@@ -137,6 +135,7 @@ successful <- ebmf_comparison$summary |>
   dplyr::filter(status == "ok")
 run_id <- successful$run_id[1]
 run <- ebmf_comparison$results[[run_id]]
+run_data <- run$ebmf_data
 flash_fit <- run$flash_fit
 ebmf_clusters <- run$ebmf_clusters
 program_drivers <- run$program_drivers
@@ -218,7 +217,7 @@ if (K > 0 && ebmf_clusters$n_assigned > 0) {
 ### SNP catalogue by program
 
 ```{r step4-snp-catalogue}
-snp_lookup <- ebmf_data$snp_info |>
+snp_lookup <- run_data$snp_info |>
   dplyr::transmute(
     snp_id = as.character(snp_id),
     display_snp = display_snp,
@@ -269,5 +268,5 @@ Reload later with:
 ```r
 comparison <- readRDS("vignettes/investigation-ebmf-analysis-results.rds")
 comparison$summary
-comparison$results[["ebnm_point_normal__var_1"]]$ebmf_clusters
+comparison$results[["labels_pathway_gene__ebnm_point_normal__var_1"]]$ebmf_clusters
 ```
