@@ -25,6 +25,16 @@ test_that("trait() returns expected output", {
   expect_true(nrow(result$coloc_groups) > 0)
 })
 
+test_that("trait() returns full_associations when requested", {
+  trait_id <- 5020
+  result <- trait(trait_id, include_full_associations = TRUE)
+  expect_type(result, "list")
+  expect_true(is.data.frame(result$full_associations))
+  expect_true(nrow(result$full_associations) > 0)
+  expected_names <- c("variant_id", "study_id", "beta", "se", "p", "eaf", "imputed")
+  expect_true(all(expected_names %in% names(result$full_associations)))
+})
+
 test_that("variant() returns expected output", {
   variant_id <- 5553693
   result <- variant(variant_id)
