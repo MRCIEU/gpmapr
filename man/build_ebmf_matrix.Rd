@@ -11,7 +11,8 @@ build_ebmf_matrix(
   snp_key = c("variant_id", "display_snp", "coloc_group_id"),
   label_scheme = c("pathway_gene_tissue", "pathway_gene", "tissue"),
   pathway_source = NULL,
-  pathway_p_value_threshold = 0.05,
+  pathway_min_size = 5L,
+  pathway_max_size = 200L,
   minimum_count_in_network = NULL
 )
 }
@@ -32,8 +33,9 @@ will fetch via \code{trait(trait_id, include_associations = TRUE)}.}
 
 \item{pathway_source}{Optional pathway source for enrichment annotation.}
 
-\item{pathway_p_value_threshold}{FDR threshold for pathway enrichment annotation.
-Defaults to 0.05.}
+\item{pathway_min_size}{Minimum pathway size for annotation labelling. Defaults to 5.}
+
+\item{pathway_max_size}{Maximum pathway size for annotation labelling. Defaults to 200.}
 
 \item{minimum_count_in_network}{Minimum gene overlap per pathway term.}
 }

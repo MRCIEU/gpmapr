@@ -58,8 +58,7 @@ cg <- target_trait$coloc_groups
 ebmf_data <- build_ebmf_matrix(
   trait_id = target_trait_id,
   coloc_groups = cg,
-  snp_key = "variant_id",
-  minimum_count_in_network = 2
+  snp_key = "variant_id"
 )
 
 Y <- ebmf_data$beta_matrix
@@ -110,7 +109,6 @@ ebmf_comparison <- run_ebmf_comparison(
   trait_id = target_trait_id,
   coloc_groups = cg,
   snp_key = "variant_id",
-  minimum_count_in_network = 2,
   label_schemes = c("pathway_gene_tissue", "pathway_gene", "tissue"),
   ebnm_fns = c("point_normal", "point_laplace"),
   var_types = list(c(1L), c(1L, 2L)),

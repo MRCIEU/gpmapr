@@ -20,8 +20,8 @@
 #'   \code{"pathway_gene"}, or \code{"tissue"}. Defaults to \code{"pathway_gene_tissue"}.
 #' @inheritParams build_pleiotropy_matrix
 #' @param pathway_source Optional pathway source for enrichment annotation.
-#' @param pathway_p_value_threshold FDR threshold for pathway enrichment annotation.
-#'   Defaults to 0.05.
+#' @param pathway_min_size Minimum pathway size for annotation labelling. Defaults to 5.
+#' @param pathway_max_size Maximum pathway size for annotation labelling. Defaults to 200.
 #' @param minimum_count_in_network Minimum gene overlap per pathway term.
 #' @return A list with:
 #'   \itemize{
@@ -43,7 +43,8 @@ build_ebmf_matrix <- function(trait_id,
                                 "pathway_gene_tissue", "pathway_gene", "tissue"
                               ),
                               pathway_source = NULL,
-                              pathway_p_value_threshold = 0.05,
+                              pathway_min_size = 5L,
+                              pathway_max_size = 200L,
                               minimum_count_in_network = NULL) {
   if (missing(trait_id) || is.null(trait_id)) {
     stop("trait_id is required")
@@ -52,13 +53,16 @@ build_ebmf_matrix <- function(trait_id,
   snp_key <- match.arg(snp_key)
   label_scheme <- match.arg(label_scheme)
 
+  trait_data <- trait(trait_id, include_full_associations = TRUE)
   if (is.null(coloc_groups)) {
-    coloc_groups <- trait(trait_id, include_associations = TRUE)$coloc_groups
+    coloc_groups <- trait_data$coloc_groups
   }
+  full_associations <- trait_data$full_associations
 
   assoc <- .build_ebmf_association_matrices(
     trait_id = trait_id,
     coloc_groups = coloc_groups,
+    full_associations = full_associations,
     p_threshold = p_threshold,
     snp_key = snp_key
   )
@@ -73,7 +77,8 @@ build_ebmf_matrix <- function(trait_id,
     coloc_groups = coloc_groups,
     label_scheme = label_scheme,
     pathway_source = pathway_source,
-    pathway_p_value_threshold = pathway_p_value_threshold,
+    pathway_min_size = pathway_min_size,
+    pathway_max_size = pathway_max_size,
     minimum_count_in_network = minimum_count_in_network
   )
 
@@ -213,7 +218,8 @@ run_ebmf_comparison <- function(trait_id,
                                   "pathway_gene_tissue", "pathway_gene", "tissue"
                                 ),
                                 pathway_source = NULL,
-                                pathway_p_value_threshold = 0.05,
+                                pathway_min_size = 5L,
+                                pathway_max_size = 200L,
                                 minimum_count_in_network = NULL,
                                 ebnm_fns = c("point_normal", "point_laplace"),
                                 var_types = list(c(1L), c(1L, 2L)),
@@ -272,7 +278,8 @@ run_ebmf_comparison <- function(trait_id,
           snp_key = snp_key,
           label_scheme = label_scheme,
           pathway_source = pathway_source,
-          pathway_p_value_threshold = pathway_p_value_threshold,
+          pathway_min_size = pathway_min_size,
+          pathway_max_size = pathway_max_size,
           minimum_count_in_network = minimum_count_in_network
         )
       }
@@ -615,18 +622,49 @@ extract_ebmf_clusters <- function(flash_fit,
 
 .build_ebmf_association_matrices <- function(trait_id,
                                              coloc_groups,
+                                             full_associations,
                                              p_threshold,
                                              snp_key) {
-  locus_data <- .prepare_pleiotropy_locus_data(
+  if (is.null(full_associations) || nrow(full_associations) == 0) {
+    stop("full_associations is required to build the EBMF matrix")
+  }
+  if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {
+    stop("coloc_groups is required to build the EBMF matrix")
+  }
+
+  target_snps <- .get_ebmf_target_snps(
     trait_id = trait_id,
     coloc_groups = coloc_groups,
     p_threshold = p_threshold,
     snp_key = snp_key
   )
 
-  assoc_long <- locus_data$cg |>
+  study_trait_map <- coloc_groups |>
+    dplyr::filter(!is.na(study_id), !is.na(trait_id)) |>
+    dplyr::distinct(study_id, trait_id, trait_name)
+
+  if ("existing_study_id" %in% names(coloc_groups)) {
+    existing_trait_map <- coloc_groups |>
+      dplyr::filter(!is.na(existing_study_id), !is.na(trait_id)) |>
+      dplyr::transmute(
+        study_id = existing_study_id,
+        trait_id = trait_id,
+        trait_name = trait_name
+      ) |>
+      dplyr::distinct()
+    study_trait_map <- dplyr::bind_rows(study_trait_map, existing_trait_map) |>
+      dplyr::distinct(study_id, trait_id, trait_name)
+  }
+
+  assoc_long <- full_associations |>
+    dplyr::inner_join(study_trait_map, by = "study_id") |>
+    dplyr::inner_join(
+      target_snps |> dplyr::select("variant_id", "snp_id"),
+      by = "variant_id"
+    ) |>
+    dplyr::filter(!is.na(beta), !is.na(se), se > 0) |>
     dplyr::group_by(trait_id, trait_name, snp_id) |>
-    dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
+    dplyr::slice_min(p, n = 1, with_ties = FALSE) |>
     dplyr::ungroup() |>
     dplyr::select(trait_id, trait_name, snp_id, beta, se)
 
@@ -653,7 +691,7 @@ extract_ebmf_clusters <- function(flash_fit,
     dplyr::select(trait_id, trait_name) |>
     dplyr::distinct()
 
-  snp_info <- locus_data$target_snps |>
+  snp_info <- target_snps |>
     dplyr::filter(snp_id %in% snp_ids) |>
     dplyr::distinct()
 
@@ -666,11 +704,36 @@ extract_ebmf_clusters <- function(flash_fit,
 }
 
 
+.get_ebmf_target_snps <- function(trait_id, coloc_groups, p_threshold, snp_key) {
+  if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {
+    stop("No coloc_groups data available")
+  }
+  if (!snp_key %in% names(coloc_groups)) {
+    stop("coloc_groups must include column: ", snp_key)
+  }
+
+  target_snps <- coloc_groups |>
+    dplyr::filter(
+      trait_id == trait_id,
+      if (!is.null(p_threshold)) min_p <= p_threshold else TRUE
+    ) |>
+    dplyr::mutate(snp_id = as.character(.data[[snp_key]])) |>
+    dplyr::distinct(coloc_group_id, snp_id, variant_id, display_snp, chr, bp)
+
+  if (nrow(target_snps) == 0) {
+    stop("No target-trait SNPs after filtering")
+  }
+
+  return(target_snps)
+}
+
+
 .build_ebmf_trait_annotations <- function(trait_ids,
                                           coloc_groups,
                                           label_scheme,
                                           pathway_source = NULL,
-                                          pathway_p_value_threshold = 0.05,
+                                          pathway_min_size = 5L,
+                                          pathway_max_size = 200L,
                                           minimum_count_in_network = NULL) {
   trait_meta <- coloc_groups |>
     dplyr::filter(as.character(trait_id) %in% trait_ids) |>
@@ -703,20 +766,43 @@ extract_ebmf_clusters <- function(flash_fit,
   if (length(gene_ids) > 0 &&
       label_scheme %in% c("pathway_gene_tissue", "pathway_gene")) {
     tryCatch({
-      map_result <- build_pathway_feature_map(
+      pathway_enrichment <- pathway_enrichment(
         genes = gene_ids,
         source = pathway_source,
-        p_value_threshold = pathway_p_value_threshold,
+        p_value_threshold = 1,
         minimum_count_in_network = minimum_count_in_network
       )
-      pathway_enrichment <- map_result$pathway_enrichment
-      if (nrow(map_result$feature_map) > 0) {
-        feature_map <- map_result$feature_map |>
-          dplyr::group_by(gene_id) |>
-          dplyr::summarise(
-            feature_name = dplyr::first(feature_name),
-            .groups = "drop"
+
+      if (
+        is.data.frame(pathway_enrichment$results) &&
+          nrow(pathway_enrichment$results) > 0
+      ) {
+        pathway_results <- pathway_enrichment$results |>
+          dplyr::filter(
+            pathway_size >= pathway_min_size,
+            pathway_size <= pathway_max_size
           )
+
+        if (nrow(pathway_results) > 0) {
+          pathway_rows <- lapply(seq_len(nrow(pathway_results)), function(i) {
+            row <- pathway_results[i, , drop = FALSE]
+            overlap_genes <- row$gene_ids[[1]]
+            if (length(overlap_genes) == 0) {
+              return(NULL)
+            }
+            return(data.frame(
+              gene_id = overlap_genes,
+              feature_name = row$description,
+              stringsAsFactors = FALSE
+            ))
+          })
+          feature_map <- dplyr::bind_rows(pathway_rows) |>
+            dplyr::group_by(gene_id) |>
+            dplyr::summarise(
+              feature_name = paste(sort(unique(feature_name)), collapse = "_"),
+              .groups = "drop"
+            )
+        }
       }
     }, error = function(e) {
       warning("Pathway enrichment failed: ", conditionMessage(e), call. = FALSE)
