@@ -7,7 +7,7 @@
 extract_ebmf_clusters(
   flash_fit,
   lfsr_threshold = 0.05,
-  magnitude_threshold = 0.1
+  magnitude_threshold = 0.25
 )
 }
 \arguments{
@@ -17,7 +17,7 @@ extract_ebmf_clusters(
 Defaults to 0.05.}
 
 \item{magnitude_threshold}{Minimum absolute posterior mean factor loading.
-Defaults to 0.10.}
+Defaults to 0.25.}
 }
 \value{
 A list with:

@@ -1,0 +1,230 @@
+---
+title: "Investigation of SNP clustering"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Investigation of SNP clustering}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+## Overview
+
+This note is an **overview** of how we cluster SNPs from GPMap colocalisation and pleiotropy data. The goal is to group variants (and, in collapsable workflows, pathway-level features) that share **concordant**, **discordant**, or **trait-specific** pleiotropy structure — without manually guessing the number of clusters.
+
+The detailed, runnable workflows live in the investigation vignettes linked below. Each vignette implements one slice of the method comparison outlined here.
+
+## Outline
+
+1. [Three core clustering preferences](#three-core-clustering-preferences)
+2. [Statistical methods evaluated](#statistical-methods-evaluated)
+3. [Dimensionality reduction: genes and pathways](#dimensionality-reduction-grouping-genes--pathways)
+4. [Pathway verification](#pathway-verification)
+5. [Workflow diagram](#workflow-diagram)
+6. [Investigation vignettes](#investigation-vignettes)
+
+## Summary so far
+
+| Preference | EBMF | Signed Leiden / Louvain | hclust | Leading eigen |
+|------------|------|-------------------------|--------|---------------|
+| High sparsity | Strong | Moderate (graph sparsification helps) | Weak | Weak |
+| Sign-aware | Yes | Yes | Only with custom metrics | Hacky |
+| Automated *K* | Yes (ELBO) | Yes (modularity) | No | No |
+| Soft clusters | Yes | No | No | No |
+| Results | Improving: drop F1 + stricter membership | Ok: distinct but large clusters | NA | NA |
+
+**Recommended path:** EBMF for discovery and soft program assignment; signed graph clustering (Louvain today, Leiden target) on collapsed feature matrices for hard SNP modules and bivariate concordance / discordance blocks. Use the linked investigation vignettes for reproducible examples on GPMap data.
+
+## Investigation vignettes
+
+| Workflow | Vignette | What it demonstrates |
+|----------|----------|----------------------|
+| EBMF (matrix factorization) | [Investigation of EBMF analysis](investigation-ebmf-analysis.html) | Soft programs via `flashier`; automated *K*; sign-aware sparse priors |
+| Univariate (trait rows) | [Investigation of univariate analysis](investigation-univariate-analysis.html) | Trait-only matrix; signed Louvain — compare with collapsable (BMI, same params) |
+| Univariate (collapsed features) | [Investigation of collapsable univariate analysis](investigation-collapsable-univariate-analysis.html) | Pathway/gene collapse + signed Louvain on `S` (BMI) |
+| Bivariate (trait rows) | [Investigation of bivariate analysis](investigation-bivariate-analysis.html) | Trait-only matrices; Louvain on `S*` blocks — compare with collapsable (BMI + WHR, same params) |
+| Bivariate (collapsed features) | [Investigation of collapsable bivariate analysis](investigation-collapsable-bivariate-analysis.html) | Dense features + signed Louvain on cross-trait profiles (BMI + WHR) |
+| SNP perturbation (external framework) | [Investigation of SNP perturbation clustering](investigation-snp-perturbation-clustering.html) | Separate trait/gene matrices; weighted cosine mix; hierarchical + Leiden |
+
+## Three core clustering preferences
+
+Any method we adopt for SNP (or SNP-block) grouping should satisfy:
+
+1. **Handles high sparsity** — Must natively process large, sparse matrices (e.g. thousands of singleton feature rows) without numerical gridlock or treating structural zeros as low-variance signal.
+
+2. **Signed and sign-driven clustering** — Must preserve the biological meaning of continuous positive/negative values (z-scores / betas) so variants group by **directional alignment** (concordant vs. discordant effects), not magnitude alone.
+
+3. **Automated *K* discovery** — The engine should learn the effective number of clusters or latent factors from the data (ELBO, modularity, or similar), rather than relying on arbitrary manual cuts.
+
+## Statistical methods evaluated
+
+### EBMF (`flashier`) — best fit (current champion)
+
+Native sparsity via empirical Bayes priors; fully sign-aware; automatically chooses *K* through ELBO optimisation; supports **soft clustering** (pleiotropic SNPs can load on multiple programs).
+
+**Tunable parameters**
+
+- **`ebnm_fn`:** Switch from `point_normal` to `point_laplace` for sharper shrinkage and to break up dense macro-clusters.
+- **`var_type`:** Set to `1` with `row.group.assignment` vectors for fast, robust background noise models instead of slow iterative loops.
+- **`greedy_Kmax` and `tol`:** Raise discovery ceilings (e.g. 30–50) so the model searches beyond a global intercept factor.
+- **Input architecture (`Y` and `S`):** Pass separate beta (`Y`) and SE (`S`) matrices for a weighted meta-analytic fit; impute missing cells explicitly (`Y = 0`, `S = 1e6`) to stabilise optimisation.
+
+See [Investigation of EBMF analysis](investigation-ebmf-analysis.html).
+
+### Signed Leiden — excellent graph alternative
+
+Addresses structural flaws of signed Louvain (fewer disconnected or trapped communities). Fully sign-aware. **Hard clustering** only (one SNP, one group).
+
+**Tunable parameters:** `louvain_gamma` (resolution; scales community size) and upstream `similarity_threshold` (drop weak signed edges before building the adjacency matrix).
+
+*Not yet implemented in gpmapr vignettes; listed here as the preferred graph upgrade over Louvain.*
+
+### Signed Louvain — graph method in current vignettes
+
+Fast and sign-aware, but can fragment in high-sparsity regions (local modularity traps). Hard clustering.
+
+**Tunable parameters:** Same as Leiden — `gamma` and `similarity_threshold` in `cluster_snp_profiles()` and `cluster_cross_trait_snps()`.
+
+See [Investigation of collapsable univariate analysis](investigation-collapsable-univariate-analysis.html) and [Investigation of collapsable bivariate analysis](investigation-collapsable-bivariate-analysis.html).
+
+### Hierarchical clustering (`hclust`) — poor fit
+
+Traditional distance-based clustering. Does not handle extreme sparsity cleanly, cannot model overlapping soft clusters, and does not choose *K* automatically (requires arbitrary tree cuts). Standard distance metrics also collapse directional sign unless custom signed similarity matrices are used.
+
+Used in baseline investigation vignettes for comparison and heatmap ordering only.
+
+### Leading eigenvector — poor fit
+
+Top-down spectral bisection; background modularity is structurally dense (*O*(*n*³) scaling). Requires manual handling of signed edges and forces hard clustering.
+
+## Dimensionality reduction: grouping genes and pathways
+
+### The scale trap
+
+Very large "mega-pathways" (>500 genes) dilute signal and dominate factorisation as a global intercept.
+
+### The sweet spot filter
+
+Restrict upstream pathway curation to pathways with roughly **15–200 genes** (investigation vignettes currently use **5–200** via `pathway_min_size` / `pathway_max_size`) to favour local, interpretable molecular circuits.
+
+### Multi-pathway resolution
+
+For genes mapped to several pathways:
+
+- **1–3 pathways:** concatenate labels (`PathwayA/PathwayB`).
+- **>3 pathways:** collapse to a parent term **or** duplicate rows and let EBMF sparse priors select the active pathway.
+
+Collapsable univariate and bivariate vignettes duplicate rows across pathways (mean aggregation per pathway feature) and drop singleton feature rows before clustering.
+
+## Pathway and alternative verification
+
+Investigation vignettes use shared verification helpers:
+
+1. **Baseline** — before clustering, summarise recoverable signal for the trait SNP set.
+2. **Analysis** — run Louvain / Leiden / EBMF as usual.
+3. **Per-group** — for modules / programs with more than 5 SNPs, repeat the check and compare to baseline.
+
+Primary checks when pathway enrichment is empty (common for broad traits like BMI):
+
+- `summarise_baseline_traits()` / `summarise_snp_group_traits()` / `compare_group_traits()`
+- `summarise_baseline_tissues()` / `enrich_snp_group_tissues()`
+
+Pathway checks remain available via `enrich_trait_pathways()`, `enrich_snp_group_pathways()`, and `compare_group_pathways()`.
+
+## Workflow diagram
+
+The flowchart below matches the Mermaid design used in method planning. It is rendered with **DiagrammeR** (`grViz`, Graphviz DOT) so it builds offline inside package vignettes.
+
+```{r workflow-diagram, echo=FALSE, fig.height=14, fig.width=12}
+workflow_dot <- "
+digraph workflow {
+  graph [rankdir=TB bgcolor=transparent fontname=Helvetica nodesep=0.4 ranksep=0.5]
+
+  node [shape=box style=filled fontname=Helvetica fontsize=10 margin=0.15]
+
+  subgraph cluster_prefs {
+    label=\"Our 3 Clustering Preferences\"
+    style=filled color=lightgrey
+    P1 [label=\"1. Handles High Sparsity\" fillcolor=\"#e1f5fe\" color=\"#01579b\"]
+    P2 [label=\"2. Signed & Sign-Driven\" fillcolor=\"#e1f5fe\" color=\"#01579b\"]
+    P3 [label=\"3. Automated K Detection\" fillcolor=\"#e1f5fe\" color=\"#01579b\"]
+  }
+
+  subgraph cluster_prep {
+    label=\"Dimensionality Reduction & Data Prep\"
+    style=filled color=lightgrey
+    D1 [label=\"Raw Studies: Beta & SE\" fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
+    D2 [label=\"Filter Pathway Size\" shape=diamond fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
+    D3 [label=\"15 to 200 Genes\\n(Optimize Resolution)\" fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
+    D4 [label=\">500 Genes\\n(Prune Umbrella Folders)\" fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
+    D5 [label=\"Multi-Pathway Gene?\" shape=diamond fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
+    D6 [label=\"Concatenate Labels\\n(1-3 pathways)\" fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
+    D7 [label=\"Collapse to Parent\\nOR Duplicate Rows\" fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
+    D8 [label=\"Impute Gaps: Y=0, S=1e6\" fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
+    D1 -> D2
+    D2 -> D3 [label=\"15-200\"]
+    D2 -> D4 [label=\">500\"]
+    D3 -> D5
+    D5 -> D6 [label=\"1-3\"]
+    D5 -> D7 [label=\">3\"]
+    D6 -> D8
+    D7 -> D8
+    D4 -> D8
+  }
+
+  M [label=\"Select Statistical Method\" shape=diamond fillcolor=white]
+
+  subgraph cluster_methods {
+    label=\"Method Evaluation\"
+    style=filled color=lightgrey
+    M1 [label=\"EBMF (flashier)\\nMatrix / Soft Clusters\" fillcolor=\"#c8e6c9\" color=\"#2e7d32\" penwidth=2]
+    M2 [label=\"Signed Leiden\\nGraph / Hard Clusters\" fillcolor=\"#fff9c4\" color=\"#fbc02d\"]
+    M3 [label=\"Signed Louvain\\n(local traps)\" fillcolor=\"#efebe9\" color=\"#4e342e\" style=\"filled,dashed\"]
+    M4 [label=\"Leading Eigenvector\\n(dense bottleneck)\" fillcolor=\"#efebe9\" color=\"#4e342e\" style=\"filled,dashed\"]
+  }
+
+  subgraph cluster_tune {
+    label=\"EBMF Optimisation Loops\"
+    style=filled color=lightgrey
+    T1 [label=\"Adjust Parameters\" fillcolor=\"#e8f5e9\" color=\"#2e7d32\"]
+    T2 [label=\"Prior: ebnm_point_laplace\" fillcolor=\"#e8f5e9\" color=\"#2e7d32\"]
+    T3 [label=\"Noise: var_type=1 + Labels\" fillcolor=\"#e8f5e9\" color=\"#2e7d32\"]
+    T4 [label=\"Search: higher greedy_Kmax\" fillcolor=\"#e8f5e9\" color=\"#2e7d32\"]
+    T5 [label=\"Isolate global intercept\" fillcolor=\"#e8f5e9\" color=\"#2e7d32\"]
+    T1 -> T2
+    T1 -> T3
+    T1 -> T4
+    T1 -> T5
+  }
+
+  O [label=\"Output:\\nSparse, Decoupled\\nBiological SNP Clusters\" fillcolor=\"#c8e6c9\" color=\"#2e7d32\" penwidth=2]
+
+  P1 -> D1 [style=invis]
+  D8 -> M
+  M -> M1 [label=\"soft\"]
+  M -> M2 [label=\"hard\"]
+  M -> M3 [style=dashed label=\"legacy\"]
+  M -> M4 [style=dashed label=\"legacy\"]
+  M1 -> T1
+  T2 -> O
+  T3 -> O
+  T4 -> O
+  T5 -> O
+  M2 -> O [style=dashed]
+}
+"
+
+DiagrammeR::grViz(workflow_dot)
+```
+

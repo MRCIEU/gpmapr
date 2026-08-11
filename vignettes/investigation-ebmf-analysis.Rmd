@@ -7,6 +7,7 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
@@ -32,177 +33,280 @@ library(flashier)
 library(ebnm)
 ```
 
-This vignette clusters SNPs using **Empirical Bayes Matrix Factorization (EBMF)** via `flashier`. Rather than computing pairwise SNP similarity and then clustering, EBMF discovers latent "programs" directly from the trait x SNP effect matrix. Each program captures a group of SNPs that share a common pattern of pleiotropic effects, and SNPs can belong to multiple programs (overlapping clusters).
+This vignette clusters SNPs using **Empirical Bayes Matrix Factorization (EBMF)** via `flashier`. Rather than computing pairwise SNP similarity and then clustering, EBMF discovers latent programs from a features x SNP z-score matrix. SNPs can belong to multiple programs.
 
-We use **BMI** (trait id `1992`) as the target trait.
+Pipeline (aligned with the SNP-perturbation investigation):
 
-## Step 1: Construct the trait x SNP matrix (Y)
+1. Build / filter / orient the EBMF matrix (phenotypic traits + Stouffer-collapsed genes)
+2. **Verification (baseline):** top associated traits + tissue composition
+3. Fit an EBNM x `var_type` comparison grid; pick a run by total PVE
+4. **Verification (programs):** top traits and tissue enrichment per program
+5. Pathway enrichment as a secondary check (often empty for BMI)
 
-**Goal:** Build a flat matrix where each **row** is a background trait and each **column** is a target-trait SNP. Cell values are signed GWAS effect sizes (`beta`); matching standard errors are returned in `se_matrix` for use as flashier's `S` argument. No rows are collapsed, pruned, or filtered based on pathway or gene boundaries.
+We use **BMI** (trait id `1992`).
 
-```{r step1-fetch}
+```{r params}
 target_trait_id <- 1992
-
-target_trait <- trait(
-  target_trait_id,
-  include_associations = TRUE
-)
-cg <- target_trait$coloc_groups
+magnitude_threshold <- 0.25
+lfsr_threshold <- 0.05
+min_group_size <- 5
+min_snp_signals <- 5L
+compress_method <- "asinh"
+min_total_pve <- 0.01
+top_n_traits <- 10L
 ```
 
-### Build the matrix
+## Step 1: Construct the features x SNP matrix
 
-`build_ebmf_matrix()` constructs the pleiotropy matrix, removes rows and columns that are entirely missing or zero (required by `flashier`), and builds annotation vectors for rows (traits) and columns (SNPs).
+- **Phenotypic rows:** signed \(z = \beta / \mathrm{SE}\) (best \(p\) per trait-SNP).
+- **Gene rows:** molecular QTLs Stouffer-collapsed to genes, then kept only if seen in
+  at least `min_snp_signals` SNPs (same sparsity rule as phenotypic traits).
+- SNP columns are oriented by \(\mathrm{sign}(z_{\mathrm{target}})\).
+- Soft \(\mathrm{asinh}(z)\) compression limits leverage of extreme / corrupt values
+  without a hard clip (same helper as SNP perturbation clustering).
+- Default flash fits use unit \(S = 1\) with `NA` missingness.
 
-```{r step1-ebmf-matrix, eval = FALSE}
+```{r step1-ebmf-matrix}
+coloc_groups <- trait(target_trait_id, include_associations = TRUE)$coloc_groups
 ebmf_data <- build_ebmf_matrix(
   trait_id = target_trait_id,
-  coloc_groups = cg,
-  snp_key = "variant_id"
+  snp_key = "variant_id",
+  min_snp_signals = min_snp_signals,
+  compress_method = compress_method
 )
 
 Y <- ebmf_data$beta_matrix
 S <- ebmf_data$se_matrix
+trait_matrix <- ebmf_data$verification_trait_matrix
 
-list(
-  target_trait = target_trait$trait$trait_name,
-  n_traits = nrow(Y),
-  n_snps = ncol(Y),
-  fraction_non_na = round(mean(!is.na(Y)), 3)
+knitr::kable(
+  ebmf_data$prep_summary |>
+    dplyr::mutate(fraction_observed = round(fraction_observed, 3)),
+  caption = "EBMF matrix prep summary",
+  align = "r"
 )
 ```
 
-```{r step1-dim}
-dim(Y)
+## Verification 1: baseline traits and tissues
+
+Before clustering, summarise the pooled phenotypic profile (same helpers as the
+perturbation vignette). Pathway enrichment is deferred to a secondary check.
+
+```{r verify1-baseline-traits}
+baseline_traits <- summarise_baseline_traits(
+  trait_matrix = trait_matrix,
+  trait_info = ebmf_data$verification_trait_info,
+  coloc_groups = coloc_groups,
+  exclude_trait_ids = target_trait_id,
+  top_n = top_n_traits,
+  n_categories = 2L
+)
+
+knitr::kable(
+  baseline_traits$traits |>
+    dplyr::mutate(
+      mean_z = round(mean_z, 3),
+      abs_mean_z = round(abs_mean_z, 3)
+    ),
+  caption = "Baseline top associated traits",
+  row.names = FALSE
+)
+
+knitr::kable(
+  baseline_traits$categories |>
+    dplyr::mutate(score = round(score, 2)),
+  caption = "Baseline top trait categories",
+  row.names = FALSE
+)
 ```
 
-Each column of `Y` is one SNP's signed effect profile across the colocalising phenome. `NA` entries indicate no colocalisation signal for that trait at that SNP's locus. `S` holds the corresponding GWAS standard errors.
+```{r verify1-baseline-tissues}
+baseline_tissues <- summarise_baseline_tissues(
+  snp_ids = rownames(trait_matrix),
+  coloc_groups = coloc_groups,
+  snp_key = "variant_id"
+)
 
-## Step 2: Inspect the annotation layer
+knitr::kable(
+  utils::head(baseline_tissues, 15) |>
+    dplyr::mutate(frac_links = round(frac_links, 3)),
+  caption = "Baseline QTL tissue composition (top 15)",
+  row.names = FALSE
+)
+```
 
-**Goal:** Each row and column carries a concatenated metadata string that encodes its biological profile. These annotations are stored alongside the matrix for downstream interpretation.
+## Step 2: Run EBMF comparison grid
 
-### Trait (row) annotations
+Compare EBNM priors and residual variance on the same clipped matrix.
+Defaults: `se_mode = "unit"` with `var_type` in `{NULL, 1}` (no Kronecker).
 
-Row labels depend on `label_scheme` (default: `pathway_gene_tissue`):
-
-- **Trait rows:** `trait_category` only
-- **Molecular QTL rows:** `{PathwayOrGene}_Tissue`, `{PathwayOrGene}`, or `Tissue` depending on scheme
-- **SNP columns:** `ColocGroup{ID}` only
-
-### SNP (column) annotations
-
-Format: `ColocGroup{ID}`.
-
-## Step 3: Run EBMF comparison grid
-
-**Goal:** Compare EBMF configurations by varying label scheme, EBNM prior, and residual variance structure. Each label scheme is built via `build_ebmf_matrix()` inside the comparison.
-
-Grid:
-
-- **Labels:** `pathway_gene_tissue`, `pathway_gene`, `tissue`
-- **EBNM priors:** `point_normal`, `point_laplace`
-- **Variance:** `var_type = 1` (per-row) and `var_type = c(1, 2)` (Kronecker)
-
-```{r step3-comparison}
+```{r step2-comparison}
 ebmf_comparison <- run_ebmf_comparison(
   trait_id = target_trait_id,
-  coloc_groups = cg,
   snp_key = "variant_id",
-  label_schemes = c("pathway_gene_tissue", "pathway_gene", "tissue"),
+  min_snp_signals = min_snp_signals,
+  compress_method = compress_method,
   ebnm_fns = c("point_normal", "point_laplace"),
-  var_types = list(c(1L), c(1L, 2L)),
-  greedy_Kmax = 20L,
+  se_modes = c("unit"),
+  var_types = list(NULL, 1L),
+  greedy_Kmax = 50L,
   backfit = TRUE,
+  lfsr_threshold = lfsr_threshold,
+  magnitude_threshold = magnitude_threshold,
   verbose = 1L
 )
 ```
 
-### Comparison summary
-
-```{r step3-summary}
-ebmf_comparison$summary
+```{r step2-summary}
+ebmf_comparison$summary |>
+  dplyr::mutate(
+    total_pve = round(total_pve, 4),
+    elbo = round(elbo, 1)
+  )
 ```
 
-## Step 4: Explore a specific run
+## Step 3: Explore the selected run
 
-Pick a run for detailed analysis. Below we use the first successful run.
+Only accept runs with `total_pve >= min_total_pve`. Near-null fits are rejected
+rather than ranked by tiny differences like `1e-8` vs `1e-9`.
 
-```{r step4-pick-run}
-successful <- ebmf_comparison$summary |>
-  dplyr::filter(status == "ok")
-run_id <- successful$run_id[1]
+```{r step3-pick-run}
+run_id <- select_ebmf_comparison_run(
+  ebmf_comparison,
+  min_total_pve = min_total_pve
+)
+if (is.null(run_id)) {
+  stop(
+    "No EBMF run reached min_total_pve = ", min_total_pve,
+    ". Inspect the comparison summary before interpreting soft membership."
+  )
+}
 run <- ebmf_comparison$results[[run_id]]
-run_data <- run$ebmf_data
 flash_fit <- run$flash_fit
-ebmf_clusters <- run$ebmf_clusters
-program_drivers <- run$program_drivers
 
 cat("Analysing run:", run_id, "\n")
 list(
   n_factors = flash_fit$n_factors,
   elbo = flash_fit$elbo,
-  pve = round(flash_fit$pve, 4)
+  pve = round(flash_fit$pve, 4),
+  total_pve = round(sum(flash_fit$pve), 4),
+  magnitude_threshold = magnitude_threshold,
+  lfsr_threshold = lfsr_threshold
 )
 ```
 
-### Program membership
+```{r step3-pve}
+knitr::kable(
+  data.frame(
+    program = seq_along(flash_fit$pve),
+    pve = round(flash_fit$pve, 6),
+    stringsAsFactors = FALSE
+  ),
+  caption = "Per-factor PVE (full fit)",
+  align = "rr"
+)
+```
 
-```{r step4-membership}
-program_sizes <- colSums(ebmf_clusters$membership)
+### All programs (strict membership)
+
+```{r step3-membership-all}
+ebmf_clusters_all <- extract_ebmf_clusters(
+  flash_fit,
+  lfsr_threshold = lfsr_threshold,
+  magnitude_threshold = magnitude_threshold
+)
+
+program_sizes_all <- colSums(ebmf_clusters_all$membership)
 data.frame(
-  program = names(program_sizes),
-  n_snps = as.integer(program_sizes),
+  program = names(program_sizes_all),
+  n_snps = as.integer(program_sizes_all),
   pve = round(flash_fit$pve, 4)
 ) |>
   dplyr::arrange(dplyr::desc(n_snps))
 ```
 
-### Cluster summary
+### Drop global-looking factors (PVE-aware)
 
-```{r step4-cluster-table}
-ebmf_clusters$clusters |>
-  dplyr::group_by(program) |>
-  dplyr::summarise(
-    n_snps = dplyr::n(),
-    mean_loading = round(mean(loading), 3),
-    mean_abs_loading = round(mean(abs(loading)), 3),
-    mean_lfsr = round(mean(lfsr), 4),
-    .groups = "drop"
-  )
+Do **not** assume factor 1 is global. Drop factors only when total PVE clears the
+floor and a factor looks global by soft coverage / PVE share.
+
+```{r step3-drop-global}
+drop_kset <- identify_ebmf_global_factors(
+  flash_fit = flash_fit,
+  membership = ebmf_clusters_all$membership,
+  min_total_pve = min_total_pve
+)
+flash_secondary <- remove_ebmf_factors(flash_fit, kset = drop_kset)
+
+ebmf_clusters <- extract_ebmf_clusters(
+  flash_secondary,
+  lfsr_threshold = lfsr_threshold,
+  magnitude_threshold = magnitude_threshold
+)
+program_drivers <- summarise_ebmf_program_drivers(
+  flash_fit = flash_secondary,
+  trait_info = ebmf_data$trait_info
+)
+
+list(
+  dropped_factors = if (length(drop_kset) == 0) {
+    "none"
+  } else {
+    paste(drop_kset, collapse = ", ")
+  },
+  n_factors_full = flash_fit$n_factors,
+  n_factors_kept = flash_secondary$n_factors,
+  pve_kept = round(flash_secondary$pve, 4),
+  n_assigned = ebmf_clusters$n_assigned,
+  n_multi_program = ebmf_clusters$n_multi_program
+)
 ```
 
-### Trait drivers per program
+```{r step3-membership}
+program_sizes <- colSums(ebmf_clusters$membership)
+data.frame(
+  program = names(program_sizes),
+  n_snps = as.integer(program_sizes),
+  pve = round(flash_secondary$pve, 4)
+) |>
+  dplyr::arrange(dplyr::desc(n_snps))
+```
 
-```{r step4-drivers}
+### Feature loadings (L)
+
+```{r step3-drivers}
 if (nrow(program_drivers) > 0) {
   program_drivers |>
     dplyr::group_by(program) |>
     dplyr::slice_head(n = 5) |>
-    dplyr::select(program, trait_name, loading, lfsr) |>
+    dplyr::select(
+      program, feature_type, trait_label, trait_name, loading, lfsr
+    ) |>
     dplyr::mutate(
       loading = round(loading, 3),
       lfsr = round(lfsr, 4)
     )
 } else {
-  cat("No significant trait drivers found.\n")
+  cat("No significant feature drivers found.\n")
 }
 ```
 
 ### SNP factor loading heatmap
 
-```{r step4-heatmap, fig.height = 7, fig.width = 7}
-K <- flash_fit$n_factors
+```{r step3-heatmap, fig.height = 7, fig.width = 7}
+K <- flash_secondary$n_factors
 if (K > 0 && ebmf_clusters$n_assigned > 0) {
-  F_pm <- flash_fit$F_pm
-  assigned_snps <- rownames(ebmf_clusters$membership)[rowSums(ebmf_clusters$membership) > 0]
+  F_pm <- flash_secondary$F_pm
+  assigned_snps <- rownames(ebmf_clusters$membership)[
+    rowSums(ebmf_clusters$membership) > 0
+  ]
   F_assigned <- F_pm[assigned_snps, , drop = FALSE]
   colnames(F_assigned) <- paste0("Program ", seq_len(K))
 
   heatmap(
     F_assigned,
     scale = "none",
-    main = paste("SNP factor loadings -", run_id),
+    main = paste("SNP loadings -", run_id),
     xlab = "Programs",
     ylab = "SNPs",
     cexCol = 0.8
@@ -212,59 +316,207 @@ if (K > 0 && ebmf_clusters$n_assigned > 0) {
 }
 ```
 
-### SNP catalogue by program
+## Verification 2: module-specific traits and tissues
 
-```{r step4-snp-catalogue}
-snp_lookup <- run_data$snp_info |>
-  dplyr::transmute(
-    snp_id = as.character(snp_id),
-    display_snp = display_snp,
-    coloc_group_id = coloc_group_id,
-    chr = chr,
-    bp = bp
-  )
+Ask whether programs recover drivers elevated vs other SNPs (trait/category
+specificity) and tissues enriched vs leave-one-out rest.
 
-coloc_group_genes <- cg |>
-  dplyr::filter(coloc_group_id %in% snp_lookup$coloc_group_id) |>
-  dplyr::filter(!is.na(gene), gene != "") |>
-  dplyr::group_by(coloc_group_id) |>
-  dplyr::summarise(
-    genes = paste(sort(unique(gene)), collapse = ", "),
-    .groups = "drop"
-  )
+```{r verify2-traits}
+group_traits <- summarise_module_specific_traits(
+  trait_matrix = trait_matrix,
+  groups = ebmf_clusters$clusters,
+  trait_info = ebmf_data$verification_trait_info,
+  coloc_groups = coloc_groups,
+  exclude_trait_ids = target_trait_id,
+  min_group_size = min_group_size,
+  top_n = top_n_traits,
+  n_categories = 2L
+)
+trait_comparison <- compare_group_traits(
+  baseline_traits = baseline_traits,
+  group_traits = group_traits,
+  top_n = top_n_traits
+)
 
-program_snp_catalogue <- ebmf_clusters$clusters |>
-  dplyr::left_join(snp_lookup, by = "snp_id") |>
-  dplyr::left_join(coloc_group_genes, by = "coloc_group_id") |>
-  dplyr::mutate(
-    genes = dplyr::if_else(is.na(genes), "None", genes),
-    loading = round(loading, 3),
-    lfsr = round(lfsr, 4)
-  ) |>
-  dplyr::arrange(program, dplyr::desc(abs(loading)))
+knitr::kable(
+  group_traits$summary |>
+    dplyr::mutate(
+      top_specificity = round(top_specificity, 2),
+      top_abs_mean_z = round(top_abs_mean_z, 3)
+    ),
+  caption = paste0(
+    "Module-specific traits/categories per program (> ",
+    min_group_size,
+    " SNPs)"
+  ),
+  na = "",
+  row.names = FALSE
+)
 
-program_snp_catalogue |>
-  dplyr::group_by(program) |>
-  dplyr::summarise(
-    n_snps = dplyr::n(),
-    display_snps = paste(display_snp, collapse = ", "),
-    genes = paste(unique(unlist(strsplit(genes, ", "))), collapse = ", "),
-    .groups = "drop"
-  )
+knitr::kable(
+  trait_comparison$group_overlap,
+  caption = "Per-program overlap with baseline top traits",
+  row.names = FALSE
+)
+
+knitr::kable(
+  trait_comparison$trait_status |>
+    dplyr::filter(status != "baseline_only" | n_groups > 0),
+  caption = "Baseline vs program trait-driver status",
+  na = "",
+  row.names = FALSE
+)
 ```
 
-## Step 5: Save results
+```{r verify2-trait-details, echo=FALSE, results='asis'}
+for (x in group_traits$by_group) {
+  cat("\n\n### Program ", x$group, " traits\n\n", sep = "")
+  cat("SNPs: ", x$n_snps, "\n\n", sep = "")
+  cat("Leading specific categories: ", x$top_categories, "\n\n", sep = "")
+  if (nrow(x$categories) > 0) {
+    print(knitr::kable(
+      x$categories |>
+        dplyr::mutate(
+          score = round(score, 2),
+          mean_specificity = round(mean_specificity, 2)
+        ),
+      caption = "Module-specific trait categories",
+      row.names = FALSE
+    ))
+  }
+  if (nrow(x$traits) > 0) {
+    print(knitr::kable(
+      x$traits |>
+        dplyr::mutate(
+          mean_z = round(mean_z, 3),
+          abs_mean_z = round(abs_mean_z, 3),
+          abs_mean_z_rest = round(abs_mean_z_rest, 3),
+          specificity = round(specificity, 2),
+          abs_mean_z_delta = round(abs_mean_z_delta, 3)
+        ),
+      caption = "Module-specific traits",
+      row.names = FALSE
+    ))
+  }
+}
+```
 
-```{r step5-save}
-results_path <- file.path(pkg_root, "vignettes", "investigation-ebmf-analysis-results.rds")
-saveRDS(ebmf_comparison, results_path)
+```{r verify2-tissues}
+group_tissues <- enrich_snp_group_tissues(
+  groups = ebmf_clusters$clusters,
+  coloc_groups = coloc_groups,
+  snp_key = "variant_id",
+  min_group_size = min_group_size,
+  background = "rest"
+)
+
+knitr::kable(
+  group_tissues$summary,
+  caption = paste0(
+    "Module-specific tissue enrichment (> ",
+    min_group_size,
+    " SNPs; vs rest)"
+  ),
+  na = "",
+  row.names = FALSE
+)
+```
+
+```{r verify2-tissue-details, echo=FALSE, results='asis'}
+for (x in group_tissues$by_group) {
+  cat("\n\n### Program ", x$group, " tissues\n\n", sep = "")
+  cat("SNPs: ", x$n_snps, "\n\n", sep = "")
+  if (nrow(x$enriched) > 0) {
+    print(knitr::kable(
+      x$enriched |>
+        dplyr::mutate(
+          fold_enrichment = round(fold_enrichment, 2),
+          p_value = signif(p_value, 3),
+          fdr = signif(fdr, 3)
+        ),
+      caption = "Enriched tissues vs rest",
+      row.names = FALSE
+    ))
+  } else {
+    cat("No significantly enriched tissues.\n\n")
+  }
+}
+```
+
+## Verification 3 (secondary): pathways per program
+
+```{r verify3-pathways}
+baseline_pathways <- enrich_trait_pathways(
+  trait_id = target_trait_id,
+  coloc_groups = coloc_groups,
+  sources = c("KEGG", "Reactome")
+)
+program_enrichment <- enrich_snp_group_pathways(
+  groups = ebmf_clusters$clusters,
+  coloc_groups = coloc_groups,
+  min_group_size = min_group_size,
+  sources = c("KEGG", "Reactome")
+)
+pathway_comparison <- compare_group_pathways(baseline_pathways, program_enrichment)
+
+knitr::kable(
+  baseline_pathways$summary,
+  caption = "Baseline trait pathway enrichment (KEGG + Reactome)",
+  na = "",
+  align = c("r", "r", "r", "r", "l")
+)
+
+knitr::kable(
+  program_enrichment$summary,
+  caption = paste0(
+    "Pathway enrichment per secondary EBMF program (> ",
+    min_group_size,
+    " SNPs)"
+  ),
+  na = "",
+  align = c("l", "r", "r", "r", "l")
+)
+
+knitr::kable(
+  pathway_comparison$group_overlap,
+  caption = "Per-program overlap with baseline trait pathways",
+  na = "",
+  align = c("l", "r", "r", "r")
+)
+```
+
+## Save results
+
+```{r step4-save}
+results_path <- file.path(
+  pkg_root, "vignettes", "investigation-ebmf-analysis-results.rds"
+)
+saveRDS(
+  list(
+    comparison = ebmf_comparison,
+    run_id = run_id,
+    drop_kset = drop_kset,
+    compress_method = compress_method,
+    min_total_pve = min_total_pve,
+    magnitude_threshold = magnitude_threshold,
+    lfsr_threshold = lfsr_threshold,
+    flash_fit = flash_fit,
+    flash_secondary = flash_secondary,
+    ebmf_clusters_all = ebmf_clusters_all,
+    ebmf_clusters = ebmf_clusters,
+    program_drivers = program_drivers,
+    baseline_traits = baseline_traits,
+    group_traits = group_traits
+  ),
+  results_path
+)
 results_path
 ```
 
 Reload later with:
 
 ```r
-comparison <- readRDS("vignettes/investigation-ebmf-analysis-results.rds")
-comparison$summary
-comparison$results[["labels_pathway_gene__ebnm_point_normal__var_1"]]$ebmf_clusters
+saved <- readRDS("vignettes/investigation-ebmf-analysis-results.rds")
+saved$comparison$summary
+saved$ebmf_clusters
 ```

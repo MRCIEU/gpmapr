@@ -2,31 +2,60 @@
 % Please edit documentation in R/pleiotropy_matrix.R
 \name{cluster_cross_trait_snps}
 \alias{cluster_cross_trait_snps}
-\title{Dual Hierarchical Clustering of Cross-Trait SNP Similarity}
+\title{Cluster Cross-Trait SNPs From a Similarity Matrix}
 \usage{
-cluster_cross_trait_snps(s_matrix, linkage = "average", k1 = NULL, k2 = NULL)
+cluster_cross_trait_snps(
+  s_matrix,
+  method = c("hierarchical", "louvain"),
+  linkage = "average",
+  k1 = NULL,
+  k2 = NULL,
+  similarity_threshold = NULL,
+  gamma = 1
+)
 }
 \arguments{
 \item{s_matrix}{Rectangular cross-trait similarity matrix from
 \code{cross_snp_similarity_matrix()$s_matrix}.}
 
-\item{linkage}{Linkage method passed to \code{stats::hclust()}. Defaults to \code{"average"}.}
+\item{method}{Clustering method: \code{"hierarchical"} or \code{"louvain"}.}
 
-\item{k1}{Optional number of row (Trait-1 SNP) clusters.}
+\item{linkage}{Linkage method passed to \code{stats::hclust()} for hierarchical
+clustering and for dendrogram ordering when \code{method = "louvain"}.
+Defaults to \code{"average"}.}
 
-\item{k2}{Optional number of column (Trait-2 SNP) clusters.}
+\item{k1}{Optional number of row (Trait-1 SNP) clusters when
+\code{method = "hierarchical"}.}
+
+\item{k2}{Optional number of column (Trait-2 SNP) clusters when
+\code{method = "hierarchical"}.}
+
+\item{similarity_threshold}{Minimum absolute profile similarity for off-diagonal
+SNP pairs when \code{method = "louvain"}. Weaker edges are zeroed before signed
+Louvain. Set to \code{NULL} or \code{0} to use the full matrix. Defaults to \code{NULL}.}
+
+\item{gamma}{Resolution parameter for signed Louvain when \code{method = "louvain"}.
+Values greater than 1 tend to yield more, smaller modules. Defaults to \code{1}.}
 }
 \value{
 A list with:
 \itemize{
-\item hclust_rows: hierarchical clustering of Trait-1 SNPs
-\item hclust_cols: hierarchical clustering of Trait-2 SNPs
-\item clusters_rows: row cluster assignments if \code{k1} is set
-\item clusters_cols: column cluster assignments if \code{k2} is set
+\item method: clustering method used
+\item hclust_rows: hierarchical clustering of Trait-1 SNPs (ordering)
+\item hclust_cols: hierarchical clustering of Trait-2 SNPs (ordering)
+\item clusters_rows: row cluster assignments (\code{k1} for hierarchical;
+always returned for Louvain)
+\item clusters_cols: column cluster assignments (\code{k2} for hierarchical;
+always returned for Louvain)
+\item profile_similarity_rows, profile_similarity_cols: square profile
+similarity matrices when \code{method = "louvain"}
+\item louvain_rows, louvain_cols: full output from \code{cluster_snp_profiles()}
+when \code{method = "louvain"}
 }
 }
 \description{
 Cluster Trait-1 and Trait-2 SNPs independently from a rectangular
-cross-similarity matrix. Row SNPs are clustered on Euclidean distance across
-similarity profiles; column SNPs are clustered on the transposed matrix.
+cross-similarity matrix (\verb{S^*}). Hierarchical clustering uses Euclidean distance
+across cross-trait similarity profiles. Signed Louvain clusters cosine similarity
+between those profiles (rows of \verb{S^*} for Trait-1 SNPs; columns for Trait-2 SNPs).
 }

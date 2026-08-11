@@ -11,6 +11,8 @@ cluster_snp_profiles(
   x_matrix = NULL,
   linkage = "average",
   community_algorithm = c("leading_eigen", "louvain"),
+  similarity_threshold = NULL,
+  gamma = 1,
   na_as_zero = TRUE,
   n_latent = NULL
 )
@@ -37,6 +39,14 @@ on the positive similarity subgraph; requires \strong{igraph}) or \code{"louvain
 (signed Louvain maximising Gomez signed modularity on the full cosine
 similarity matrix, including negative anti-parallel edges).}
 
+\item{similarity_threshold}{Minimum absolute similarity for off-diagonal SNP pairs.
+Weaker edges are zeroed before clustering to reduce background connectivity.
+Set to \code{NULL} or \code{0} to use the full matrix. Defaults to \code{NULL}.}
+
+\item{gamma}{Resolution parameter for signed Louvain (\code{method = "community"},
+\code{community_algorithm = "louvain"}). Values greater than 1 tend to yield more,
+smaller modules. Defaults to \code{1}.}
+
 \item{na_as_zero}{Treat \code{NA} entries as zero when building latent coordinates
 for GMM clustering.}
 
@@ -50,6 +60,8 @@ A list with:
 \item method: clustering method used
 \item k: requested number of clusters (\code{NA} for Louvain)
 \item n_clusters: number of clusters returned
+\item similarity_threshold: edge threshold applied before clustering
+\item gamma: Louvain resolution used (NA for other methods)
 \item details: method-specific objects (e.g. \code{hclust}, \code{kmeans}, \code{mclust})
 }
 }

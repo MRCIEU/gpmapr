@@ -6,51 +6,48 @@
 \usage{
 run_ebmf_comparison(
   trait_id,
-  coloc_groups = NULL,
   p_threshold = NULL,
   snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-  label_schemes = c("pathway_gene_tissue", "pathway_gene", "tissue"),
-  pathway_source = NULL,
-  pathway_min_size = 5L,
-  pathway_max_size = 200L,
-  minimum_count_in_network = NULL,
+  min_snp_signals = 5L,
+  compress_method = c("asinh", "none"),
   ebnm_fns = c("point_normal", "point_laplace"),
-  var_types = list(c(1L), c(1L, 2L)),
+  se_modes = c("unit"),
+  var_types = list(NULL, 1L),
   greedy_Kmax = 20L,
   backfit = TRUE,
   lfsr_threshold = 0.05,
-  magnitude_threshold = 0.1,
+  magnitude_threshold = 0.25,
   save_path = NULL,
   verbose = 0L
 )
 }
 \arguments{
-\item{trait_id}{Numeric ID of the target trait whose associated SNPs define the columns.}
+\item{trait_id}{Numeric ID of the target trait whose associated SNPs define
+the columns.}
 
-\item{coloc_groups}{A dataframe of coloc_groups with \code{beta} and \code{se} columns
-(from \code{trait(..., include_associations = TRUE)} or \code{traits(...)}). If NULL,
-will fetch via \code{trait(trait_id, include_associations = TRUE)}.}
+\item{p_threshold}{P-value threshold for including a target-trait SNP.
+Defaults to 5e-8.}
 
-\item{p_threshold}{P-value threshold for including a target-trait SNP. Defaults to 5e-8.}
+\item{snp_key}{Column used to name SNP columns: \code{"variant_id"},
+\code{"display_snp"}, or \code{"coloc_group_id"}. Defaults to
+\code{"variant_id"}.}
 
-\item{snp_key}{Column used to name SNP columns: \code{"variant_id"}, \code{"display_snp"}, or
-\code{"coloc_group_id"}. Defaults to \code{"variant_id"}.}
+\item{min_snp_signals}{Minimum non-missing SNP count required to keep a
+phenotypic trait or gene row. Defaults to 5.}
 
-\item{label_schemes}{Character vector of row-labelling schemes to compare.}
-
-\item{pathway_source}{Optional pathway source for enrichment annotation.}
-
-\item{pathway_min_size}{Minimum pathway size for annotation labelling. Defaults to 5.}
-
-\item{pathway_max_size}{Maximum pathway size for annotation labelling. Defaults to 200.}
-
-\item{minimum_count_in_network}{Minimum gene overlap per pathway term.}
+\item{compress_method}{Soft compression applied after orientation via
+\code{compress_effect_matrix()}. Defaults to \code{"asinh"} so extreme /
+corrupt z-scores do not dominate flashier sum-of-squares without hard
+clipping. Use \code{"none"} to disable.}
 
 \item{ebnm_fns}{Character vector of EBNM priors: \code{"point_normal"} and/or
-\code{"point_laplace"}.}
+\code{"point_laplace"}. Defaults to both.}
+
+\item{se_modes}{Character vector of \code{se_mode} values. Defaults to
+\code{"unit"}.}
 
 \item{var_types}{List of \code{var_type} values passed to \code{run_ebmf()}.
-Defaults to per-row (\code{1L}) and Kronecker (\code{c(1L, 2L)}).}
+Defaults to \code{list(NULL, 1L)}.}
 
 \item{greedy_Kmax}{Maximum number of factors to add greedily. Factors are
 only added while they improve the variational lower bound. Defaults to 50.}
@@ -60,7 +57,8 @@ updated after the greedy phase until convergence.}
 
 \item{lfsr_threshold}{Passed to \code{extract_ebmf_clusters()}.}
 
-\item{magnitude_threshold}{Passed to \code{extract_ebmf_clusters()}.}
+\item{magnitude_threshold}{Passed to \code{extract_ebmf_clusters()}.
+Defaults to \code{0.25}.}
 
 \item{save_path}{Optional path to save results as \code{.rds}.}
 
@@ -72,7 +70,10 @@ A list with \code{summary} (one-row-per-run dataframe) and
 \code{results} (named list of per-run outputs).
 }
 \description{
-Fit a grid of EBMF models varying label scheme, EBNM prior, and
-residual variance structure. Each label scheme is built via
-\code{build_ebmf_matrix()} once and reused across matching runs.
+Fit a grid of EBMF models varying EBNM prior and residual
+variance structure. The feature matrix is built once via
+\code{build_ebmf_matrix()} and reused across runs. Defaults favour
+\code{se_mode = "unit"} with \code{var_type} in \code{NULL} / \code{1L}
+rather than Kronecker variance, which previously produced soft mega-clusters
+on near-null fits.
 }

@@ -6,21 +6,17 @@
 \usage{
 build_feature_pleiotropy_matrix(
   trait_id,
-  coloc_groups = NULL,
   p_threshold = NULL,
   snp_key = c("variant_id", "display_snp", "coloc_group_id"),
   feature_map = NULL,
   pathway_source = NULL,
-  pathway_p_value_threshold = 0.05,
+  pathway_min_size = 5L,
+  pathway_max_size = 200L,
   minimum_count_in_network = NULL
 )
 }
 \arguments{
 \item{trait_id}{Numeric ID of the target trait whose associated SNPs define the columns.}
-
-\item{coloc_groups}{A dataframe of coloc_groups with \code{beta} and \code{se} columns
-(from \code{trait(..., include_associations = TRUE)} or \code{traits(...)}). If NULL,
-will fetch via \code{trait(trait_id, include_associations = TRUE)}.}
 
 \item{p_threshold}{P-value threshold for including a target-trait SNP. Defaults to 5e-8.}
 
@@ -32,7 +28,9 @@ If NULL, built from genes at the target SNP loci.}
 
 \item{pathway_source}{Optional pathway source passed to \code{pathway_enrichment()}.}
 
-\item{pathway_p_value_threshold}{FDR threshold for pathway enrichment.}
+\item{pathway_min_size}{Minimum pathway size for collapse. Defaults to 5.}
+
+\item{pathway_max_size}{Maximum pathway size for collapse. Defaults to 200.}
 
 \item{minimum_count_in_network}{Minimum gene overlap per pathway term.}
 }
@@ -53,4 +51,9 @@ gene-level features. Non-molecular background traits are retained unchanged.
 Matrix values use gene contributions \eqn{z_{gj} \cdot P_{gt}} aggregated by
 mean within each pathway feature; orientation applies \eqn{\mathrm{sign}(z_j)}
 in \code{orient_pleiotropy_matrix()}.
+
+Cell values are populated from the dense association graph returned by
+\code{trait(..., include_full_associations = TRUE)$full_associations}
+(z = beta / se), joined to background traits and molecular QTL studies via
+\code{study_id} and restricted to target-trait SNPs from \code{coloc_groups}.
 }

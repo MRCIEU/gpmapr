@@ -10,10 +10,7 @@ summarise_ebmf_comparison(comparison)
 \item{comparison}{Output list from \code{run_ebmf_comparison()}.}
 }
 \value{
-A dataframe with one row per run: \code{run_id}, \code{label_scheme},
-\code{ebnm_fn}, \code{var_type}, \code{n_factors}, \code{n_programs_with_snps},
-\code{n_assigned}, \code{n_multi_program}, \code{program_sizes},
-\code{status}, and \code{error}.
+A dataframe with one row per run.
 }
 \description{
 Rebuild or return the summary table from a comparison result.

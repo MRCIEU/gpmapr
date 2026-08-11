@@ -2,72 +2,57 @@
 % Please edit documentation in R/ebmf_clustering.R
 \name{build_ebmf_matrix}
 \alias{build_ebmf_matrix}
-\title{Build EBMF Matrix with Annotations}
+\title{Build EBMF Feature Matrix}
 \usage{
 build_ebmf_matrix(
   trait_id,
-  coloc_groups = NULL,
   p_threshold = NULL,
   snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-  label_scheme = c("pathway_gene_tissue", "pathway_gene", "tissue"),
-  pathway_source = NULL,
-  pathway_min_size = 5L,
-  pathway_max_size = 200L,
-  minimum_count_in_network = NULL
+  min_snp_signals = 5L,
+  compress_method = c("asinh", "none")
 )
 }
 \arguments{
-\item{trait_id}{Numeric ID of the target trait whose associated SNPs define the columns.}
+\item{trait_id}{Numeric ID of the target trait whose associated SNPs define
+the columns.}
 
-\item{coloc_groups}{A dataframe of coloc_groups with \code{beta} and \code{se} columns
-(from \code{trait(..., include_associations = TRUE)} or \code{traits(...)}). If NULL,
-will fetch via \code{trait(trait_id, include_associations = TRUE)}.}
+\item{p_threshold}{P-value threshold for including a target-trait SNP.
+Defaults to 5e-8.}
 
-\item{p_threshold}{P-value threshold for including a target-trait SNP. Defaults to 5e-8.}
+\item{snp_key}{Column used to name SNP columns: \code{"variant_id"},
+\code{"display_snp"}, or \code{"coloc_group_id"}. Defaults to
+\code{"variant_id"}.}
 
-\item{snp_key}{Column used to name SNP columns: \code{"variant_id"}, \code{"display_snp"}, or
-\code{"coloc_group_id"}. Defaults to \code{"variant_id"}.}
+\item{min_snp_signals}{Minimum non-missing SNP count required to keep a
+phenotypic trait or gene row. Defaults to 5.}
 
-\item{label_scheme}{Row and SNP annotation scheme: \code{"pathway_gene_tissue"},
-\code{"pathway_gene"}, or \code{"tissue"}. Defaults to \code{"pathway_gene_tissue"}.}
-
-\item{pathway_source}{Optional pathway source for enrichment annotation.}
-
-\item{pathway_min_size}{Minimum pathway size for annotation labelling. Defaults to 5.}
-
-\item{pathway_max_size}{Maximum pathway size for annotation labelling. Defaults to 200.}
-
-\item{minimum_count_in_network}{Minimum gene overlap per pathway term.}
+\item{compress_method}{Soft compression applied after orientation via
+\code{compress_effect_matrix()}. Defaults to \code{"asinh"} so extreme /
+corrupt z-scores do not dominate flashier sum-of-squares without hard
+clipping. Use \code{"none"} to disable.}
 }
 \value{
 A list with:
 \itemize{
-\item beta_matrix: traits x SNPs matrix of signed effect sizes
-\item se_matrix: traits x SNPs matrix of standard errors (for \code{S})
-\item trait_annotations: named character vector of row annotations
-\item snp_annotations: named character vector of column annotations
-\item trait_info: dataframe of trait metadata
-\item snp_info: dataframe of SNP metadata
-\item target_trait_id: target trait ID
-\item pathway_enrichment: pathway enrichment results (if computed)
+\item beta_matrix: features x SNPs matrix of (optionally compressed)
+signed z-scores
+\item se_matrix: features x SNPs matrix of SEs for flashier (\code{S})
+\item trait_info: feature metadata (\code{trait_id}, \code{trait_name},
+\code{feature_type}, \code{trait_category}, \code{trait_label})
+\item verification_trait_matrix: SNPs x phenotypic traits (oriented,
+compressed), for post-clustering trait verification helpers
+\item verification_trait_info: metadata for verification matrix columns
+\item snp_info, z_target, coloc_groups, target_trait_id, prep_summary
 }
 }
 \description{
-Construct a flat traits x SNPs matrix and annotation vectors
-for Empirical Bayes Matrix Factorization (EBMF). Rows represent traits (uncollapsed),
-columns represent variants. Cell values are signed GWAS effect sizes (\code{beta});
-matching standard errors are returned in \code{se_matrix} for use as the
-\code{S} argument in \code{run_ebmf()}.
-Rows and columns that are entirely missing or zero are removed before the
-matrix is returned.
-
-Annotations encode biological metadata for each row and column. Row labels
-depend on \code{label_scheme}; SNP columns are labelled by coloc group only.
-\itemize{
-\item Trait row: \code{trait_category}
-\item Molecular QTL row (\code{pathway_gene_tissue}): \code{PathwayOrGene_Tissue}
-\item Molecular QTL row (\code{pathway_gene}): \code{PathwayOrGene}
-\item Molecular QTL row (\code{tissue}): \code{Tissue}
-\item SNP column: \code{ColocGroup\{ID\}}
-}
+Construct a features x SNPs matrix for Empirical Bayes Matrix
+Factorization. Cell values are signed z-scores (\eqn{\beta / \mathrm{SE}}).
+Phenotypic traits are retained as individual rows. Molecular QTL studies are
+Stouffer-collapsed to gene rows (same weighting as
+\code{build_perturbation_matrices()}), then sparse features observed in fewer
+than \code{min_snp_signals} SNPs are dropped. SNP columns are oriented by
+\eqn{\mathrm{sign}(z_{\mathrm{target}})}. Matching standard errors for
+flashier are 1 for observed cells and missing for unobserved cells (filled
+with a large value inside \code{run_ebmf()}).
 }

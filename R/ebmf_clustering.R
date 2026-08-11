@@ -1,145 +1,199 @@
-#' @title Build EBMF Matrix with Annotations
-#' @description Construct a flat traits x SNPs matrix and annotation vectors
-#' for Empirical Bayes Matrix Factorization (EBMF). Rows represent traits (uncollapsed),
-#' columns represent variants. Cell values are signed GWAS effect sizes (\code{beta});
-#' matching standard errors are returned in \code{se_matrix} for use as the
-#' \code{S} argument in \code{run_ebmf()}.
-#' Rows and columns that are entirely missing or zero are removed before the
-#' matrix is returned.
-#'
-#' Annotations encode biological metadata for each row and column. Row labels
-#' depend on \code{label_scheme}; SNP columns are labelled by coloc group only.
-#' \itemize{
-#'   \item Trait row: \code{trait_category}
-#'   \item Molecular QTL row (\code{pathway_gene_tissue}): \code{PathwayOrGene_Tissue}
-#'   \item Molecular QTL row (\code{pathway_gene}): \code{PathwayOrGene}
-#'   \item Molecular QTL row (\code{tissue}): \code{Tissue}
-#'   \item SNP column: \code{ColocGroup\{ID\}}
-#' }
-#' @param label_scheme Row and SNP annotation scheme: \code{"pathway_gene_tissue"},
-#'   \code{"pathway_gene"}, or \code{"tissue"}. Defaults to \code{"pathway_gene_tissue"}.
-#' @inheritParams build_pleiotropy_matrix
-#' @param pathway_source Optional pathway source for enrichment annotation.
-#' @param pathway_min_size Minimum pathway size for annotation labelling. Defaults to 5.
-#' @param pathway_max_size Maximum pathway size for annotation labelling. Defaults to 200.
-#' @param minimum_count_in_network Minimum gene overlap per pathway term.
+#' @title Build EBMF Feature Matrix
+#' @description Construct a features x SNPs matrix for Empirical Bayes Matrix
+#' Factorization. Cell values are signed z-scores (\eqn{\beta / \mathrm{SE}}).
+#' Phenotypic traits are retained as individual rows. Molecular QTL studies are
+#' Stouffer-collapsed to gene rows (same weighting as
+#' \code{build_perturbation_matrices()}), then sparse features observed in fewer
+#' than \code{min_snp_signals} SNPs are dropped. SNP columns are oriented by
+#' \eqn{\mathrm{sign}(z_{\mathrm{target}})}. Matching standard errors for
+#' flashier are 1 for observed cells and missing for unobserved cells (filled
+#' with a large value inside \code{run_ebmf()}).
+#' @param trait_id Numeric ID of the target trait whose associated SNPs define
+#'   the columns.
+#' @param p_threshold P-value threshold for including a target-trait SNP.
+#'   Defaults to 5e-8.
+#' @param snp_key Column used to name SNP columns: \code{"variant_id"},
+#'   \code{"display_snp"}, or \code{"coloc_group_id"}. Defaults to
+#'   \code{"variant_id"}.
+#' @param min_snp_signals Minimum non-missing SNP count required to keep a
+#'   phenotypic trait or gene row. Defaults to 5.
+#' @param compress_method Soft compression applied after orientation via
+#'   \code{compress_effect_matrix()}. Defaults to \code{"asinh"} so extreme /
+#'   corrupt z-scores do not dominate flashier sum-of-squares without hard
+#'   clipping. Use \code{"none"} to disable.
 #' @return A list with:
 #'   \itemize{
-#'     \item beta_matrix: traits x SNPs matrix of signed effect sizes
-#'     \item se_matrix: traits x SNPs matrix of standard errors (for \code{S})
-#'     \item trait_annotations: named character vector of row annotations
-#'     \item snp_annotations: named character vector of column annotations
-#'     \item trait_info: dataframe of trait metadata
-#'     \item snp_info: dataframe of SNP metadata
-#'     \item target_trait_id: target trait ID
-#'     \item pathway_enrichment: pathway enrichment results (if computed)
+#'     \item beta_matrix: features x SNPs matrix of (optionally compressed)
+#'       signed z-scores
+#'     \item se_matrix: features x SNPs matrix of SEs for flashier (\code{S})
+#'     \item trait_info: feature metadata (\code{trait_id}, \code{trait_name},
+#'       \code{feature_type}, \code{trait_category}, \code{trait_label})
+#'     \item verification_trait_matrix: SNPs x phenotypic traits (oriented,
+#'       compressed), for post-clustering trait verification helpers
+#'     \item verification_trait_info: metadata for verification matrix columns
+#'     \item snp_info, z_target, coloc_groups, target_trait_id, prep_summary
 #'   }
 #' @export
 build_ebmf_matrix <- function(trait_id,
-                              coloc_groups = NULL,
                               p_threshold = NULL,
                               snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-                              label_scheme = c(
-                                "pathway_gene_tissue", "pathway_gene", "tissue"
-                              ),
-                              pathway_source = NULL,
-                              pathway_min_size = 5L,
-                              pathway_max_size = 200L,
-                              minimum_count_in_network = NULL) {
+                              min_snp_signals = 5L,
+                              compress_method = c("asinh", "none")) {
   if (missing(trait_id) || is.null(trait_id)) {
     stop("trait_id is required")
   }
-
   snp_key <- match.arg(snp_key)
-  label_scheme <- match.arg(label_scheme)
-
-  trait_data <- trait(trait_id, include_full_associations = TRUE)
-  if (is.null(coloc_groups)) {
-    coloc_groups <- trait_data$coloc_groups
+  compress_method <- match.arg(compress_method)
+  if (!is.numeric(min_snp_signals) || min_snp_signals < 1) {
+    stop("min_snp_signals must be a positive number")
   }
-  full_associations <- trait_data$full_associations
 
-  assoc <- .build_ebmf_association_matrices(
+  pert <- build_perturbation_matrices(
     trait_id = trait_id,
-    coloc_groups = coloc_groups,
-    full_associations = full_associations,
     p_threshold = p_threshold,
     snp_key = snp_key
   )
-
-  filtered <- .filter_ebmf_matrices(
-    beta_matrix = assoc$beta_matrix,
-    se_matrix = assoc$se_matrix
+  filtered <- filter_perturbation_features(
+    trait_matrix = pert$trait_matrix,
+    gene_matrix = pert$gene_matrix,
+    min_snps = min_snp_signals
+  )
+  oriented <- orient_perturbation_matrices(
+    trait_matrix = filtered$trait_matrix,
+    gene_matrix = filtered$gene_matrix,
+    z_target = pert$z_target
   )
 
-  trait_annot <- .build_ebmf_trait_annotations(
-    trait_ids = rownames(filtered$beta_matrix),
-    coloc_groups = coloc_groups,
-    label_scheme = label_scheme,
-    pathway_source = pathway_source,
-    pathway_min_size = pathway_min_size,
-    pathway_max_size = pathway_max_size,
-    minimum_count_in_network = minimum_count_in_network
+  compressed <- compress_perturbation_matrices(
+    trait_matrix = oriented$trait_matrix,
+    gene_matrix = oriented$gene_matrix,
+    method = compress_method
+  )
+  trait_mat <- compressed$trait_matrix
+  gene_mat <- compressed$gene_matrix
+  snp_ids <- rownames(trait_mat)
+
+  trait_info <- .ebmf_feature_info_from_perturbation(
+    feature_info = pert$trait_info,
+    kept_ids = colnames(trait_mat),
+    feature_type = "trait",
+    coloc_groups = pert$coloc_groups
+  )
+  gene_info <- .ebmf_feature_info_from_perturbation(
+    feature_info = pert$gene_info,
+    kept_ids = colnames(gene_mat),
+    feature_type = "gene",
+    coloc_groups = pert$coloc_groups
   )
 
-  snp_annot <- .build_ebmf_snp_annotations(
-    snp_ids = colnames(filtered$beta_matrix),
-    snp_info = assoc$snp_info
+  y_traits <- t(trait_mat)
+  y_genes <- t(gene_mat)
+  if (nrow(y_genes) > 0) {
+    rownames(y_genes) <- paste0("gene:", rownames(y_genes))
+  }
+  if (nrow(gene_info) > 0) {
+    gene_info$trait_id <- paste0("gene:", gene_info$trait_id)
+  }
+
+  beta_matrix <- rbind(y_traits, y_genes)
+  se_matrix <- matrix(
+    1,
+    nrow = nrow(beta_matrix),
+    ncol = ncol(beta_matrix),
+    dimnames = dimnames(beta_matrix)
+  )
+  se_matrix[is.na(beta_matrix)] <- NA_real_
+
+  cleaned <- .filter_ebmf_matrices(
+    beta_matrix = beta_matrix,
+    se_matrix = se_matrix
   )
 
-  trait_info <- assoc$trait_info |>
-    dplyr::filter(as.character(trait_id) %in% rownames(filtered$beta_matrix))
+  trait_info <- dplyr::bind_rows(trait_info, gene_info) |>
+    dplyr::filter(trait_id %in% rownames(cleaned$beta_matrix))
 
-  snp_info <- assoc$snp_info |>
-    dplyr::filter(as.character(snp_id) %in% colnames(filtered$beta_matrix))
+  snp_info <- pert$snp_info |>
+    dplyr::filter(as.character(snp_id) %in% colnames(cleaned$beta_matrix))
+
+  z_target <- pert$z_target[colnames(cleaned$beta_matrix)]
+
+  prep_summary <- data.frame(
+    n_features = nrow(cleaned$beta_matrix),
+    n_traits = sum(trait_info$feature_type == "trait"),
+    n_genes = sum(trait_info$feature_type == "gene"),
+    n_snps = ncol(cleaned$beta_matrix),
+    n_traits_dropped = filtered$n_traits_dropped,
+    n_genes_dropped = filtered$n_genes_dropped,
+    min_snp_signals = as.integer(min_snp_signals),
+    compress_method = compress_method,
+    max_abs_raw = max(
+      c(abs(oriented$trait_matrix), abs(oriented$gene_matrix)),
+      na.rm = TRUE
+    ),
+    max_abs_used = max(c(abs(trait_mat), abs(gene_mat)), na.rm = TRUE),
+    fraction_observed = mean(!is.na(beta_matrix)),
+    stringsAsFactors = FALSE
+  )
 
   return(list(
-    beta_matrix = filtered$beta_matrix,
-    se_matrix = filtered$se_matrix,
-    trait_annotations = trait_annot$annotations,
-    snp_annotations = snp_annot,
+    beta_matrix = cleaned$beta_matrix,
+    se_matrix = cleaned$se_matrix,
     trait_info = trait_info,
+    verification_trait_matrix = trait_mat[
+      colnames(cleaned$beta_matrix),
+      ,
+      drop = FALSE
+    ],
+    verification_trait_info = trait_info |>
+      dplyr::filter(feature_type == "trait"),
     snp_info = snp_info,
+    z_target = z_target,
+    coloc_groups = pert$coloc_groups,
     target_trait_id = trait_id,
-    label_scheme = label_scheme,
-    pathway_enrichment = trait_annot$pathway_enrichment
+    prep_summary = prep_summary
   ))
 }
 
 
 #' @title Run EBMF Factorization
 #' @description Fit an Empirical Bayes Matrix Factorization model using
-#' \pkg{flashier}. The model decomposes the traits x SNPs effect matrix
+#' \pkg{flashier}. The model decomposes the features x SNPs z-score matrix
 #' \eqn{Y = LF' + E} into latent factors (\eqn{F}, SNP programs) and
-#' loadings (\eqn{L}, trait contributions), with sparse priors estimated
+#' loadings (\eqn{L}, feature contributions), with sparse priors estimated
 #' from the data.
 #'
-#' Known per-observation standard errors are passed to flashier via \code{S}
-#' (typically \code{build_ebmf_matrix()$se_matrix}). Residual variance structure
-#' is controlled by \code{var_type}.
+#' Known per-observation standard errors are passed to flashier via \code{S}.
+#' For z-score matrices, \code{se_mode = "unit"} (default) is recommended:
+#' missing cells stay \code{NA} and flashier uses \code{S = 1}. The legacy
+#' \code{se_mode = "matrix"} path fills missing values with 0 and large SEs.
 #'
-#' @param beta_matrix Traits x SNPs matrix of signed effect sizes, typically
+#' @param beta_matrix Features x SNPs matrix of signed z-scores, typically
 #'   \code{build_ebmf_matrix()$beta_matrix}. Rows and columns that are entirely
-#'   missing or zero are removed before fitting. \code{NA} entries are treated
-#'   as missing data.
-#' @param se_matrix Traits x SNPs matrix of standard errors aligned with
-#'   \code{beta_matrix}. Passed to flashier as \code{S}.
+#'   missing or zero are removed before fitting.
+#' @param se_matrix Features x SNPs matrix of standard errors aligned with
+#'   \code{beta_matrix}. Used to mark missing cells when \code{se_mode = "unit"}
+#'   and passed as flashier \code{S} when \code{se_mode = "matrix"}.
+#' @param se_mode \code{"unit"} (default): data keeps \code{NA} missingness and
+#'   flashier uses \code{S = 1}. \code{"matrix"}: pass \code{se_matrix} with
+#'   missing cells as \code{Y = 0}, \code{S = 1e6}.
 #' @param greedy_Kmax Maximum number of factors to add greedily. Factors are
 #'   only added while they improve the variational lower bound. Defaults to 50.
 #' @param backfit Logical; if \code{TRUE} (default), all factors are cyclically
 #'   updated after the greedy phase until convergence.
 #' @param ebnm_fn EBNM function for priors on loadings and factors. Defaults to
 #'   \code{ebnm::ebnm_point_normal} (point-normal prior). Pass a list of two
-#'   functions to use different priors for loadings (traits) and factors (SNPs).
-#' @param var_type Residual variance structure. Defaults to \code{c(1, 2)} for
-#'   Kronecker (two-way) estimation. Use \code{0} for constant variance,
-#'   \code{1} for per-row, or \code{2} for per-column.
+#'   functions to use different priors for loadings (features) and factors (SNPs).
+#' @param var_type Residual variance structure. Defaults to \code{NULL} when
+#'   \code{se_mode = "unit"} (S accounts for residual variance) and \code{1L}
+#'   (per-row) when \code{se_mode = "matrix"}. Use \code{0} for constant,
+#'   \code{1} for per-row, \code{2} for per-column, or \code{c(1, 2)} for
+#'   Kronecker.
 #' @param verbose Verbosity: 0 = silent, 1 = summary, 2 = ELBO updates,
 #'   3 = per-iteration.
 #' @return A \code{flash} object from \pkg{flashier}. Key elements:
 #'   \itemize{
 #'     \item n_factors: number of discovered factors (programs)
-#'     \item L_pm, L_lfsr: posterior means and lFSR for trait loadings (n x K)
+#'     \item L_pm, L_lfsr: posterior means and lFSR for feature loadings (n x K)
 #'     \item F_pm, F_lfsr: posterior means and lFSR for SNP factors (p x K)
 #'     \item pve: proportion of variance explained per factor
 #'     \item elbo: variational lower bound
@@ -147,10 +201,11 @@ build_ebmf_matrix <- function(trait_id,
 #' @export
 run_ebmf <- function(beta_matrix,
                      se_matrix,
+                     se_mode = c("unit", "matrix"),
                      greedy_Kmax = 50L,
                      backfit = TRUE,
                      ebnm_fn = NULL,
-                     var_type = c(1L, 2L),
+                     var_type = NULL,
                      verbose = 1L) {
   if (!requireNamespace("flashier", quietly = TRUE)) {
     stop("Package 'flashier' is required for EBMF clustering", call. = FALSE)
@@ -159,6 +214,7 @@ run_ebmf <- function(beta_matrix,
     stop("Package 'ebnm' is required for EBMF clustering", call. = FALSE)
   }
 
+  se_mode <- match.arg(se_mode)
   if (!is.matrix(beta_matrix)) {
     stop("beta_matrix must be a matrix")
   }
@@ -172,15 +228,19 @@ run_ebmf <- function(beta_matrix,
   if (is.null(ebnm_fn)) {
     ebnm_fn <- ebnm::ebnm_point_normal
   }
+  if (missing(var_type)) {
+    var_type <- if (se_mode == "unit") NULL else 1L
+  }
 
-  filtered <- .filter_ebmf_matrices(
+  prepared <- .prepare_ebmf_flash_inputs(
     beta_matrix = beta_matrix,
-    se_matrix = se_matrix
+    se_matrix = se_matrix,
+    se_mode = se_mode
   )
 
   fit <- flashier::flash(
-    data = filtered$beta_matrix,
-    S = filtered$se_matrix,
+    data = prepared$data,
+    S = prepared$S,
     ebnm_fn = ebnm_fn,
     var_type = var_type,
     greedy_Kmax = greedy_Kmax,
@@ -194,39 +254,39 @@ run_ebmf <- function(beta_matrix,
 
 
 #' @title Run EBMF Comparison Grid
-#' @description Fit a grid of EBMF models varying label scheme, EBNM prior, and
-#' residual variance structure. Each label scheme is built via
-#' \code{build_ebmf_matrix()} once and reused across matching runs.
+#' @description Fit a grid of EBMF models varying EBNM prior and residual
+#' variance structure. The feature matrix is built once via
+#' \code{build_ebmf_matrix()} and reused across runs. Defaults favour
+#' \code{se_mode = "unit"} with \code{var_type} in \code{NULL} / \code{1L}
+#' rather than Kronecker variance, which previously produced soft mega-clusters
+#' on near-null fits.
 #' @inheritParams build_ebmf_matrix
 #' @inheritParams run_ebmf
-#' @param label_schemes Character vector of row-labelling schemes to compare.
 #' @param ebnm_fns Character vector of EBNM priors: \code{"point_normal"} and/or
-#'   \code{"point_laplace"}.
+#'   \code{"point_laplace"}. Defaults to both.
+#' @param se_modes Character vector of \code{se_mode} values. Defaults to
+#'   \code{"unit"}.
 #' @param var_types List of \code{var_type} values passed to \code{run_ebmf()}.
-#'   Defaults to per-row (\code{1L}) and Kronecker (\code{c(1L, 2L)}).
+#'   Defaults to \code{list(NULL, 1L)}.
 #' @param lfsr_threshold Passed to \code{extract_ebmf_clusters()}.
 #' @param magnitude_threshold Passed to \code{extract_ebmf_clusters()}.
+#'   Defaults to \code{0.25}.
 #' @param save_path Optional path to save results as \code{.rds}.
 #' @return A list with \code{summary} (one-row-per-run dataframe) and
 #'   \code{results} (named list of per-run outputs).
 #' @export
 run_ebmf_comparison <- function(trait_id,
-                                coloc_groups = NULL,
                                 p_threshold = NULL,
                                 snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-                                label_schemes = c(
-                                  "pathway_gene_tissue", "pathway_gene", "tissue"
-                                ),
-                                pathway_source = NULL,
-                                pathway_min_size = 5L,
-                                pathway_max_size = 200L,
-                                minimum_count_in_network = NULL,
+                                min_snp_signals = 5L,
+                                compress_method = c("asinh", "none"),
                                 ebnm_fns = c("point_normal", "point_laplace"),
-                                var_types = list(c(1L), c(1L, 2L)),
+                                se_modes = c("unit"),
+                                var_types = list(NULL, 1L),
                                 greedy_Kmax = 20L,
                                 backfit = TRUE,
                                 lfsr_threshold = 0.05,
-                                magnitude_threshold = 0.10,
+                                magnitude_threshold = 0.25,
                                 save_path = NULL,
                                 verbose = 0L) {
   if (missing(trait_id) || is.null(trait_id)) {
@@ -234,60 +294,50 @@ run_ebmf_comparison <- function(trait_id,
   }
 
   snp_key <- match.arg(snp_key)
-  label_schemes <- match.arg(
-    label_schemes,
-    c("pathway_gene_tissue", "pathway_gene", "tissue"),
-    several.ok = TRUE
-  )
+  compress_method <- match.arg(compress_method)
+  se_modes <- match.arg(se_modes, c("unit", "matrix"), several.ok = TRUE)
 
   configs <- expand.grid(
-    label_scheme = label_schemes,
     ebnm_fn = ebnm_fns,
+    se_mode = se_modes,
     var_type_idx = seq_along(var_types),
     stringsAsFactors = FALSE
   )
   configs$var_type <- vapply(
     configs$var_type_idx,
-    function(i) return(paste(var_types[[i]], collapse = ",")),
+    function(i) return(.ebmf_var_type_label(var_types[[i]])),
     character(1)
   )
   configs$run_id <- paste0(
-    "labels_", configs$label_scheme,
-    "__ebnm_", configs$ebnm_fn,
+    "ebnm_", configs$ebnm_fn,
+    "__se_", configs$se_mode,
     "__var_", configs$var_type
+  )
+
+  message("Building EBMF matrix once for comparison grid")
+  ebmf_data <- build_ebmf_matrix(
+    trait_id = trait_id,
+    p_threshold = p_threshold,
+    snp_key = snp_key,
+    min_snp_signals = min_snp_signals,
+    compress_method = compress_method
   )
 
   n_runs <- nrow(configs)
   results <- vector("list", n_runs)
   names(results) <- configs$run_id
   summary_rows <- vector("list", n_runs)
-  ebmf_data_by_scheme <- list()
 
   for (i in seq_len(n_runs)) {
     cfg <- configs[i, , drop = FALSE]
     run_id <- cfg$run_id
-    label_scheme <- cfg$label_scheme
     message("EBMF run ", i, "/", n_runs, ": ", run_id)
 
     run_result <- tryCatch({
-      if (is.null(ebmf_data_by_scheme[[label_scheme]])) {
-        ebmf_data_by_scheme[[label_scheme]] <- build_ebmf_matrix(
-          trait_id = trait_id,
-          coloc_groups = coloc_groups,
-          p_threshold = p_threshold,
-          snp_key = snp_key,
-          label_scheme = label_scheme,
-          pathway_source = pathway_source,
-          pathway_min_size = pathway_min_size,
-          pathway_max_size = pathway_max_size,
-          minimum_count_in_network = minimum_count_in_network
-        )
-      }
-      ebmf_data <- ebmf_data_by_scheme[[label_scheme]]
-
       flash_fit <- run_ebmf(
         beta_matrix = ebmf_data$beta_matrix,
         se_matrix = ebmf_data$se_matrix,
+        se_mode = cfg$se_mode,
         greedy_Kmax = greedy_Kmax,
         backfit = backfit,
         ebnm_fn = .resolve_ebnm_fn(cfg$ebnm_fn),
@@ -307,8 +357,8 @@ run_ebmf_comparison <- function(trait_id,
       )
 
       list(
-        label_scheme = label_scheme,
         ebnm_fn = cfg$ebnm_fn,
+        se_mode = cfg$se_mode,
         var_type = var_types[[cfg$var_type_idx]],
         ebmf_data = ebmf_data,
         flash_fit = flash_fit,
@@ -318,8 +368,8 @@ run_ebmf_comparison <- function(trait_id,
     }, error = function(e) {
       warning("Run '", run_id, "' failed: ", conditionMessage(e), call. = FALSE)
       return(list(
-        label_scheme = label_scheme,
         ebnm_fn = cfg$ebnm_fn,
+        se_mode = cfg$se_mode,
         var_type = var_types[[cfg$var_type_idx]],
         error = conditionMessage(e)
       ))
@@ -330,7 +380,7 @@ run_ebmf_comparison <- function(trait_id,
   }
 
   summary_df <- dplyr::bind_rows(summary_rows)
-  output <- list(summary = summary_df, results = results)
+  output <- list(summary = summary_df, results = results, ebmf_data = ebmf_data)
 
   if (!is.null(save_path)) {
     saveRDS(output, save_path)
@@ -344,10 +394,7 @@ run_ebmf_comparison <- function(trait_id,
 #' @title Summarise EBMF Comparison Results
 #' @description Rebuild or return the summary table from a comparison result.
 #' @param comparison Output list from \code{run_ebmf_comparison()}.
-#' @return A dataframe with one row per run: \code{run_id}, \code{label_scheme},
-#'   \code{ebnm_fn}, \code{var_type}, \code{n_factors}, \code{n_programs_with_snps},
-#'   \code{n_assigned}, \code{n_multi_program}, \code{program_sizes},
-#'   \code{status}, and \code{error}.
+#' @return A dataframe with one row per run.
 #' @export
 summarise_ebmf_comparison <- function(comparison) {
   if (!is.null(comparison$summary)) {
@@ -360,13 +407,128 @@ summarise_ebmf_comparison <- function(comparison) {
 }
 
 
-#' @title Summarise EBMF Program Trait Drivers
-#' @description Rank trait loadings for each discovered EBMF program.
+#' @title Select Best EBMF Comparison Run
+#' @description Prefer successful runs with total PVE at least
+#' \code{min_total_pve}, then highest total PVE, then highest ELBO. Tiny
+#' positive PVE values (e.g. \code{1e-8}) are treated as null fits.
+#' @param comparison Output list from \code{run_ebmf_comparison()}.
+#' @param min_total_pve Minimum acceptable total PVE. Defaults to \code{0.01}.
+#' @return Character \code{run_id}, or \code{NULL} if none meet the PVE floor.
+#' @export
+select_ebmf_comparison_run <- function(comparison, min_total_pve = 0.01) {
+  summary_df <- summarise_ebmf_comparison(comparison)
+  ok <- summary_df |>
+    dplyr::filter(status == "ok", !is.na(n_factors), n_factors > 0)
+  if (nrow(ok) == 0) {
+    return(NULL)
+  }
+
+  if (!"total_pve" %in% names(ok)) {
+    ok$total_pve <- NA_real_
+  }
+  if (!"elbo" %in% names(ok)) {
+    ok$elbo <- NA_real_
+  }
+
+  candidates <- ok |>
+    dplyr::filter(!is.na(total_pve), total_pve >= min_total_pve)
+  if (nrow(candidates) == 0) {
+    best_null <- max(ok$total_pve, na.rm = TRUE)
+    warning(
+      "No EBMF run reached min_total_pve = ", min_total_pve,
+      " (best total_pve = ", signif(best_null, 3), "). ",
+      "Soft membership from near-null fits should not be trusted.",
+      call. = FALSE
+    )
+    return(NULL)
+  }
+
+  candidates <- candidates |>
+    dplyr::arrange(
+      dplyr::desc(total_pve),
+      dplyr::desc(elbo),
+      dplyr::desc(n_factors)
+    )
+
+  return(candidates$run_id[1])
+}
+
+
+#' @title Identify Global EBMF Factors To Drop
+#' @description Suggest factor indices that look like a shared/global axis,
+#' but only when the fit has non-trivial total PVE. Factor 1 is not assumed
+#' global. Returns an empty integer vector for near-null fits. By default at
+#' most one factor is suggested (highest PVE share among candidates).
 #' @param flash_fit A \code{flash} object from \code{run_ebmf()}.
-#' @param trait_info Optional trait metadata with \code{trait_id} and \code{trait_name}.
-#' @param lfsr_threshold lFSR threshold for trait loadings. Defaults to \code{0.05}.
+#' @param membership Optional SNP x program logical membership matrix from
+#'   \code{extract_ebmf_clusters()$membership}.
+#' @param min_total_pve Require this total PVE before dropping anything.
+#'   Defaults to \code{0.01}.
+#' @param min_pve_share Candidate if the factor explains at least this share of
+#'   total PVE and soft-assigns at least 50\% of SNPs. Defaults to \code{0.4}.
+#' @param min_soft_frac Candidate if the factor soft-assigns at least this
+#'   fraction of SNPs. Defaults to \code{0.85}.
+#' @param max_drop Maximum number of factors to return. Defaults to 1.
+#' @return Integer vector of 1-based factor indices to pass to
+#'   \code{remove_ebmf_factors()}, possibly empty.
+#' @export
+identify_ebmf_global_factors <- function(flash_fit,
+                                         membership = NULL,
+                                         min_total_pve = 0.01,
+                                         min_pve_share = 0.4,
+                                         min_soft_frac = 0.85,
+                                         max_drop = 1L) {
+  if (!inherits(flash_fit, "flash")) {
+    stop("flash_fit must be a flash object from run_ebmf()")
+  }
+
+  K <- flash_fit$n_factors
+  if (K == 0 || max_drop < 1) {
+    return(integer(0))
+  }
+
+  pve <- flash_fit$pve
+  total_pve <- sum(pve, na.rm = TRUE)
+  if (!is.finite(total_pve) || total_pve < min_total_pve) {
+    return(integer(0))
+  }
+
+  share <- pve / total_pve
+  if (is.null(membership)) {
+    soft_frac <- rep(0, K)
+  } else {
+    if (!is.matrix(membership) || ncol(membership) != K) {
+      stop("membership must be a logical matrix with one column per factor")
+    }
+    soft_frac <- as.numeric(colSums(membership) / nrow(membership))
+  }
+
+  candidates <- which(
+    soft_frac >= min_soft_frac |
+      (share >= min_pve_share & soft_frac >= 0.5)
+  )
+  if (length(candidates) == 0) {
+    return(integer(0))
+  }
+
+  ord <- candidates[order(
+    share[candidates],
+    soft_frac[candidates],
+    decreasing = TRUE
+  )]
+  return(as.integer(utils::head(ord, max_drop)))
+}
+
+
+#' @title Summarise EBMF Program Feature Drivers
+#' @description Rank feature loadings for each discovered EBMF program.
+#' @param flash_fit A \code{flash} object from \code{run_ebmf()}.
+#' @param trait_info Optional feature metadata with \code{trait_id} and
+#'   \code{trait_name}.
+#' @param lfsr_threshold lFSR threshold for feature loadings. Defaults to
+#'   \code{0.05}.
 #' @param magnitude_threshold Minimum absolute loading. Defaults to \code{0.05}.
-#' @return A dataframe of significant trait loadings per program.
+#' @return A dataframe of significant feature loadings per program.
 #' @export
 summarise_ebmf_program_drivers <- function(flash_fit,
                                            trait_info = NULL,
@@ -417,8 +579,11 @@ summarise_ebmf_program_drivers <- function(flash_fit,
   if (!is.null(trait_info) && nrow(result) > 0) {
     trait_info <- trait_info |>
       dplyr::mutate(trait_id = as.character(trait_id))
+    join_cols <- c("trait_id", "trait_name")
+    optional_cols <- c("trait_label", "trait_category", "feature_type", "is_qtl")
+    join_cols <- unique(c(join_cols, intersect(optional_cols, names(trait_info))))
     result <- result |>
-      dplyr::left_join(trait_info, by = "trait_id")
+      dplyr::left_join(trait_info[, join_cols, drop = FALSE], by = "trait_id")
   }
 
   return(result)
@@ -437,7 +602,7 @@ summarise_ebmf_program_drivers <- function(flash_fit,
 #' @param lfsr_threshold lFSR threshold for including a SNP in a program.
 #'   Defaults to 0.05.
 #' @param magnitude_threshold Minimum absolute posterior mean factor loading.
-#'   Defaults to 0.10.
+#'   Defaults to 0.25.
 #' @return A list with:
 #'   \itemize{
 #'     \item clusters: dataframe with columns \code{program}, \code{snp_id},
@@ -452,7 +617,7 @@ summarise_ebmf_program_drivers <- function(flash_fit,
 #' @export
 extract_ebmf_clusters <- function(flash_fit,
                                   lfsr_threshold = 0.05,
-                                  magnitude_threshold = 0.10) {
+                                  magnitude_threshold = 0.25) {
   if (!inherits(flash_fit, "flash")) {
     stop("flash_fit must be a flash object from run_ebmf()")
   }
@@ -531,27 +696,67 @@ extract_ebmf_clusters <- function(flash_fit,
 }
 
 
+#' @title Remove EBMF Factors
+#' @description Drop one or more factors from a fitted \code{flash} object.
+#' Remaining factors are re-indexed. Prefer
+#' \code{identify_ebmf_global_factors()} over assuming factor 1 is global.
+#' An empty \code{kset} returns \code{flash_fit} unchanged.
+#' @param flash_fit A \code{flash} object from \code{run_ebmf()}.
+#' @param kset Integer vector of factor indices to remove.
+#' @return A \code{flash} object with \code{kset} removed.
+#' @export
+remove_ebmf_factors <- function(flash_fit, kset = integer(0)) {
+  if (!requireNamespace("flashier", quietly = TRUE)) {
+    stop("Package 'flashier' is required to remove EBMF factors", call. = FALSE)
+  }
+  if (!inherits(flash_fit, "flash")) {
+    stop("flash_fit must be a flash object from run_ebmf()")
+  }
+  if (length(kset) == 0) {
+    return(flash_fit)
+  }
+  if (any(is.na(kset))) {
+    stop("kset must not contain NA")
+  }
+  kset <- as.integer(kset)
+  if (flash_fit$n_factors == 0) {
+    return(flash_fit)
+  }
+  if (any(kset < 1L) || any(kset > flash_fit$n_factors)) {
+    stop("kset must be within 1:n_factors")
+  }
+  return(flashier::flash_factors_remove(flash_fit, kset = kset))
+}
+
+
 .ebmf_slice_has_signal <- function(x) {
   return(any(!is.na(x) & x != 0))
 }
 
 
 .ebmf_run_summary_row <- function(run_id, run_result) {
-  label_scheme <- if (is.null(run_result$label_scheme)) {
+  se_mode <- if (is.null(run_result$se_mode)) {
     NA_character_
   } else {
-    as.character(run_result$label_scheme)
+    as.character(run_result$se_mode)
   }
+  var_type <- .ebmf_var_type_label(run_result$var_type)
 
   if (!is.null(run_result$error)) {
-    ebnm_fn <- if (is.null(run_result$ebnm_fn)) NA_character_ else as.character(run_result$ebnm_fn)
-    var_type <- if (is.null(run_result$var_type)) NA_character_ else paste(run_result$var_type, collapse = ",")
+    ebnm_fn <- if (is.null(run_result$ebnm_fn)) {
+      NA_character_
+    } else {
+      as.character(run_result$ebnm_fn)
+    }
     return(data.frame(
       run_id = run_id,
-      label_scheme = label_scheme,
       ebnm_fn = ebnm_fn,
+      se_mode = se_mode,
       var_type = var_type,
       n_factors = NA_integer_,
+      total_pve = NA_real_,
+      pve = NA_character_,
+      elbo = NA_real_,
       n_programs_with_snps = NA_integer_,
       n_assigned = NA_integer_,
       n_multi_program = NA_integer_,
@@ -568,12 +773,32 @@ extract_ebmf_clusters <- function(flash_fit,
     program_sizes <- sort(colSums(clusters$membership), decreasing = TRUE)
   }
 
+  pve <- run_result$flash_fit$pve
+  total_pve <- if (is.null(pve) || length(pve) == 0) {
+    NA_real_
+  } else {
+    sum(pve, na.rm = TRUE)
+  }
+  pve_str <- if (is.null(pve) || length(pve) == 0) {
+    NA_character_
+  } else {
+    paste(round(pve, 4), collapse = ", ")
+  }
+  elbo <- if (is.null(run_result$flash_fit$elbo)) {
+    NA_real_
+  } else {
+    as.numeric(run_result$flash_fit$elbo)
+  }
+
   return(data.frame(
     run_id = run_id,
-    label_scheme = label_scheme,
     ebnm_fn = as.character(run_result$ebnm_fn),
-    var_type = paste(run_result$var_type, collapse = ","),
+    se_mode = se_mode,
+    var_type = var_type,
     n_factors = run_result$flash_fit$n_factors,
+    total_pve = total_pve,
+    pve = pve_str,
+    elbo = elbo,
     n_programs_with_snps = sum(program_sizes > 0),
     n_assigned = clusters$n_assigned,
     n_multi_program = clusters$n_multi_program,
@@ -613,6 +838,13 @@ extract_ebmf_clusters <- function(flash_fit,
     stop("No rows or columns remain after removing all-zero/all-missing slices")
   }
 
+  if (anyNA(beta_matrix)) {
+    beta_matrix[is.na(beta_matrix)] <- 0
+  }
+  if (anyNA(se_matrix)) {
+    se_matrix[is.na(se_matrix)] <- 1e6
+  }
+
   return(list(
     beta_matrix = beta_matrix,
     se_matrix = se_matrix
@@ -620,269 +852,101 @@ extract_ebmf_clusters <- function(flash_fit,
 }
 
 
-.build_ebmf_association_matrices <- function(trait_id,
-                                             coloc_groups,
-                                             full_associations,
-                                             p_threshold,
-                                             snp_key) {
-  if (is.null(full_associations) || nrow(full_associations) == 0) {
-    stop("full_associations is required to build the EBMF matrix")
-  }
-  if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {
-    stop("coloc_groups is required to build the EBMF matrix")
-  }
-
-  target_snps <- .get_ebmf_target_snps(
-    trait_id = trait_id,
-    coloc_groups = coloc_groups,
-    p_threshold = p_threshold,
-    snp_key = snp_key
-  )
-
-  study_trait_map <- coloc_groups |>
-    dplyr::filter(!is.na(study_id), !is.na(trait_id)) |>
-    dplyr::distinct(study_id, trait_id, trait_name)
-
-  if ("existing_study_id" %in% names(coloc_groups)) {
-    existing_trait_map <- coloc_groups |>
-      dplyr::filter(!is.na(existing_study_id), !is.na(trait_id)) |>
-      dplyr::transmute(
-        study_id = existing_study_id,
-        trait_id = trait_id,
-        trait_name = trait_name
-      ) |>
-      dplyr::distinct()
-    study_trait_map <- dplyr::bind_rows(study_trait_map, existing_trait_map) |>
-      dplyr::distinct(study_id, trait_id, trait_name)
-  }
-
-  assoc_long <- full_associations |>
-    dplyr::inner_join(study_trait_map, by = "study_id") |>
-    dplyr::inner_join(
-      target_snps |> dplyr::select("variant_id", "snp_id"),
-      by = "variant_id"
-    ) |>
-    dplyr::filter(!is.na(beta), !is.na(se), se > 0) |>
-    dplyr::group_by(trait_id, trait_name, snp_id) |>
-    dplyr::slice_min(p, n = 1, with_ties = FALSE) |>
-    dplyr::ungroup() |>
-    dplyr::select(trait_id, trait_name, snp_id, beta, se)
-
-  beta_wide <- assoc_long |>
-    tidyr::pivot_wider(
-      id_cols = c(trait_id, trait_name),
-      names_from = snp_id,
-      values_from = beta
-    )
-  se_wide <- assoc_long |>
-    tidyr::pivot_wider(
-      id_cols = c(trait_id, trait_name),
-      names_from = snp_id,
-      values_from = se
-    )
-
-  snp_ids <- setdiff(names(beta_wide), c("trait_id", "trait_name"))
-  beta_matrix <- as.matrix(beta_wide[, snp_ids, drop = FALSE])
-  se_matrix <- as.matrix(se_wide[, snp_ids, drop = FALSE])
-  rownames(beta_matrix) <- as.character(beta_wide$trait_id)
-  rownames(se_matrix) <- as.character(se_wide$trait_id)
-
-  trait_info <- beta_wide |>
-    dplyr::select(trait_id, trait_name) |>
-    dplyr::distinct()
-
-  snp_info <- target_snps |>
-    dplyr::filter(snp_id %in% snp_ids) |>
-    dplyr::distinct()
-
-  return(list(
+.prepare_ebmf_flash_inputs <- function(beta_matrix, se_matrix, se_mode) {
+  filtered <- .filter_ebmf_matrices(
     beta_matrix = beta_matrix,
-    se_matrix = se_matrix,
-    trait_info = trait_info,
-    snp_info = snp_info
-  ))
-}
-
-
-.get_ebmf_target_snps <- function(trait_id, coloc_groups, p_threshold, snp_key) {
-  if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {
-    stop("No coloc_groups data available")
-  }
-  if (!snp_key %in% names(coloc_groups)) {
-    stop("coloc_groups must include column: ", snp_key)
-  }
-
-  target_snps <- coloc_groups |>
-    dplyr::filter(
-      trait_id == trait_id,
-      if (!is.null(p_threshold)) min_p <= p_threshold else TRUE
-    ) |>
-    dplyr::mutate(snp_id = as.character(.data[[snp_key]])) |>
-    dplyr::distinct(coloc_group_id, snp_id, variant_id, display_snp, chr, bp)
-
-  if (nrow(target_snps) == 0) {
-    stop("No target-trait SNPs after filtering")
-  }
-
-  return(target_snps)
-}
-
-
-.build_ebmf_trait_annotations <- function(trait_ids,
-                                          coloc_groups,
-                                          label_scheme,
-                                          pathway_source = NULL,
-                                          pathway_min_size = 5L,
-                                          pathway_max_size = 200L,
-                                          minimum_count_in_network = NULL) {
-  trait_meta <- coloc_groups |>
-    dplyr::filter(as.character(trait_id) %in% trait_ids) |>
-    dplyr::group_by(trait_id) |>
-    dplyr::summarise(
-      tissue = dplyr::first(tissue[!is.na(tissue) & tissue != ""]),
-      gene = dplyr::first(gene[!is.na(gene) & gene != ""]),
-      gene_id = dplyr::first(gene_id[!is.na(gene_id)]),
-      trait_category = dplyr::first(
-        trait_category[!is.na(trait_category) & trait_category != ""]
-      ),
-      is_qtl = any(!is.na(gene_id)),
-      .groups = "drop"
-    ) |>
-    dplyr::mutate(
-      trait_id = as.character(trait_id),
-      tissue = dplyr::if_else(is.na(tissue), "None", tissue),
-      gene = dplyr::if_else(is.na(gene), "None", gene),
-      trait_category = dplyr::if_else(is.na(trait_category), "Unknown", trait_category)
-    )
-
-  gene_ids <- unique(stats::na.omit(trait_meta$gene_id[trait_meta$is_qtl]))
-  feature_map <- data.frame(
-    gene_id = integer(0),
-    feature_name = character(0),
-    stringsAsFactors = FALSE
+    se_matrix = se_matrix
   )
-  pathway_enrichment <- NULL
 
-  if (length(gene_ids) > 0 &&
-      label_scheme %in% c("pathway_gene_tissue", "pathway_gene")) {
-    tryCatch({
-      pathway_enrichment <- pathway_enrichment(
-        genes = gene_ids,
-        source = pathway_source,
-        p_value_threshold = 1,
-        minimum_count_in_network = minimum_count_in_network
-      )
-
-      if (
-        is.data.frame(pathway_enrichment$results) &&
-          nrow(pathway_enrichment$results) > 0
-      ) {
-        pathway_results <- pathway_enrichment$results |>
-          dplyr::filter(
-            pathway_size >= pathway_min_size,
-            pathway_size <= pathway_max_size
-          )
-
-        if (nrow(pathway_results) > 0) {
-          pathway_rows <- lapply(seq_len(nrow(pathway_results)), function(i) {
-            row <- pathway_results[i, , drop = FALSE]
-            overlap_genes <- row$gene_ids[[1]]
-            if (length(overlap_genes) == 0) {
-              return(NULL)
-            }
-            return(data.frame(
-              gene_id = overlap_genes,
-              feature_name = row$description,
-              stringsAsFactors = FALSE
-            ))
-          })
-          feature_map <- dplyr::bind_rows(pathway_rows) |>
-            dplyr::group_by(gene_id) |>
-            dplyr::summarise(
-              feature_name = paste(sort(unique(feature_name)), collapse = "_"),
-              .groups = "drop"
-            )
-        }
-      }
-    }, error = function(e) {
-      warning("Pathway enrichment failed: ", conditionMessage(e), call. = FALSE)
-      return(NULL)
-    })
+  if (se_mode == "matrix") {
+    return(list(
+      data = filtered$beta_matrix,
+      S = filtered$se_matrix
+    ))
   }
 
-  if (nrow(feature_map) > 0) {
-    trait_meta <- trait_meta |>
-      dplyr::left_join(feature_map, by = "gene_id")
+  # unit S: restore NA missingness and let flashier use S = 1
+  data <- filtered$beta_matrix
+  data[filtered$se_matrix >= 1e6] <- NA_real_
+  return(list(data = data, S = 1))
+}
+
+
+.ebmf_var_type_label <- function(var_type) {
+  if (is.null(var_type)) {
+    return("null")
+  }
+  return(paste(var_type, collapse = ","))
+}
+
+
+.ebmf_feature_info_from_perturbation <- function(feature_info,
+                                                 kept_ids,
+                                                 feature_type,
+                                                 coloc_groups) {
+  if (is.null(feature_info) || nrow(feature_info) == 0 || length(kept_ids) == 0) {
+    return(data.frame(
+      trait_id = character(0),
+      trait_name = character(0),
+      feature_type = character(0),
+      trait_category = character(0),
+      trait_label = character(0),
+      is_qtl = logical(0),
+      stringsAsFactors = FALSE
+    ))
+  }
+
+  info <- feature_info |>
+    dplyr::mutate(
+      trait_id = as.character(feature_id),
+      trait_name = as.character(feature_name)
+    ) |>
+    dplyr::filter(trait_id %in% as.character(kept_ids))
+
+  if (feature_type == "trait") {
+    cats <- coloc_groups |>
+      dplyr::mutate(trait_id = as.character(trait_id)) |>
+      dplyr::filter(
+        trait_id %in% info$trait_id,
+        !is.na(trait_category),
+        trait_category != ""
+      ) |>
+      dplyr::group_by(trait_id) |>
+      dplyr::summarise(
+        trait_category = dplyr::first(trait_category),
+        .groups = "drop"
+      )
+    info <- info |>
+      dplyr::left_join(cats, by = "trait_id") |>
+      dplyr::mutate(
+        feature_type = "trait",
+        trait_category = dplyr::if_else(
+          is.na(trait_category),
+          "Unknown",
+          trait_category
+        ),
+        trait_label = trait_category,
+        is_qtl = FALSE
+      )
   } else {
-    trait_meta$feature_name <- NA_character_
+    info <- info |>
+      dplyr::mutate(
+        feature_type = "gene",
+        trait_category = "Gene",
+        trait_label = dplyr::if_else(
+          is.na(trait_name) | trait_name == "",
+          trait_id,
+          trait_name
+        ),
+        is_qtl = TRUE
+      )
   }
 
-  trait_meta <- trait_meta |>
-    dplyr::mutate(
-      pathway_or_gene = dplyr::if_else(
-        !is_qtl,
-        NA_character_,
-        dplyr::if_else(
-          !is.na(feature_name),
-          feature_name,
-          dplyr::if_else(gene != "None", gene, paste0("gene:", gene_id))
-        )
-      )
-    )
-
-  meta_lookup <- stats::setNames(
-    vapply(trait_meta$trait_id, function(tid) {
-      row <- trait_meta[trait_meta$trait_id == tid, , drop = FALSE]
-      if (!row$is_qtl) {
-        return(row$trait_category)
-      }
-      if (label_scheme == "pathway_gene_tissue") {
-        return(paste0(row$pathway_or_gene, "_", row$tissue))
-      }
-      if (label_scheme == "pathway_gene") {
-        return(row$pathway_or_gene)
-      }
-      return(row$tissue)
-    }, character(1)),
-    trait_meta$trait_id
-  )
-
-  annotations <- vapply(trait_ids, function(tid) {
-    if (tid %in% names(meta_lookup)) {
-      return(meta_lookup[[tid]])
-    }
-    return("Unknown")
-  }, character(1))
-  names(annotations) <- trait_ids
-
-  return(list(
-    annotations = annotations,
-    pathway_enrichment = pathway_enrichment
-  ))
-}
-
-
-.build_ebmf_snp_annotations <- function(snp_ids, snp_info) {
-  snp_meta <- snp_info |>
-    dplyr::transmute(
-      snp_id = as.character(snp_id),
-      coloc_group_id = coloc_group_id
-    )
-
-  meta_lookup <- stats::setNames(
-    paste0("ColocGroup", snp_meta$coloc_group_id),
-    snp_meta$snp_id
-  )
-
-  annotations <- vapply(snp_ids, function(sid) {
-    if (sid %in% names(meta_lookup)) {
-      return(meta_lookup[[sid]])
-    }
-    return("ColocGroupNA")
-  }, character(1))
-  names(annotations) <- snp_ids
-
-  return(annotations)
+  return(info |>
+    dplyr::select(
+      trait_id, trait_name, feature_type, trait_category, trait_label, is_qtl
+    ) |>
+    dplyr::arrange(trait_id))
 }
 
 

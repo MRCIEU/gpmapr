@@ -17,13 +17,14 @@ Imports:
     dplyr,
     ebnm,
     flashier,
+    igraph,
     readr,
     tidyLPA,
     tidyr
 Suggests: 
+    DiagrammeR,
     ggplot2,
     ggrepel,
-    igraph,
     knitr,
     mclust,
     RColorBrewer,

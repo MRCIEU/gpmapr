@@ -11,7 +11,8 @@ build_bivariate_feature_pleiotropy_matrices(
   p_threshold = NULL,
   snp_key = c("variant_id", "display_snp", "coloc_group_id"),
   pathway_source = NULL,
-  pathway_p_value_threshold = 0.05,
+  pathway_min_size = 5L,
+  pathway_max_size = 200L,
   minimum_count_in_network = NULL
 )
 }
@@ -31,7 +32,9 @@ all SNPs with valid z-scores are retained.}
 
 \item{pathway_source}{Optional pathway source passed to \code{pathway_enrichment()}.}
 
-\item{pathway_p_value_threshold}{FDR threshold for pathway enrichment.}
+\item{pathway_min_size}{Minimum pathway size for collapse. Defaults to 5.}
+
+\item{pathway_max_size}{Maximum pathway size for collapse. Defaults to 200.}
 
 \item{minimum_count_in_network}{Minimum gene overlap per pathway term.}
 }
@@ -43,4 +46,10 @@ A list with aligned \code{x1_matrix}, \code{x2_matrix}, \code{feature_info}, \co
 Like \code{build_bivariate_pleiotropy_matrices()}, but gene-linked molecular
 QTL rows are collapsed into pathway/gene \strong{features} while standard background
 trait rows are retained. Row names are aligned across both matrices.
+
+Cell values use the dense association graph from
+\code{trait(..., include_full_associations = TRUE)$full_associations} for each target
+trait (z = beta / se), as in \code{build_feature_pleiotropy_matrix()}. Pathway collapse
+keeps all returned pathways of size \code{pathway_min_size}--\code{pathway_max_size} with no
+FDR cut (\code{p_value_threshold = 1} in enrichment).
 }

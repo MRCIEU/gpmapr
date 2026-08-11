@@ -28,260 +28,207 @@ if (requireNamespace("devtools", quietly = TRUE)) {
 }
 library(dplyr)
 library(tidyr)
-library(igraph)
 ```
 
-This vignette combines the **univariate** SNP-clustering workflow with **pathway collapse** from the collapsable bivariate analysis. Gene-linked molecular QTL rows are merged into pathway/gene **features** first; singleton filtering and downstream similarity clustering then operate on the denser feature matrix.
+Collapsable univariate analysis: molecular QTL rows are collapsed into pathway/gene **features**, sparse rows are removed, SNP profiles are oriented to the target trait, and **signed Louvain** clusters SNPs on cosine similarity `S`. Compare with [Investigation of univariate analysis](investigation-univariate-analysis.html) (trait rows only, same trait and parameters).
 
-We use **HDL cholesterol** (trait id `1630`) as the target trait.
+We use **BMI** (trait id `1992`).
 
-## Step 1: Construct the feature pleiotropy matrix (X)
+```{r params}
+target_trait_id <- 1992
+min_module_size <- 3
+min_group_size <- 5
+min_snp_signals <- 5L
+max_snp_fraction <- 0.8
+similarity_threshold <- 0.5
+louvain_gamma <- 3
+```
 
-**Goal:** Build a matrix where each **column** is a target-trait SNP and each **row** is a **feature**: standard background traits plus pathway/gene features summarising molecular QTL signals.
+## Verification 1: baseline pathway enrichment
 
-```{r step1-fetch}
-target_trait_id <- 1630
+Before clustering, ask whether the trait's molecular QTL genes have recoverable pathway signal, and which SNPs those genes sit on.
 
-target_trait <- trait(
-  target_trait_id,
-  include_associations = TRUE
+```{r verify1-baseline}
+coloc_groups <- trait(target_trait_id, include_associations = TRUE)$coloc_groups
+baseline_pathways <- enrich_trait_pathways(
+  trait_id = target_trait_id,
+  coloc_groups = coloc_groups,
+  sources = c("KEGG", "Reactome")
 )
-cg <- target_trait$coloc_groups
+
+knitr::kable(
+  baseline_pathways$summary,
+  caption = "Baseline trait pathway enrichment (KEGG + Reactome)",
+  na = "",
+  align = c("r", "r", "r", "r", "l")
+)
+
+knitr::kable(
+  baseline_pathways$genes |>
+    dplyr::left_join(
+      baseline_pathways$snp_genes |>
+        dplyr::group_by(gene_id) |>
+        dplyr::summarise(
+          snps = paste(sort(unique(snp_id)), collapse = ", "),
+          .groups = "drop"
+        ),
+      by = "gene_id"
+    ),
+  caption = "Genes at trait GWAS SNPs (with linked SNPs)",
+  row.names = FALSE
+)
+
+if (nrow(baseline_pathways$pathways) > 0) {
+  knitr::kable(
+    baseline_pathways$pathways |>
+      dplyr::mutate(
+        p_value = signif(p_value, 3),
+        fdr = signif(fdr, 3)
+      ),
+    caption = "Enriched pathways for the full trait gene set",
+    row.names = FALSE
+  )
+}
 ```
 
-### Gene collapse and pathway mapping
+## Step 1: Feature pleiotropy matrix
 
-1. **Background traits:** non-molecular colocalisation rows (no `gene_id`) are kept as individual trait rows.
-2. **Molecular QTL:** merge gene-linked rows by `gene_id` (eQTL, pQTL, etc.) → one z-score per gene × SNP.
-3. Run pathway enrichment on genes at target SNP loci.
-4. Map genes to enriched pathways (`feature_id = source:term_id`); aggregate by mean within each pathway.
-5. Genes outside enriched pathways remain as gene-level features (`gene:<gene_id>`).
+`build_feature_pleiotropy_matrix()` uses `trait(..., include_full_associations = TRUE)` for dense betas and pathway collapse (size 5–200, no FDR cut).
 
-```{r step1-feature-matrix}
+```{r step1-build}
 pleiotropy <- build_feature_pleiotropy_matrix(
   trait_id = target_trait_id,
-  coloc_groups = cg,
   snp_key = "variant_id",
+  pathway_min_size = 5,
+  pathway_max_size = 200,
   minimum_count_in_network = 2
 )
 
 X <- pleiotropy$x_matrix
 
-list(
-  target_trait = target_trait$trait$trait_name,
-  n_features = nrow(X),
-  n_trait_rows = sum(pleiotropy$feature_info$feature_type == "trait"),
-  n_pathway_rows = sum(pleiotropy$feature_info$feature_type == "pathway"),
-  n_gene_rows = sum(pleiotropy$feature_info$feature_type == "gene"),
-  n_snps = ncol(X),
-  fraction_non_na = mean(!is.na(X))
+knitr::kable(
+  data.frame(
+    n_features = nrow(X),
+    n_trait_rows = sum(pleiotropy$feature_info$feature_type == "trait"),
+    n_pathway_rows = sum(pleiotropy$feature_info$feature_type == "pathway"),
+    n_gene_rows = sum(pleiotropy$feature_info$feature_type == "gene"),
+    n_snps = ncol(X),
+    fraction_non_na = round(mean(!is.na(X)), 3)
+  ),
+  caption = "Feature matrix summary",
+  align = "r"
 )
 ```
 
-```{r step1-features}
-head(pleiotropy$feature_info, 10)
-```
+## Step 1.5: Filter sparse and ubiquitous features
 
-```{r step1-dim}
-dim(X)
-```
+Drop feature rows with fewer than `min_snp_signals` non-`NA` values, or with non-`NA` fraction above `max_snp_fraction` (target trait row kept).
 
-Each column is one SNP's profile across features (traits + collapsed molecular networks). Entries are `NA` where a feature has no signal at that SNP's locus.
-
-## Step 1.5: Remove singleton background features
-
-After pathway collapse, many rows still colocalise at **a single SNP only**. Those singleton rows add sparsity without helping compare SNP profiles. We drop feature rows with a signal at exactly one SNP (the target trait row is kept regardless).
-
-```{r step1-filter-singletons}
+```{r step1-sparse-filter}
 feature_snp_counts <- rowSums(!is.na(X))
-singleton_feature_ids <- names(feature_snp_counts)[feature_snp_counts == 1]
-singleton_feature_ids <- setdiff(singleton_feature_ids, as.character(target_trait_id))
-
-list(
-  n_features_before = nrow(X),
-  n_singleton_features_removed = length(singleton_feature_ids),
-  n_features_after = nrow(X) - length(singleton_feature_ids),
-  fraction_non_na_before = mean(!is.na(X))
+feature_snp_frac <- feature_snp_counts / ncol(X)
+sparse_feature_ids <- names(feature_snp_counts)[feature_snp_counts < min_snp_signals]
+ubiquitous_feature_ids <- names(feature_snp_frac)[feature_snp_frac > max_snp_fraction]
+drop_feature_ids <- setdiff(
+  union(sparse_feature_ids, ubiquitous_feature_ids),
+  as.character(target_trait_id)
 )
-```
 
-```{r step1-filter-apply}
-X <- X[!rownames(X) %in% singleton_feature_ids, , drop = FALSE]
-
+X <- X[!rownames(X) %in% drop_feature_ids, , drop = FALSE]
 pleiotropy$feature_info <- pleiotropy$feature_info |>
-  dplyr::filter(!feature_id %in% singleton_feature_ids)
+  dplyr::filter(!feature_id %in% drop_feature_ids)
 
 list(
-  n_features = nrow(X),
-  n_trait_rows = sum(pleiotropy$feature_info$feature_type == "trait"),
-  n_pathway_rows = sum(pleiotropy$feature_info$feature_type == "pathway"),
-  n_gene_rows = sum(pleiotropy$feature_info$feature_type == "gene"),
-  n_snps = ncol(X),
-  fraction_non_na = mean(!is.na(X))
+  min_snp_signals = min_snp_signals,
+  max_snp_fraction = max_snp_fraction,
+  n_sparse_features_removed = length(setdiff(sparse_feature_ids, as.character(target_trait_id))),
+  n_ubiquitous_features_removed = length(setdiff(ubiquitous_feature_ids, as.character(target_trait_id))),
+  n_features_after = nrow(X),
+  n_snps = ncol(X)
 )
 ```
 
-```{r step1-filter-dim}
-dim(X)
-```
+## Step 2: Orient profiles (X\*)
 
-## Step 2: Orient profiles relative to the target trait (X\*)
-
-**Goal:** Calibrate each SNP column so profiles reflect what happens when the variant **increases liability** for the target trait.
-
-\[
-X^*_{fj} = \mathrm{sign}(z_j) \cdot X_{fj}
-\]
-
-where \(z_j\) is the target trait's GWAS z-score at SNP \(j\) (`pleiotropy$z_target`).
+Each SNP column is multiplied by `sign(z_j)` so profiles reflect increasing target-trait liability.
 
 ```{r step2-orient}
-oriented <- orient_pleiotropy_matrix(
+X_star <- orient_pleiotropy_matrix(
   X,
   target_trait_id = target_trait_id,
   z_target = pleiotropy$z_target
-)
-
-X_star <- oriented$x_matrix
-z_target <- oriented$z_target
-target_signs <- oriented$target_signs
-
-table(target_signs, useNA = "ifany")
+)$x_matrix
 ```
 
-```{r step2-check}
-target_row <- X_star[as.character(target_trait_id), ]
+## Step 3: SNP similarity (S)
 
-list(
-  n_negative_target_z = sum(target_row < 0, na.rm = TRUE),
-  n_positive_target_z = sum(target_row > 0, na.rm = TRUE),
-  mean_abs_target_z = mean(abs(target_row), na.rm = TRUE)
-)
-```
-
-## Step 3: Calculate the SNP-SNP similarity matrix (S)
-
-**Goal:** Cosine similarity between SNP feature profiles.
-
-\[
-S_{jk} = \frac{{x^*_j}^{\top} x^*_k}{\|x^*_j\| \|x^*_k\|}
-\]
-
-```{r step3-col-norms}
-X_star_filled <- X_star
-X_star_filled[is.na(X_star_filled)] <- 0
-
-col_norms <- sqrt(colSums(X_star_filled^2))
-
-summary(col_norms)
-```
-
-```{r step3-normalize}
-zero_cols <- col_norms == 0
-col_norms_div <- col_norms
-col_norms_div[zero_cols] <- 1
-
-X_star_norm <- sweep(X_star_filled, 2, col_norms_div, "/")
-X_star_norm[, zero_cols] <- 0
-```
+Cosine similarity between oriented SNP feature profiles.
 
 ```{r step3-similarity}
-S <- crossprod(X_star_norm)
-
-similarity <- snp_similarity_matrix(X_star)
-stopifnot(all.equal(S, similarity$s_matrix, check.attributes = FALSE))
-```
-
-```{r step3-dim}
-dim(S)
-```
-
-```{r step3-summary}
+S <- snp_similarity_matrix(X_star)$s_matrix
 s_upper <- S[upper.tri(S)]
+
 list(
-  diag_all_one = all(abs(diag(S) - 1) < 1e-10),
-  min_similarity = min(s_upper, na.rm = TRUE),
-  max_similarity = max(s_upper, na.rm = TRUE),
-  mean_similarity = mean(s_upper, na.rm = TRUE),
-  matrix_density = mean(s_upper > 0)
+  n_snps = ncol(S),
+  min_similarity = round(min(s_upper, na.rm = TRUE), 2),
+  max_similarity = round(max(s_upper, na.rm = TRUE), 2),
+  mean_similarity = round(mean(s_upper, na.rm = TRUE), 2)
 )
 ```
 
-`matrix_density` is the proportion of SNP pairs with strictly positive off-diagonal similarity (a sparsity summary of the positive similarity subgraph).
+## Step 4: Signed Louvain clustering
 
-## Step 4: Cluster the SNPs
-
-**Goal:** Group variants into functional classes from the geometry of their feature profiles.
-
-We run several clustering methods and compare how many modules each finds. **Signed Louvain** (Gomez signed modularity on the full cosine similarity matrix, including anti-parallel edges) drives module interpretation in Step 5 (modules with more than three SNPs only). A Ward.D2 dendrogram is shown for visual exploration.
+Weak edges with `|S| < similarity_threshold` are zeroed before Louvain. Modules with `> min_module_size` SNPs are analysed below.
 
 ```{r step4-cluster}
-k <- 3
-D <- 1 - S
-dist_snp <- as.dist(D)
-
-hc <- hclust(dist_snp, method = "ward.D2")
-clusters_hierarchical <- cutree(hc, k = k)
-
 clusters_louvain <- cluster_snp_profiles(
   S,
   method = "community",
-  community_algorithm = "louvain"
-)
-clusters_leading_eigen <- cluster_snp_profiles(
-  S,
-  k = k,
-  method = "community",
-  community_algorithm = "leading_eigen"
+  community_algorithm = "louvain",
+  similarity_threshold = similarity_threshold,
+  gamma = louvain_gamma
 )
 
-summarise_cluster_method <- function(method, cluster) {
-  sizes <- as.integer(table(cluster))
-  data.frame(
-    method = method,
-    n_clusters = length(sizes),
-    sizes_gt_2 = paste(sort(sizes[sizes > 2], decreasing = TRUE), collapse = ", "),
-    stringsAsFactors = FALSE
-  )
-}
-
-comparison_summary <- dplyr::bind_rows(
-  summarise_cluster_method("hierarchical (Ward.D2, k = 3)", clusters_hierarchical),
-  summarise_cluster_method("leading_eigen", clusters_leading_eigen$cluster),
-  summarise_cluster_method("signed_louvain", clusters_louvain$cluster)
-)
-
-comparison_summary
-
-min_module_size <- 3
 louvain_sizes <- table(clusters_louvain$cluster)
 large_clusters <- as.integer(names(louvain_sizes)[louvain_sizes > min_module_size])
 clusters_analysis <- clusters_louvain$cluster[
   clusters_louvain$cluster %in% large_clusters
 ]
+
+knitr::kable(
+  data.frame(
+    cluster = as.integer(names(louvain_sizes)),
+    n_snps = as.integer(louvain_sizes),
+    analysed = as.integer(names(louvain_sizes)) %in% large_clusters
+  ),
+  caption = "Signed Louvain module sizes",
+  align = "rrl"
+)
 ```
 
-```{r step4-dendrogram, fig.height = 6, fig.width = 10}
-plot(hc, labels = names(clusters_hierarchical), cex = 0.4, main = "SNP hierarchical clustering (Ward.D2)")
-rect.hclust(hc, k = k, border = 2:4)
+```{r step4-heatmap, fig.height = 7, fig.width = 7}
+snp_order <- names(clusters_analysis)[order(clusters_analysis)]
+heatmap(
+  S[snp_order, snp_order, drop = FALSE],
+  scale = "none",
+  main = paste0("SNP similarity (Louvain modules > ", min_module_size, " SNPs)"),
+  xlab = "SNPs",
+  ylab = "SNPs"
+)
 ```
 
-`sizes_gt_2` lists cluster sizes strictly greater than two for each method. For interpretation below we use **signed Louvain** modules with **more than three SNPs** (`clusters_analysis`).
+## Step 5: Module drivers
 
-## Step 5: Interpret biological modules
+Top features driving each analysed Louvain module (by mean oriented z-score).
 
-**Goal:** Identify which background traits and collapsed pathway/gene features drive each signed Louvain module.
-
-```{r step5-driver-info}
+```{r step5-drivers}
 driver_info <- pleiotropy$feature_info |>
   dplyr::transmute(
     trait_id = feature_id,
     trait_name = feature_name,
     feature_type = feature_type
   )
-```
 
-```{r step5-summarise}
 module_drivers <- summarise_snp_modules(
   x_matrix = X_star[, names(clusters_analysis), drop = FALSE],
   cluster = clusters_analysis,
@@ -290,35 +237,122 @@ module_drivers <- summarise_snp_modules(
   top_n = 10
 )
 
-module_drivers
-```
+pivot_cluster_features <- function(df) {
+  df |>
+    dplyr::group_by(cluster) |>
+    dplyr::mutate(rank = dplyr::row_number()) |>
+    dplyr::ungroup() |>
+    dplyr::select(cluster, rank, trait_name) |>
+    tidyr::pivot_wider(
+      names_from = cluster,
+      values_from = trait_name,
+      names_prefix = "Cluster "
+    ) |>
+    dplyr::rename(`#` = rank)
+}
 
-```{r step5-by-cluster}
-module_drivers |>
-  dplyr::group_by(cluster, feature_type) |>
+unique_top10 <- module_drivers |>
+  dplyr::group_by(trait_id) |>
+  dplyr::filter(dplyr::n() == 1L) |>
+  dplyr::ungroup() |>
+  dplyr::group_by(cluster) |>
+  dplyr::slice_head(n = 10) |>
+  dplyr::ungroup()
+
+molecular_top5 <- summarise_snp_modules(
+  x_matrix = X_star[, names(clusters_analysis), drop = FALSE],
+  cluster = clusters_analysis,
+  trait_info = driver_info,
+  exclude_trait_id = target_trait_id
+) |>
+  dplyr::filter(feature_type %in% c("gene", "pathway")) |>
+  dplyr::group_by(cluster) |>
   dplyr::slice_head(n = 5) |>
-  dplyr::select(cluster, feature_type, trait_name, mean_z, abs_mean_z, n_snps) |>
-  dplyr::mutate(
-    mean_z = round(mean_z, 2),
-    abs_mean_z = round(abs_mean_z, 2)
-  )
-```
+  dplyr::ungroup()
 
-Pathway and gene rows in `module_drivers` reflect collapsed molecular QTL networks; trait rows are standard background phenotypes. Positive `mean_z` means the feature tends to increase when module SNPs increase target-trait liability.
+knitr::kable(
+  pivot_cluster_features(module_drivers),
+  caption = "Top 10 driver features per module",
+  na = "",
+  align = c("r", rep("l", length(large_clusters)))
+)
 
-### Heatmap of SNP similarity (signed Louvain modules > 3 SNPs)
+knitr::kable(
+  pivot_cluster_features(unique_top10),
+  caption = "Top 10 unique drivers per module (not in another module's top 10)",
+  na = "",
+  align = c("r", rep("l", length(large_clusters)))
+)
 
-```{r step5-heatmap, fig.height = 7, fig.width = 7}
-snp_order <- names(clusters_analysis)[order(clusters_analysis)]
-S_modules <- S[snp_order, snp_order, drop = FALSE]
-
-heatmap(
-  S_modules,
-  scale = "none",
-  main = paste0("Signed Louvain modules (n > ", min_module_size, " SNPs)"),
-  xlab = "SNPs",
-  ylab = "SNPs"
+knitr::kable(
+  pivot_cluster_features(molecular_top5),
+  caption = "Top 5 gene or pathway drivers per module",
+  na = "",
+  align = c("r", rep("l", length(large_clusters)))
 )
 ```
 
-Collapsing molecular QTLs into pathway features before singleton filtering reduces row sparsity and lets signed Louvain modules reflect shared biology at both the phenotypic and pathway level.
+## Verification 3: pathway enrichment per Louvain module
+
+For modules with more than `min_group_size` SNPs, re-run the same KEGG + Reactome enrichment and compare to the baseline trait gene set: do the same pathways come back, and do they split cleanly across modules?
+
+```{r verify3-enrichment}
+module_enrichment <- enrich_snp_group_pathways(
+  groups = clusters_louvain$cluster,
+  coloc_groups = coloc_groups,
+  min_group_size = min_group_size,
+  sources = c("KEGG", "Reactome")
+)
+pathway_comparison <- compare_group_pathways(baseline_pathways, module_enrichment)
+
+knitr::kable(
+  module_enrichment$summary,
+  caption = paste0(
+    "Pathway enrichment per Louvain module (> ", min_group_size, " SNPs)"
+  ),
+  na = "",
+  align = c("l", "r", "r", "r", "l")
+)
+
+knitr::kable(
+  pathway_comparison$group_overlap,
+  caption = "Per-module overlap with baseline trait pathways",
+  na = "",
+  align = c("l", "r", "r", "r")
+)
+
+knitr::kable(
+  pathway_comparison$pathway_status,
+  caption = "Baseline vs module pathway status",
+  na = "",
+  align = c("l", "l", "r", "r", "l", "l")
+)
+```
+
+```{r verify3-details, echo=FALSE, results='asis'}
+if (length(module_enrichment$by_group) == 0) {
+  cat(
+    "\n\nNo modules with more than ", min_group_size, " SNPs.\n\n",
+    sep = ""
+  )
+} else {
+  for (x in module_enrichment$by_group) {
+    cat("\n\n### Module ", x$group, "\n\n", sep = "")
+    cat("SNPs: ", x$n_snps, "; genes: ", nrow(x$genes), "\n\n", sep = "")
+    if (nrow(x$genes) > 0) {
+      print(knitr::kable(x$genes, caption = "Genes at module SNPs", row.names = FALSE))
+    }
+    if (nrow(x$pathways) > 0) {
+      print(knitr::kable(
+        x$pathways |>
+          dplyr::mutate(
+            p_value = signif(p_value, 3),
+            fdr = signif(fdr, 3)
+          ),
+        caption = "Enriched pathways (KEGG + Reactome, FDR <= 0.05)",
+        row.names = FALSE
+      ))
+    }
+  }
+}
+```

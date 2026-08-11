@@ -229,11 +229,20 @@ build_bivariate_pleiotropy_matrices <- function(trait_id_1,
 #' Matrix values use gene contributions \eqn{z_{gj} \cdot P_{gt}} aggregated by
 #' mean within each pathway feature; orientation applies \eqn{\mathrm{sign}(z_j)}
 #' in `orient_pleiotropy_matrix()`.
-#' @inheritParams build_pleiotropy_matrix
+#'
+#' Cell values are populated from the dense association graph returned by
+#' `trait(..., include_full_associations = TRUE)$full_associations`
+#' (z = beta / se), joined to background traits and molecular QTL studies via
+#' `study_id` and restricted to target-trait SNPs from `coloc_groups`.
+#' @param trait_id Numeric ID of the target trait whose associated SNPs define the columns.
+#' @param p_threshold P-value threshold for including a target-trait SNP. Defaults to 5e-8.
+#' @param snp_key Column used to name SNP columns: `"variant_id"`, `"display_snp"`, or
+#'   `"coloc_group_id"`. Defaults to `"variant_id"`.
 #' @param feature_map Optional gene-to-feature mapping from `build_pathway_feature_map()`.
 #'   If NULL, built from genes at the target SNP loci.
 #' @param pathway_source Optional pathway source passed to `pathway_enrichment()`.
-#' @param pathway_p_value_threshold FDR threshold for pathway enrichment.
+#' @param pathway_min_size Minimum pathway size for collapse. Defaults to 5.
+#' @param pathway_max_size Maximum pathway size for collapse. Defaults to 200.
 #' @param minimum_count_in_network Minimum gene overlap per pathway term.
 #' @return A list with:
 #'   \itemize{
@@ -244,12 +253,12 @@ build_bivariate_pleiotropy_matrices <- function(trait_id_1,
 #'   }
 #' @export
 build_feature_pleiotropy_matrix <- function(trait_id,
-                                            coloc_groups = NULL,
                                             p_threshold = NULL,
                                             snp_key = c("variant_id", "display_snp", "coloc_group_id"),
                                             feature_map = NULL,
                                             pathway_source = NULL,
-                                            pathway_p_value_threshold = 0.05,
+                                            pathway_min_size = 5L,
+                                            pathway_max_size = 200L,
                                             minimum_count_in_network = NULL) {
   if (missing(trait_id) || is.null(trait_id)) {
     stop("trait_id is required")
@@ -258,13 +267,14 @@ build_feature_pleiotropy_matrix <- function(trait_id,
   snp_key <- match.arg(snp_key)
   target_id <- trait_id
 
-  if (is.null(coloc_groups)) {
-    coloc_groups <- trait(target_id, include_associations = TRUE)$coloc_groups
-  }
+  trait_data <- trait(target_id, include_full_associations = TRUE)
+  coloc_groups <- trait_data$coloc_groups
+  full_associations <- trait_data$full_associations
 
-  locus_data <- .prepare_pleiotropy_locus_data(
+  locus_data <- .prepare_dense_locus_data(
     trait_id = target_id,
     coloc_groups = coloc_groups,
+    full_associations = full_associations,
     p_threshold = p_threshold,
     snp_key = snp_key
   )
@@ -277,7 +287,9 @@ build_feature_pleiotropy_matrix <- function(trait_id,
     map_result <- build_pathway_feature_map(
       genes = unique(gene_z$gene_id),
       source = pathway_source,
-      p_value_threshold = pathway_p_value_threshold,
+      p_value_threshold = 1,
+      min_size = pathway_min_size,
+      max_size = pathway_max_size,
       minimum_count_in_network = minimum_count_in_network
     )
     feature_map <- map_result$feature_map
@@ -291,11 +303,24 @@ build_feature_pleiotropy_matrix <- function(trait_id,
     snp_ids = snp_ids
   )
 
+  snp_cols <- colnames(matrix_result$x_matrix)
   z_target <- stats::setNames(
-    locus_data$z_target$z,
-    as.character(locus_data$z_target$snp_id)
+    rep(NA_real_, length(snp_cols)),
+    snp_cols
   )
-  z_target <- z_target[colnames(matrix_result$x_matrix)]
+  if (nrow(locus_data$z_target) > 0) {
+    z_idx <- match(snp_cols, locus_data$z_target$snp_id)
+    matched <- !is.na(z_idx)
+    z_target[matched] <- locus_data$z_target$z[z_idx[matched]]
+  }
+
+  target_row <- as.character(target_id)
+  if (target_row %in% rownames(matrix_result$x_matrix)) {
+    missing <- is.na(z_target)
+    if (any(missing)) {
+      z_target[missing] <- matrix_result$x_matrix[target_row, missing, drop = TRUE]
+    }
+  }
 
   snp_info <- locus_data$target_snps |>
     dplyr::filter(snp_id %in% colnames(matrix_result$x_matrix)) |>
@@ -319,6 +344,10 @@ build_feature_pleiotropy_matrix <- function(trait_id,
 #' @param genes Numeric gene IDs or gene names accepted by `pathway_enrichment()`.
 #' @param source Optional pathway source: `"Reactome"`, `"KEGG"`, or `"HP"`.
 #' @param p_value_threshold FDR threshold for enriched pathways.
+#' @param min_size Optional minimum pathway size; pathways smaller than this are
+#'   dropped. Defaults to `NULL` (no minimum).
+#' @param max_size Optional maximum pathway size; pathways larger than this are
+#'   dropped. Defaults to `NULL` (no maximum).
 #' @param minimum_count_in_network Minimum overlap per pathway term.
 #' @return A list with `feature_map` (gene_id, feature_id, feature_name, source)
 #'   and `pathway_enrichment`.
@@ -326,6 +355,8 @@ build_feature_pleiotropy_matrix <- function(trait_id,
 build_pathway_feature_map <- function(genes,
                                     source = NULL,
                                     p_value_threshold = 0.05,
+                                    min_size = NULL,
+                                    max_size = NULL,
                                     minimum_count_in_network = NULL) {
   if (is.null(genes) || length(genes) == 0) {
     stop("genes is required")
@@ -347,8 +378,17 @@ build_pathway_feature_map <- function(genes,
   )
 
   if (is.data.frame(pathway_enrichment$results) && nrow(pathway_enrichment$results) > 0) {
-    pathway_rows <- lapply(seq_len(nrow(pathway_enrichment$results)), function(i) {
-      row <- pathway_enrichment$results[i, , drop = FALSE]
+    pathway_results <- pathway_enrichment$results
+    if (!is.null(min_size)) {
+      pathway_results <- pathway_results |>
+        dplyr::filter(pathway_size >= min_size)
+    }
+    if (!is.null(max_size)) {
+      pathway_results <- pathway_results |>
+        dplyr::filter(pathway_size <= max_size)
+    }
+    pathway_rows <- lapply(seq_len(nrow(pathway_results)), function(i) {
+      row <- pathway_results[i, , drop = FALSE]
       overlap_genes <- row$gene_ids[[1]]
       if (length(overlap_genes) == 0) {
         return(NULL)
@@ -375,6 +415,12 @@ build_pathway_feature_map <- function(genes,
 #' @description Like `build_bivariate_pleiotropy_matrices()`, but gene-linked molecular
 #' QTL rows are collapsed into pathway/gene **features** while standard background
 #' trait rows are retained. Row names are aligned across both matrices.
+#'
+#' Cell values use the dense association graph from
+#' `trait(..., include_full_associations = TRUE)$full_associations` for each target
+#' trait (z = beta / se), as in `build_feature_pleiotropy_matrix()`. Pathway collapse
+#' keeps all returned pathways of size `pathway_min_size`--`pathway_max_size` with no
+#' FDR cut (`p_value_threshold = 1` in enrichment).
 #' @inheritParams build_bivariate_pleiotropy_matrices
 #' @inheritParams build_feature_pleiotropy_matrix
 #' @return A list with aligned `x1_matrix`, `x2_matrix`, `feature_info`, `z_target_1`,
@@ -386,7 +432,8 @@ build_bivariate_feature_pleiotropy_matrices <- function(trait_id_1,
                                                         p_threshold = NULL,
                                                         snp_key = c("variant_id", "display_snp", "coloc_group_id"),
                                                         pathway_source = NULL,
-                                                        pathway_p_value_threshold = 0.05,
+                                                        pathway_min_size = 5L,
+                                                        pathway_max_size = 200L,
                                                         minimum_count_in_network = NULL) {
   if (missing(trait_id_1) || is.null(trait_id_1) ||
       missing(trait_id_2) || is.null(trait_id_2)) {
@@ -402,15 +449,20 @@ build_bivariate_feature_pleiotropy_matrices <- function(trait_id_1,
     )$coloc_groups
   }
 
-  locus_data_1 <- .prepare_pleiotropy_locus_data(
+  trait_data_1 <- trait(trait_id_1, include_full_associations = TRUE)
+  trait_data_2 <- trait(trait_id_2, include_full_associations = TRUE)
+
+  locus_data_1 <- .prepare_dense_locus_data(
     trait_id = trait_id_1,
     coloc_groups = coloc_groups,
+    full_associations = trait_data_1$full_associations,
     p_threshold = p_threshold,
     snp_key = snp_key
   )
-  locus_data_2 <- .prepare_pleiotropy_locus_data(
+  locus_data_2 <- .prepare_dense_locus_data(
     trait_id = trait_id_2,
     coloc_groups = coloc_groups,
+    full_associations = trait_data_2$full_associations,
     p_threshold = p_threshold,
     snp_key = snp_key
   )
@@ -432,7 +484,9 @@ build_bivariate_feature_pleiotropy_matrices <- function(trait_id_1,
     map_result <- build_pathway_feature_map(
       genes = shared_genes,
       source = pathway_source,
-      p_value_threshold = pathway_p_value_threshold,
+      p_value_threshold = 1,
+      min_size = pathway_min_size,
+      max_size = pathway_max_size,
       minimum_count_in_network = minimum_count_in_network
     )
     feature_map <- map_result$feature_map
@@ -464,16 +518,49 @@ build_bivariate_feature_pleiotropy_matrices <- function(trait_id_1,
     dplyr::distinct(feature_id, .keep_all = TRUE) |>
     dplyr::filter(feature_id %in% shared_feature_ids)
 
+  x1_matrix <- .align_pleiotropy_rows(matrix_1$x_matrix, shared_feature_ids)
+  x2_matrix <- .align_pleiotropy_rows(matrix_2$x_matrix, shared_feature_ids)
+
+  z_target_1 <- stats::setNames(
+    rep(NA_real_, ncol(x1_matrix)),
+    colnames(x1_matrix)
+  )
+  if (nrow(locus_data_1$z_target) > 0) {
+    z_idx <- match(colnames(x1_matrix), locus_data_1$z_target$snp_id)
+    matched <- !is.na(z_idx)
+    z_target_1[matched] <- locus_data_1$z_target$z[z_idx[matched]]
+  }
+  target_row_1 <- as.character(trait_id_1)
+  if (target_row_1 %in% rownames(x1_matrix)) {
+    missing <- is.na(z_target_1)
+    if (any(missing)) {
+      z_target_1[missing] <- x1_matrix[target_row_1, missing, drop = TRUE]
+    }
+  }
+
+  z_target_2 <- stats::setNames(
+    rep(NA_real_, ncol(x2_matrix)),
+    colnames(x2_matrix)
+  )
+  if (nrow(locus_data_2$z_target) > 0) {
+    z_idx <- match(colnames(x2_matrix), locus_data_2$z_target$snp_id)
+    matched <- !is.na(z_idx)
+    z_target_2[matched] <- locus_data_2$z_target$z[z_idx[matched]]
+  }
+  target_row_2 <- as.character(trait_id_2)
+  if (target_row_2 %in% rownames(x2_matrix)) {
+    missing <- is.na(z_target_2)
+    if (any(missing)) {
+      z_target_2[missing] <- x2_matrix[target_row_2, missing, drop = TRUE]
+    }
+  }
+
   return(list(
-    x1_matrix = .align_pleiotropy_rows(matrix_1$x_matrix, shared_feature_ids),
-    x2_matrix = .align_pleiotropy_rows(matrix_2$x_matrix, shared_feature_ids),
+    x1_matrix = x1_matrix,
+    x2_matrix = x2_matrix,
     feature_info = feature_info,
-    z_target_1 = stats::setNames(locus_data_1$z_target$z, as.character(locus_data_1$z_target$snp_id))[
-      colnames(matrix_1$x_matrix)
-    ],
-    z_target_2 = stats::setNames(locus_data_2$z_target$z, as.character(locus_data_2$z_target$snp_id))[
-      colnames(matrix_2$x_matrix)
-    ],
+    z_target_1 = z_target_1,
+    z_target_2 = z_target_2,
     snp_info_1 = locus_data_1$target_snps |> dplyr::distinct(),
     snp_info_2 = locus_data_2$target_snps |> dplyr::distinct(),
     trait_id_1 = trait_id_1,
@@ -733,9 +820,12 @@ build_bivariate_feature_pleiotropy_matrices <- function(trait_id_1,
     stop("coloc_groups must include column: ", snp_key)
   }
 
+  # Bind locally so dplyr::filter does not treat both sides as the column
+  target_id <- trait_id
+
   target_snps <- coloc_groups |>
     dplyr::filter(
-      trait_id == trait_id,
+      trait_id == target_id,
       if (!is.null(p_threshold)) min_p <= p_threshold else TRUE,
       !is.na(beta),
       !is.na(se),
@@ -758,7 +848,76 @@ build_bivariate_feature_pleiotropy_matrices <- function(trait_id_1,
     )
 
   z_target <- cg |>
-    dplyr::filter(trait_id == trait_id) |>
+    dplyr::filter(trait_id == target_id) |>
+    dplyr::group_by(snp_id) |>
+    dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
+    dplyr::ungroup() |>
+    dplyr::select("snp_id", "z")
+
+  return(list(
+    target_snps = target_snps,
+    cg = cg,
+    z_target = z_target
+  ))
+}
+
+
+.prepare_dense_locus_data <- function(trait_id, coloc_groups, full_associations, p_threshold, snp_key) {
+  if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {
+    stop("No coloc_groups data available")
+  }
+  if (is.null(full_associations) || nrow(full_associations) == 0) {
+    stop("full_associations is required (use include_full_associations = TRUE)")
+  }
+  if (!snp_key %in% names(coloc_groups)) {
+    stop("coloc_groups must include column: ", snp_key)
+  }
+
+  target_id <- trait_id
+
+  target_snps <- coloc_groups |>
+    dplyr::filter(
+      trait_id == target_id,
+      if (!is.null(p_threshold)) min_p <= p_threshold else TRUE
+    ) |>
+    dplyr::mutate(snp_id = as.character(.data[[snp_key]])) |>
+    dplyr::distinct(coloc_group_id, snp_id, variant_id, display_snp, chr, bp)
+
+  if (nrow(target_snps) == 0) {
+    stop("No target-trait SNPs after filtering")
+  }
+
+  study_map <- coloc_groups |>
+    dplyr::filter(!is.na(study_id)) |>
+    dplyr::distinct(study_id, trait_id, trait_name, gene_id, gene)
+
+  if ("existing_study_id" %in% names(coloc_groups)) {
+    existing_map <- coloc_groups |>
+      dplyr::filter(!is.na(existing_study_id)) |>
+      dplyr::transmute(
+        study_id = existing_study_id,
+        trait_id = trait_id,
+        trait_name = trait_name,
+        gene_id = gene_id,
+        gene = gene
+      ) |>
+      dplyr::distinct()
+    study_map <- dplyr::bind_rows(study_map, existing_map) |>
+      dplyr::distinct(study_id, trait_id, trait_name, gene_id, gene)
+  }
+
+  cg <- full_associations |>
+    dplyr::filter(!is.na(beta), !is.na(se), se > 0) |>
+    dplyr::inner_join(study_map, by = "study_id") |>
+    dplyr::inner_join(
+      target_snps |> dplyr::select("variant_id", "snp_id", "coloc_group_id"),
+      by = "variant_id"
+    ) |>
+    dplyr::mutate(z = beta / se, min_p = p)
+
+  z_target <- cg |>
+    dplyr::filter(trait_id == target_id) |>
+    dplyr::mutate(snp_id = as.character(snp_id)) |>
     dplyr::group_by(snp_id) |>
     dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
     dplyr::ungroup() |>
@@ -875,31 +1034,109 @@ cross_snp_similarity_matrix <- function(x1_matrix, x2_matrix, na_as_zero = TRUE)
 }
 
 
-#' @title Dual Hierarchical Clustering of Cross-Trait SNP Similarity
+#' @title Cluster Cross-Trait SNPs From a Similarity Matrix
 #' @description Cluster Trait-1 and Trait-2 SNPs independently from a rectangular
-#' cross-similarity matrix. Row SNPs are clustered on Euclidean distance across
-#' similarity profiles; column SNPs are clustered on the transposed matrix.
+#' cross-similarity matrix (`S^*`). Hierarchical clustering uses Euclidean distance
+#' across cross-trait similarity profiles. Signed Louvain clusters cosine similarity
+#' between those profiles (rows of `S^*` for Trait-1 SNPs; columns for Trait-2 SNPs).
 #' @param s_matrix Rectangular cross-trait similarity matrix from
 #'   `cross_snp_similarity_matrix()$s_matrix`.
-#' @param linkage Linkage method passed to `stats::hclust()`. Defaults to `"average"`.
-#' @param k1 Optional number of row (Trait-1 SNP) clusters.
-#' @param k2 Optional number of column (Trait-2 SNP) clusters.
+#' @param method Clustering method: `"hierarchical"` or `"louvain"`.
+#' @param linkage Linkage method passed to `stats::hclust()` for hierarchical
+#'   clustering and for dendrogram ordering when `method = "louvain"`.
+#'   Defaults to `"average"`.
+#' @param k1 Optional number of row (Trait-1 SNP) clusters when
+#'   `method = "hierarchical"`.
+#' @param k2 Optional number of column (Trait-2 SNP) clusters when
+#'   `method = "hierarchical"`.
+#' @param similarity_threshold Minimum absolute profile similarity for off-diagonal
+#'   SNP pairs when `method = "louvain"`. Weaker edges are zeroed before signed
+#'   Louvain. Set to `NULL` or `0` to use the full matrix. Defaults to `NULL`.
+#' @param gamma Resolution parameter for signed Louvain when `method = "louvain"`.
+#'   Values greater than 1 tend to yield more, smaller modules. Defaults to `1`.
 #' @return A list with:
 #'   \itemize{
-#'     \item hclust_rows: hierarchical clustering of Trait-1 SNPs
-#'     \item hclust_cols: hierarchical clustering of Trait-2 SNPs
-#'     \item clusters_rows: row cluster assignments if `k1` is set
-#'     \item clusters_cols: column cluster assignments if `k2` is set
+#'     \item method: clustering method used
+#'     \item hclust_rows: hierarchical clustering of Trait-1 SNPs (ordering)
+#'     \item hclust_cols: hierarchical clustering of Trait-2 SNPs (ordering)
+#'     \item clusters_rows: row cluster assignments (`k1` for hierarchical;
+#'       always returned for Louvain)
+#'     \item clusters_cols: column cluster assignments (`k2` for hierarchical;
+#'       always returned for Louvain)
+#'     \item profile_similarity_rows, profile_similarity_cols: square profile
+#'       similarity matrices when `method = "louvain"`
+#'     \item louvain_rows, louvain_cols: full output from `cluster_snp_profiles()`
+#'       when `method = "louvain"`
 #'   }
 #' @export
 cluster_cross_trait_snps <- function(s_matrix,
+                                     method = c("hierarchical", "louvain"),
                                      linkage = "average",
                                      k1 = NULL,
-                                     k2 = NULL) {
+                                     k2 = NULL,
+                                     similarity_threshold = NULL,
+                                     gamma = 1) {
+  method <- match.arg(method)
+
   if (!is.matrix(s_matrix)) {
     stop("s_matrix must be a matrix")
   }
+  if (!is.null(similarity_threshold) && similarity_threshold < 0) {
+    stop("similarity_threshold must be NULL, 0, or a non-negative value")
+  }
+  if (gamma <= 0) {
+    stop("gamma must be positive")
+  }
 
+  if (method == "hierarchical") {
+    return(.cluster_cross_trait_hierarchical(
+      s_matrix = s_matrix,
+      linkage = linkage,
+      k1 = k1,
+      k2 = k2
+    ))
+  }
+
+  profile_rows <- .profile_similarity_matrix(s_matrix, margin = "rows")
+  profile_cols <- .profile_similarity_matrix(s_matrix, margin = "cols")
+
+  louvain_rows <- cluster_snp_profiles(
+    profile_rows,
+    method = "community",
+    community_algorithm = "louvain",
+    similarity_threshold = similarity_threshold,
+    gamma = gamma
+  )
+  louvain_cols <- cluster_snp_profiles(
+    profile_cols,
+    method = "community",
+    community_algorithm = "louvain",
+    similarity_threshold = similarity_threshold,
+    gamma = gamma
+  )
+
+  dist_rows <- stats::dist(1 - profile_rows, method = "euclidean")
+  dist_cols <- stats::dist(1 - profile_cols, method = "euclidean")
+  hclust_rows <- stats::hclust(dist_rows, method = linkage)
+  hclust_cols <- stats::hclust(dist_cols, method = linkage)
+
+  return(list(
+    method = "louvain",
+    hclust_rows = hclust_rows,
+    hclust_cols = hclust_cols,
+    clusters_rows = louvain_rows$cluster,
+    clusters_cols = louvain_cols$cluster,
+    profile_similarity_rows = profile_rows,
+    profile_similarity_cols = profile_cols,
+    louvain_rows = louvain_rows,
+    louvain_cols = louvain_cols,
+    similarity_threshold = similarity_threshold,
+    gamma = gamma
+  ))
+}
+
+
+.cluster_cross_trait_hierarchical <- function(s_matrix, linkage, k1, k2) {
   s <- s_matrix
   s[!is.finite(s)] <- 0
 
@@ -910,6 +1147,7 @@ cluster_cross_trait_snps <- function(s_matrix,
   hclust_cols <- stats::hclust(dist_cols, method = linkage)
 
   out <- list(
+    method = "hierarchical",
     hclust_rows = hclust_rows,
     hclust_cols = hclust_cols
   )
@@ -922,6 +1160,68 @@ cluster_cross_trait_snps <- function(s_matrix,
   }
 
   return(out)
+}
+
+
+.normalize_pleiotropy_rows <- function(x_matrix, na_as_zero = TRUE) {
+  if (!is.matrix(x_matrix)) {
+    stop("x_matrix must be a matrix")
+  }
+
+  x <- x_matrix
+  if (na_as_zero) {
+    x[is.na(x)] <- 0
+  } else if (anyNA(x)) {
+    stop("x_matrix contains NA; set na_as_zero = TRUE or impute missing values")
+  }
+
+  row_norms <- sqrt(rowSums(x^2))
+  zero_rows <- row_norms == 0
+  if (any(zero_rows)) {
+    warning(
+      "One or more rows have zero norm; those rows are treated as zero vectors"
+    )
+  }
+
+  row_norms_div <- row_norms
+  row_norms_div[zero_rows] <- 1
+  x_norm <- sweep(x, 1, row_norms_div, "/")
+  if (!is.matrix(x_norm)) {
+    x_norm <- matrix(x_norm, nrow = nrow(x), dimnames = dimnames(x))
+  }
+  if (any(zero_rows)) {
+    row_mask <- rep(1, nrow(x_norm))
+    row_mask[zero_rows] <- 0
+    x_norm <- sweep(x_norm, 1, row_mask, "*")
+  }
+
+  return(list(
+    x_norm = x_norm,
+    row_norms = stats::setNames(row_norms, rownames(x_matrix))
+  ))
+}
+
+
+.profile_similarity_matrix <- function(x_matrix,
+                                       margin = c("rows", "cols"),
+                                       na_as_zero = TRUE) {
+  margin <- match.arg(margin)
+
+  if (margin == "rows") {
+    norm <- .normalize_pleiotropy_rows(x_matrix, na_as_zero = na_as_zero)
+    s_matrix <- tcrossprod(norm$x_norm)
+    snp_ids <- rownames(x_matrix)
+  } else {
+    norm <- .normalize_pleiotropy_columns(x_matrix, na_as_zero = na_as_zero)
+    s_matrix <- crossprod(norm$x_norm)
+    snp_ids <- colnames(x_matrix)
+  }
+
+  if (!is.null(snp_ids)) {
+    dimnames(s_matrix) <- list(snp_ids, snp_ids)
+  }
+
+  return(s_matrix)
 }
 
 
@@ -1050,6 +1350,12 @@ snp_similarity_matrix <- function(x_matrix, na_as_zero = TRUE) {
 #'   on the positive similarity subgraph; requires **igraph**) or `"louvain"`
 #'   (signed Louvain maximising Gomez signed modularity on the full cosine
 #'   similarity matrix, including negative anti-parallel edges).
+#' @param similarity_threshold Minimum absolute similarity for off-diagonal SNP pairs.
+#'   Weaker edges are zeroed before clustering to reduce background connectivity.
+#'   Set to `NULL` or `0` to use the full matrix. Defaults to `NULL`.
+#' @param gamma Resolution parameter for signed Louvain (`method = "community"`,
+#'   `community_algorithm = "louvain"`). Values greater than 1 tend to yield more,
+#'   smaller modules. Defaults to `1`.
 #' @param na_as_zero Treat `NA` entries as zero when building latent coordinates
 #'   for GMM clustering.
 #' @param n_latent Number of latent dimensions for GMM clustering. Defaults to
@@ -1060,6 +1366,8 @@ snp_similarity_matrix <- function(x_matrix, na_as_zero = TRUE) {
 #'     \item method: clustering method used
 #'     \item k: requested number of clusters (`NA` for Louvain)
 #'     \item n_clusters: number of clusters returned
+#'     \item similarity_threshold: edge threshold applied before clustering
+#'     \item gamma: Louvain resolution used (NA for other methods)
 #'     \item details: method-specific objects (e.g. `hclust`, `kmeans`, `mclust`)
 #'   }
 #' @export
@@ -1069,6 +1377,8 @@ cluster_snp_profiles <- function(s_matrix,
                                  x_matrix = NULL,
                                  linkage = "average",
                                  community_algorithm = c("leading_eigen", "louvain"),
+                                 similarity_threshold = NULL,
+                                 gamma = 1,
                                  na_as_zero = TRUE,
                                  n_latent = NULL) {
   method <- match.arg(method)
@@ -1079,6 +1389,12 @@ cluster_snp_profiles <- function(s_matrix,
   }
   if (method == "gmm" && is.null(x_matrix)) {
     stop("x_matrix is required when method = 'gmm'")
+  }
+  if (!is.null(similarity_threshold) && similarity_threshold < 0) {
+    stop("similarity_threshold must be NULL, 0, or a non-negative value")
+  }
+  if (gamma <= 0) {
+    stop("gamma must be positive")
   }
 
   snp_ids <- colnames(s_matrix)
@@ -1091,12 +1407,21 @@ cluster_snp_profiles <- function(s_matrix,
   diag(S) <- 1
   S[!is.finite(S)] <- 0
 
+  if (!is.null(similarity_threshold) && similarity_threshold > 0) {
+    S <- .sparsify_similarity_matrix(S, threshold = similarity_threshold)
+  }
+
   if (method == "hierarchical") {
     result <- .cluster_snps_hierarchical(S, k = k, linkage = linkage)
   } else if (method == "spectral") {
     result <- .cluster_snps_spectral(S, k = k)
   } else if (method == "community") {
-    result <- .cluster_snps_community(S, k = k, algorithm = community_algorithm)
+    result <- .cluster_snps_community(
+      S,
+      k = k,
+      algorithm = community_algorithm,
+      gamma = gamma
+    )
   } else {
     result <- .cluster_snps_gmm(
       x_matrix = x_matrix,
@@ -1114,8 +1439,21 @@ cluster_snp_profiles <- function(s_matrix,
     method = method,
     k = if (method == "community" && community_algorithm == "louvain") NA_integer_ else k,
     n_clusters = length(unique(clusters)),
+    similarity_threshold = similarity_threshold,
+    gamma = if (method == "community" && community_algorithm == "louvain") gamma else NA_real_,
     details = result$details
   ))
+}
+
+
+.sparsify_similarity_matrix <- function(s_matrix, threshold) {
+  n <- nrow(s_matrix)
+  out <- s_matrix
+  off_diag <- matrix(TRUE, n, n)
+  diag(off_diag) <- FALSE
+  out[off_diag & abs(out) < threshold] <- 0
+  diag(out) <- 1
+  return(out)
 }
 
 
@@ -1327,17 +1665,13 @@ cluster_snp_profiles <- function(s_matrix,
 }
 
 
-.cluster_snps_community <- function(s_matrix, k, algorithm) {
-  if (!requireNamespace("igraph", quietly = TRUE)) {
-    stop("Package 'igraph' is required for community detection", call. = FALSE)
-  }
-
+.cluster_snps_community <- function(s_matrix, k, algorithm, gamma = 1) {
   affinity <- s_matrix
   diag(affinity) <- 0
   affinity[!is.finite(affinity)] <- 0
 
   if (algorithm == "louvain") {
-    signed <- .cluster_louvain_signed(affinity, seed = 1L)
+    signed <- .cluster_louvain_signed(affinity, gamma = gamma, seed = 1L)
     graph <- .igraph_from_signed_adjacency(affinity)
 
     return(list(
@@ -1346,6 +1680,7 @@ cluster_snp_profiles <- function(s_matrix,
         igraph = graph,
         modularity = signed$modularity,
         qtype = signed$qtype,
+        gamma = gamma,
         algorithm = "signed_louvain"
       )
     ))

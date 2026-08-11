@@ -2,7 +2,7 @@
 % Please edit documentation in R/ebmf_clustering.R
 \name{summarise_ebmf_program_drivers}
 \alias{summarise_ebmf_program_drivers}
-\title{Summarise EBMF Program Trait Drivers}
+\title{Summarise EBMF Program Feature Drivers}
 \usage{
 summarise_ebmf_program_drivers(
   flash_fit,
@@ -14,15 +14,17 @@ summarise_ebmf_program_drivers(
 \arguments{
 \item{flash_fit}{A \code{flash} object from \code{run_ebmf()}.}
 
-\item{trait_info}{Optional trait metadata with \code{trait_id} and \code{trait_name}.}
+\item{trait_info}{Optional feature metadata with \code{trait_id} and
+\code{trait_name}.}
 
-\item{lfsr_threshold}{lFSR threshold for trait loadings. Defaults to \code{0.05}.}
+\item{lfsr_threshold}{lFSR threshold for feature loadings. Defaults to
+\code{0.05}.}
 
 \item{magnitude_threshold}{Minimum absolute loading. Defaults to \code{0.05}.}
 }
 \value{
-A dataframe of significant trait loadings per program.
+A dataframe of significant feature loadings per program.
 }
 \description{
-Rank trait loadings for each discovered EBMF program.
+Rank feature loadings for each discovered EBMF program.
 }

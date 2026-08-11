@@ -1,0 +1,487 @@
+---
+title: "Investigation of SNP perturbation clustering"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Investigation of SNP perturbation clustering}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+```{r libraries}
+pkg_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("devtools", quietly = TRUE)) {
+  devtools::load_all(pkg_root, quiet = TRUE)
+} else {
+  library(gpmapr)
+}
+library(dplyr)
+```
+
+This vignette implements the **SNP perturbation clustering** framework for comparison with the existing univariate / collapsable / EBMF workflows.
+
+Pipeline:
+
+1. Build / filter / orient SNP x trait and SNP x gene matrices
+2. **Verification (baseline):** top associated traits + tissue composition
+3. Weighted cosine similarity → hierarchical + Leiden clustering
+4. **Verification (modules):** top traits and tissue enrichment per Leiden module
+5. Pathway enrichment is retained as a secondary check (often empty for BMI)
+
+**Why trait/tissue verification:** BMI pathway enrichment on the full gene set is often blank, so it cannot validate modules. Trait drivers and QTL tissue enrichment still give a readable before/after check.
+
+We use **BMI** (trait id `1992`). Gene scores use weighted Stouffer with \(w_i = 1/\mathrm{SE}_i\).
+
+```{r params}
+target_trait_id <- 1992
+min_group_size <- 5
+min_feature_snps <- 5L
+w_gene <- 0.3
+w_trait <- 0.7
+hierarchical_k <- 8L
+leiden_resolution <- 0.5
+similarity_threshold <- 0.2
+use_column_scaling <- FALSE
+compress_method <- "asinh"
+top_n_traits <- 10L
+```
+
+## Step 1: Build feature matrices
+
+- **Trait matrix:** SNPs x complex traits; values = signed \(z = \beta / \mathrm{SE}\) (best \(p\) per SNP-trait).
+- **Gene matrix:** SNPs x genes; values = weighted Stouffer \(Z\) across molecular QTL evidence for each SNP-gene pair.
+- After orientation, effects are soft-compressed with \(\mathrm{asinh}(z)\) so extreme /
+  corrupt values do not dominate cosine similarity or mean-absolute trait rankings
+  (no hard clip).
+
+```{r step1-matrices}
+coloc_groups <- trait(target_trait_id, include_associations = TRUE)$coloc_groups
+pert <- build_perturbation_matrices(
+  trait_id = target_trait_id,
+  snp_key = "variant_id"
+)
+
+trait_matrix <- pert$trait_matrix
+gene_matrix <- pert$gene_matrix
+
+knitr::kable(
+  data.frame(
+    n_snps = nrow(trait_matrix),
+    n_traits = ncol(trait_matrix),
+    n_genes = ncol(gene_matrix),
+    trait_non_na = round(mean(!is.na(trait_matrix)), 3),
+    gene_non_na = round(mean(!is.na(gene_matrix)), 3)
+  ),
+  caption = "Raw perturbation feature matrix summary",
+  align = "r"
+)
+```
+
+## Step 1.5: Filter, orient, and compress
+
+Drop trait/gene columns seen in fewer than `min_feature_snps` SNPs, flip each SNP
+row by \(\mathrm{sign}(z_{\mathrm{target}})\), then apply `asinh` compression.
+
+```{r step1-filter-orient}
+filtered <- filter_perturbation_features(
+  trait_matrix = trait_matrix,
+  gene_matrix = gene_matrix,
+  min_snps = min_feature_snps
+)
+oriented <- orient_perturbation_matrices(
+  trait_matrix = filtered$trait_matrix,
+  gene_matrix = filtered$gene_matrix,
+  z_target = pert$z_target
+)
+compressed <- compress_perturbation_matrices(
+  trait_matrix = oriented$trait_matrix,
+  gene_matrix = oriented$gene_matrix,
+  method = compress_method
+)
+trait_matrix <- compressed$trait_matrix
+gene_matrix <- compressed$gene_matrix
+
+knitr::kable(
+  data.frame(
+    n_traits_kept = filtered$n_traits_kept,
+    n_traits_dropped = filtered$n_traits_dropped,
+    n_genes_kept = filtered$n_genes_kept,
+    n_genes_dropped = filtered$n_genes_dropped,
+    compress_method = compress_method,
+    max_abs_raw = round(
+      max(c(abs(oriented$trait_matrix), abs(oriented$gene_matrix)), na.rm = TRUE),
+      1
+    ),
+    max_abs_used = round(max(c(abs(trait_matrix), abs(gene_matrix)), na.rm = TRUE), 3),
+    trait_non_na = round(mean(!is.na(trait_matrix)), 3),
+    gene_non_na = round(mean(!is.na(gene_matrix)), 3)
+  ),
+  caption = "After sparse-feature filter, orientation, and asinh compression",
+  align = "r"
+)
+```
+
+## Verification 1: baseline traits and tissues
+
+Before clustering, inspect (a) which complex traits dominate the oriented SNP profiles and (b) which QTL tissues appear at these SNPs.
+
+```{r verify1-traits-tissues}
+baseline_traits <- summarise_baseline_traits(
+  trait_matrix = trait_matrix,
+  trait_info = pert$trait_info,
+  coloc_groups = coloc_groups,
+  exclude_trait_ids = target_trait_id,
+  top_n = 20L,
+  n_categories = 2L
+)
+baseline_tissues <- summarise_baseline_tissues(
+  snp_ids = rownames(trait_matrix),
+  coloc_groups = coloc_groups,
+  snp_key = "variant_id"
+)
+
+knitr::kable(
+  data.frame(
+    top_trait_categories = baseline_traits$top_categories,
+    stringsAsFactors = FALSE
+  ),
+  caption = "Baseline leading trait categories",
+  row.names = FALSE
+)
+
+knitr::kable(
+  baseline_traits$categories |>
+    dplyr::mutate(score = round(score, 2)),
+  caption = "Baseline trait-category scores (summed abs mean z)",
+  row.names = FALSE
+)
+
+knitr::kable(
+  baseline_traits$traits |>
+    dplyr::mutate(
+      mean_z = round(mean_z, 3),
+      abs_mean_z = round(abs_mean_z, 3)
+    ),
+  caption = "Baseline top associated traits (all SNPs)",
+  row.names = FALSE
+)
+
+knitr::kable(
+  utils::head(baseline_tissues, 20) |>
+    dplyr::mutate(frac_links = round(frac_links, 3)),
+  caption = "Baseline QTL tissue composition (top 20)",
+  row.names = FALSE
+)
+```
+
+## Step 2: Optional column-wise scaling
+
+Cosine similarity already L2-normalises each SNP row, so extra column scaling is
+optional. Mean-centring after `NA → 0` is harmful on this sparse matrix; if you
+enable scaling, use `scale_feature_columns(..., center = FALSE)`.
+
+```{r step2-normalize}
+if (isTRUE(use_column_scaling)) {
+  trait_for_sim <- scale_feature_columns(trait_matrix, center = FALSE)
+  gene_for_sim <- scale_feature_columns(gene_matrix, center = FALSE)
+} else {
+  trait_for_sim <- trait_matrix
+  gene_for_sim <- gene_matrix
+  trait_for_sim[is.na(trait_for_sim)] <- 0
+  gene_for_sim[is.na(gene_for_sim)] <- 0
+}
+```
+
+## Step 3: Weighted SNP similarity
+
+\[
+S = w_{\mathrm{gene}} S_{\mathrm{gene}} + w_{\mathrm{trait}} S_{\mathrm{trait}}
+\]
+
+Trait weight is higher by default because the gene matrix remains much sparser even after filtering.
+
+```{r step3-similarity}
+sim <- weighted_snp_similarity(
+  trait_matrix = trait_for_sim,
+  gene_matrix = gene_for_sim,
+  w_gene = w_gene,
+  w_trait = w_trait
+)
+S <- sim$s_matrix
+S_off <- S[upper.tri(S)]
+
+knitr::kable(
+  data.frame(
+    dim = paste(nrow(S), "x", ncol(S)),
+    w_gene = w_gene,
+    w_trait = w_trait,
+    mean_S = round(mean(S), 3),
+    mean_S_trait = round(mean(sim$s_trait), 3),
+    mean_S_gene = round(mean(sim$s_gene), 3),
+    frac_S_gt_0.2 = round(mean(S_off > 0.2), 3),
+    frac_S_gt_0.3 = round(mean(S_off > 0.3), 3)
+  ),
+  caption = "Weighted SNP similarity summary",
+  align = "r"
+)
+```
+
+## Step 4: Cluster SNPs
+
+### Hierarchical clustering
+
+```{r step4-hierarchical}
+clusters_hclust <- cluster_perturbation_snps(
+  S,
+  method = "hierarchical",
+  k = hierarchical_k
+)
+
+knitr::kable(
+  data.frame(
+    cluster = as.integer(names(table(clusters_hclust$cluster))),
+    n_snps = as.integer(table(clusters_hclust$cluster))
+  ) |>
+    dplyr::arrange(dplyr::desc(n_snps)),
+  caption = paste0("Hierarchical clusters (k = ", hierarchical_k, ")"),
+  align = "r"
+)
+```
+
+### Leiden community detection
+
+Leiden keeps positive edges with similarity at least `similarity_threshold`
+(`igraph::cluster_leiden()`). Resolution `0.5` is a practical default on this
+weighted cosine graph (resolution `1` tended to shatter into singletons).
+
+```{r step4-leiden}
+clusters_leiden <- cluster_perturbation_snps(
+  S,
+  method = "leiden",
+  similarity_threshold = similarity_threshold,
+  resolution = leiden_resolution
+)
+
+leiden_sizes <- data.frame(
+  cluster = as.integer(names(table(clusters_leiden$cluster))),
+  n_snps = as.integer(table(clusters_leiden$cluster))
+) |>
+  dplyr::arrange(dplyr::desc(n_snps))
+
+knitr::kable(
+  data.frame(
+    method = clusters_leiden$method,
+    n_clusters = clusters_leiden$n_clusters,
+    n_clusters_gt_min_group = sum(leiden_sizes$n_snps > min_group_size),
+    max_cluster_size = max(leiden_sizes$n_snps)
+  ),
+  caption = "Leiden clustering summary",
+  align = c("l", "r", "r", "r")
+)
+
+knitr::kable(
+  leiden_sizes |>
+    dplyr::filter(n_snps > 1),
+  caption = "Leiden module sizes (excluding singletons)",
+  align = "r"
+)
+```
+
+```{r step4-heatmap, fig.height = 7, fig.width = 7}
+ord <- clusters_hclust$details$hclust$order
+heatmap(
+  S[ord, ord],
+  Rowv = NA,
+  Colv = NA,
+  scale = "none",
+  main = "Weighted SNP similarity (hclust order)",
+  xlab = "SNPs",
+  ylab = "SNPs"
+)
+```
+
+## Verification 3: module-specific traits and tissues
+
+Ask whether modules recover drivers elevated vs other SNPs (trait/category
+specificity) and tissues enriched vs leave-one-out rest.
+
+```{r verify3-traits}
+group_traits <- summarise_module_specific_traits(
+  trait_matrix = trait_matrix,
+  groups = clusters_leiden$cluster,
+  trait_info = pert$trait_info,
+  coloc_groups = coloc_groups,
+  exclude_trait_ids = target_trait_id,
+  min_group_size = min_group_size,
+  top_n = top_n_traits,
+  n_categories = 2L
+)
+trait_comparison <- compare_group_traits(
+  baseline_traits = baseline_traits,
+  group_traits = group_traits,
+  top_n = top_n_traits
+)
+
+knitr::kable(
+  group_traits$summary |>
+    dplyr::mutate(
+      top_specificity = round(top_specificity, 2),
+      top_abs_mean_z = round(top_abs_mean_z, 3)
+    ),
+  caption = paste0(
+    "Module-specific traits/categories per Leiden module (> ",
+    min_group_size,
+    " SNPs)"
+  ),
+  na = "",
+  row.names = FALSE
+)
+
+knitr::kable(
+  trait_comparison$group_overlap,
+  caption = "Per-module overlap with baseline top traits",
+  row.names = FALSE
+)
+
+knitr::kable(
+  trait_comparison$trait_status |>
+    dplyr::filter(status != "baseline_only" | n_groups > 0),
+  caption = "Baseline vs module trait-driver status",
+  na = "",
+  row.names = FALSE
+)
+```
+
+```{r verify3-trait-details, echo=FALSE, results='asis'}
+for (x in group_traits$by_group) {
+  cat("\n\n### Module ", x$group, " traits\n\n", sep = "")
+  cat("SNPs: ", x$n_snps, "\n\n", sep = "")
+  cat("Leading specific categories: ", x$top_categories, "\n\n", sep = "")
+  if (nrow(x$categories) > 0) {
+    print(knitr::kable(
+      x$categories |>
+        dplyr::mutate(
+          score = round(score, 2),
+          mean_specificity = round(mean_specificity, 2)
+        ),
+      caption = "Module-specific trait categories",
+      row.names = FALSE
+    ))
+  }
+  if (nrow(x$traits) > 0) {
+    print(knitr::kable(
+      x$traits |>
+        dplyr::mutate(
+          mean_z = round(mean_z, 3),
+          abs_mean_z = round(abs_mean_z, 3),
+          abs_mean_z_rest = round(abs_mean_z_rest, 3),
+          specificity = round(specificity, 2),
+          abs_mean_z_delta = round(abs_mean_z_delta, 3)
+        ),
+      caption = "Module-specific traits",
+      row.names = FALSE
+    ))
+  }
+}
+```
+
+```{r verify3-tissues}
+group_tissues <- enrich_snp_group_tissues(
+  groups = clusters_leiden$cluster,
+  coloc_groups = coloc_groups,
+  snp_key = "variant_id",
+  min_group_size = min_group_size,
+  background = "rest"
+)
+
+knitr::kable(
+  group_tissues$summary,
+  caption = paste0(
+    "Module-specific tissue enrichment (> ", min_group_size, " SNPs; vs rest)"
+  ),
+  na = "",
+  row.names = FALSE
+)
+```
+
+```{r verify3-tissue-details, echo=FALSE, results='asis'}
+for (x in group_tissues$by_group) {
+  if (nrow(x$enriched) == 0) {
+    next
+  }
+  cat("\n\n### Module ", x$group, " enriched tissues\n\n", sep = "")
+  cat(
+    "SNPs: ", x$n_snps,
+    "; tissue links: ", x$n_tissue_links, "\n\n",
+    sep = ""
+  )
+  print(knitr::kable(
+    x$enriched |>
+      dplyr::mutate(
+        fold_enrichment = round(fold_enrichment, 2),
+        p_value = signif(p_value, 3),
+        fdr = signif(fdr, 3)
+      ),
+    caption = "Enriched tissues vs rest (hypergeometric FDR <= 0.05)",
+    row.names = FALSE
+  ))
+}
+```
+
+## Secondary check: pathway enrichment
+
+Pathway enrichment is often empty for the full BMI gene set, so it is not the primary verifier here. Results are summarised only.
+
+```{r verify-pathways-secondary}
+baseline_pathways <- enrich_trait_pathways(
+  trait_id = target_trait_id,
+  coloc_groups = coloc_groups,
+  sources = c("KEGG", "Reactome")
+)
+module_enrichment <- enrich_snp_group_pathways(
+  groups = clusters_leiden$cluster,
+  coloc_groups = coloc_groups,
+  min_group_size = min_group_size,
+  sources = c("KEGG", "Reactome")
+)
+
+knitr::kable(
+  baseline_pathways$summary,
+  caption = "Baseline pathway enrichment (secondary)",
+  na = "",
+  row.names = FALSE
+)
+
+knitr::kable(
+  module_enrichment$summary,
+  caption = "Per-module pathway enrichment (secondary)",
+  na = "",
+  row.names = FALSE
+)
+```
+
+## Comparison notes
+
+| Choice | This framework (tuned) | First draft / naive reading |
+|---|---|---|
+| Sparse features | Drop columns with `< 5` SNPs | Keep all (gene matrix ~1% filled) |
+| Orientation | Target-trait sign flip | None |
+| Extreme values | Soft `asinh(z)` compression (no hard clip) | Raw z (GFR/fibrinogen etc. dominate) |
+| Column normalisation | Off by default (optional SD scale, no centre) | Mean-centre after `NA → 0` |
+| Weights | \(w_t=0.7\), \(w_g=0.3\) | Equal 0.5 / 0.5 |
+| Leiden | `threshold=0.2`, `resolution=0.5` | `0.1` / `1` → singletons |
+| Verification | Top traits + tissue enrichment (+ pathways secondary) | Pathways only |
+
+Relative to existing gpmapr investigation pipelines, this still differs by keeping separate trait/gene similarities and using Leiden rather than signed Louvain.

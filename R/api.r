@@ -575,8 +575,9 @@ pathway_enrichment_api <- function(genes,
                                    minimum_count_in_network = NULL) {
   url <- paste0(getOption("gpmap_url"), "/v1/pathways/enrichment")
 
+  genes_vec <- if (is.numeric(genes)) as.integer(genes) else as.character(genes)
   body <- list(
-    genes = if (is.numeric(genes)) as.integer(genes) else as.character(genes),
+    genes = I(genes_vec),
     p_value_threshold = p_value_threshold
   )
   if (!is.null(source)) {
@@ -588,8 +589,8 @@ pathway_enrichment_api <- function(genes,
 
   http_response <- httr::POST(
     url,
-    body = jsonlite::toJSON(body, auto_unbox = TRUE),
-    httr::content_type_json(),
+    body = body,
+    encode = "json",
     httr::timeout(timeout_seconds)
   )
   status <- httr::status_code(http_response)

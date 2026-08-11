@@ -7,7 +7,6 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-Consider changing this to the SCZ GWAS that I uploaded: c12cb4ba-7216-49ef-9332-b75592fac586
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -32,26 +31,44 @@ library(dplyr)
 library(tidyr)
 ```
 
-This vignette builds a bivariate pleiotropy analysis from GPMap colocalisation data. We use **LDL cholesterol** (trait id `1486`) and **HDL cholesterol** (trait id `1630`) as the target pair.
+Non-collapsable bivariate analysis: each row is a **background trait** (no pathway/gene collapse). SNPs are oriented per trait, cross-trait similarity `S^*` is computed, and **signed Louvain** groups SNPs on each side.
 
-## Step 1: Construct the pleiotropy matrices (X₁ and X₂)
+Pipeline (verification aligned with SNP perturbation clustering):
 
-**Goal:** Build two baseline matrices. `X₁` contains pleiotropic profiles for the SNPs associated with Trait 1; `X₂` for Trait 2. Both must share the same background trait rows.
+1. Build / filter / orient trait x SNP pleiotropy matrices
+2. Cross-trait similarity → signed Louvain modules + bivariate blocks
+3. Shared-SNP panel (orthogonal): \(S^*\) and concordance restricted to overlapping SNP IDs
+4. **Verification:** module vs rest — trait/category specificity and tissue enrichment
+5. Pathway enrichment is retained as a secondary check (often empty for BMI)
 
-```{r step1-fetch}
-trait_id_1 <- 1630
-trait_id_2 <- 1486
+**Why module vs rest:** BMI pathway enrichment on the full gene set is often blank.
+Asking whether a category or QTL tissue is elevated in a module relative to all other
+SNPs still gives a readable biological check.
 
-traits_data <- traits(
-  c(trait_id_1, trait_id_2),
-  include_associations = TRUE
-)
+We use **BMI** (trait id `1992`) and **Waist-to-hip ratio** (trait id `1994`).
+
+```{r params}
+trait_id_1 <- 1992
+trait_id_2 <- 1994
+min_module_size <- 3
+min_group_size <- 5
+min_snp_signals <- 5L
+max_snp_fraction <- 0.8
+similarity_threshold <- 0.5
+louvain_gamma <- 2
+compress_method <- "asinh"
+top_n_traits <- 10L
+
+traits_data <- traits(c(trait_id_1, trait_id_2), include_associations = TRUE)
 cg <- traits_data$coloc_groups
+trait_1_name <- traits_data$traits$trait_name[traits_data$traits$id == trait_id_1]
+trait_2_name <- traits_data$traits$trait_name[traits_data$traits$id == trait_id_2]
 ```
 
-### Union of background traits
+## Step 1: Pleiotropy matrices
 
-Background rows are the union of traits with a colocalisation signal at any SNP locus linked to either target.
+`build_bivariate_pleiotropy_matrices()` uses colocalisation summary z-scores
+(\(\beta / \mathrm{SE}\)) and aligns shared background trait rows across both traits.
 
 ```{r step1-build}
 bivariate <- build_bivariate_pleiotropy_matrices(
@@ -64,313 +81,698 @@ bivariate <- build_bivariate_pleiotropy_matrices(
 X1 <- bivariate$x1_matrix
 X2 <- bivariate$x2_matrix
 
-list(
-  trait_1 = traits_data$traits$trait_name[traits_data$traits$id == trait_id_1],
-  trait_2 = traits_data$traits$trait_name[traits_data$traits$id == trait_id_2],
-  n_background_traits = nrow(X1),
-  n_snps_trait_1 = ncol(X1),
-  n_snps_trait_2 = ncol(X2),
-  shared_rows = identical(rownames(X1), rownames(X2))
+knitr::kable(
+  data.frame(
+    trait_1 = trait_1_name,
+    trait_2 = trait_2_name,
+    n_traits = nrow(X1),
+    n_snps_trait_1 = ncol(X1),
+    n_snps_trait_2 = ncol(X2)
+  ),
+  caption = "Pleiotropy matrix summary",
+  align = "r"
 )
 ```
 
-```{r step1-dims}
-dim(X1)
-dim(X2)
-```
+## Step 1.5: Filter sparse and ubiquitous traits
 
-Each column is one target SNP's signed z-score profile (`beta / se`) across the shared background traits. Entries are `NA` where a trait has no colocalisation signal at that SNP's locus.
+Drop shared trait rows with fewer than `min_snp_signals` non-`NA` values in **both** matrices, or with non-`NA` fraction above `max_snp_fraction` in **either** matrix (target trait rows kept).
 
-## Step 2: Orient profiles relative to each target trait (X₁\* and X₂\*)
+```{r step1-sparse-filter}
+protected_ids <- c(as.character(trait_id_1), as.character(trait_id_2))
+trait_snp_counts_1 <- rowSums(!is.na(X1))
+trait_snp_counts_2 <- rowSums(!is.na(X2))
+trait_snp_frac_1 <- trait_snp_counts_1 / ncol(X1)
+trait_snp_frac_2 <- trait_snp_counts_2 / ncol(X2)
 
-**Goal:** Independently calibrate each matrix so columns reflect what happens when the variant **increases liability** for that matrix's target trait.
+sparse_trait_ids <- names(trait_snp_counts_1)[
+  (trait_snp_counts_1 < min_snp_signals) &
+    (trait_snp_counts_2 < min_snp_signals)
+]
+ubiquitous_trait_ids <- names(trait_snp_frac_1)[
+  (trait_snp_frac_1 > max_snp_fraction) |
+    (trait_snp_frac_2 > max_snp_fraction)
+]
+drop_trait_ids <- setdiff(union(sparse_trait_ids, ubiquitous_trait_ids), protected_ids)
 
-For Trait 1:
+keep_rows <- !rownames(X1) %in% drop_trait_ids
+X1 <- X1[keep_rows, , drop = FALSE]
+X2 <- X2[keep_rows, , drop = FALSE]
+bivariate$trait_info <- bivariate$trait_info |>
+  dplyr::filter(!as.character(trait_id) %in% drop_trait_ids)
 
-\[
-X^*_{1,tj} = \mathrm{sign}(z_{1j}) \cdot X_{1,tj}
-\]
-
-And analogously for Trait 2 using \(z_2\).
-
-```{r step2-z-targets}
-z1 <- X1[as.character(trait_id_1), ]
-z2 <- X2[as.character(trait_id_2), ]
-
-list(
-  trait_1_signs = table(sign(z1), useNA = "ifany"),
-  trait_2_signs = table(sign(z2), useNA = "ifany")
+knitr::kable(
+  data.frame(
+    min_snp_signals = min_snp_signals,
+    max_snp_fraction = max_snp_fraction,
+    n_sparse_traits_removed = length(setdiff(sparse_trait_ids, protected_ids)),
+    n_ubiquitous_traits_removed = length(setdiff(ubiquitous_trait_ids, protected_ids)),
+    n_traits_after = nrow(X1),
+    n_snps_trait_1 = ncol(X1),
+    n_snps_trait_2 = ncol(X2)
+  ),
+  caption = "After sparse / ubiquitous trait filter",
+  align = "r"
 )
 ```
+
+## Step 2: Orient and compress profiles (X₁\*, X₂\*)
+
+Flip each SNP column by \(\mathrm{sign}(z_{\mathrm{target}})\) for that trait, then
+soft-compress with \(\mathrm{asinh}(z)\) so extreme values do not dominate
+similarity or trait rankings (same helper as SNP perturbation clustering).
 
 ```{r step2-orient}
-X1_star <- sweep(X1, 2, sign(z1), `*`)
-X2_star <- sweep(X2, 2, sign(z2), `*`)
+X1_star <- orient_pleiotropy_matrix(
+  X1,
+  target_trait_id = trait_id_1
+)$x_matrix
 
-oriented_1 <- orient_pleiotropy_matrix(X1, target_trait_id = trait_id_1)
-oriented_2 <- orient_pleiotropy_matrix(X2, target_trait_id = trait_id_2)
-stopifnot(
-  all.equal(X1_star, oriented_1$x_matrix, check.attributes = FALSE),
-  all.equal(X2_star, oriented_2$x_matrix, check.attributes = FALSE)
-)
+X2_star <- orient_pleiotropy_matrix(
+  X2,
+  target_trait_id = trait_id_2
+)$x_matrix
+
+X1_star <- compress_effect_matrix(X1_star, method = compress_method)
+X2_star <- compress_effect_matrix(X2_star, method = compress_method)
+
+# SNPs x traits for verification helpers (same orientation / compression)
+trait_matrix_1 <- t(X1_star)
+trait_matrix_2 <- t(X2_star)
 ```
 
-After orientation, each target trait's own row is non-negative within its matrix; background traits are flipped to align with that target's direction of effect.
-
-```{r step2-check}
-list(
-  trait_1_negative = sum(X1_star[as.character(trait_id_1), ] < 0, na.rm = TRUE),
-  trait_2_negative = sum(X2_star[as.character(trait_id_2), ] < 0, na.rm = TRUE)
-)
-```
-
-## Step 3: Calculate cross-trait SNP similarity matrix (S\*)
-
-**Goal:** Build a rectangular Trait-1 SNPs × Trait-2 SNPs matrix where each cell measures functional similarity between one variant from each disease.
-
-\[
-S_{jk} = \frac{{x^*_{1,j}}^{\top} x^*_{2,k}}{\|x^*_{1,j}\| \|x^*_{2,k}\|}
-\]
-
-```{r step3-normalize}
-X1_filled <- X1_star
-X1_filled[is.na(X1_filled)] <- 0
-X2_filled <- X2_star
-X2_filled[is.na(X2_filled)] <- 0
-
-col_norms_1 <- sqrt(colSums(X1_filled^2))
-col_norms_2 <- sqrt(colSums(X2_filled^2))
-zero_cols_1 <- col_norms_1 == 0
-zero_cols_2 <- col_norms_2 == 0
-col_norms_1[zero_cols_1] <- 1
-col_norms_2[zero_cols_2] <- 1
-
-A <- sweep(X1_filled, 2, col_norms_1, "/")
-B <- sweep(X2_filled, 2, col_norms_2, "/")
-A[, zero_cols_1] <- 0
-B[, zero_cols_2] <- 0
-```
+## Step 3: Cross-trait similarity (S\*)
 
 ```{r step3-similarity}
-S_star <- crossprod(A, B)
+S_star <- cross_snp_similarity_matrix(X1_star, X2_star)$s_matrix
 
-cross_similarity <- cross_snp_similarity_matrix(X1_star, X2_star)
-stopifnot(all.equal(S_star, cross_similarity$s_matrix, check.attributes = FALSE))
-```
-
-```{r step3-summary}
-list(
-  dim = dim(S_star),
-  min_similarity = min(S_star, na.rm = TRUE),
-  max_similarity = max(S_star, na.rm = TRUE),
-  mean_similarity = mean(S_star, na.rm = TRUE)
+knitr::kable(
+  data.frame(
+    dim = paste(nrow(S_star), "x", ncol(S_star)),
+    min_similarity = round(min(S_star, na.rm = TRUE), 2),
+    max_similarity = round(max(S_star, na.rm = TRUE), 2),
+    mean_similarity = round(mean(S_star, na.rm = TRUE), 2)
+  ),
+  caption = "Cross-trait SNP similarity summary",
+  align = "r"
 )
 ```
 
-## Step 4: Identify shared biological modules
+## Step 4: Signed Louvain modules
 
-**Goal:** Cluster Trait-1 and Trait-2 SNPs independently to reveal block structure in the cross-similarity landscape. Because `S_star` is rectangular, we use dual hierarchical clustering on row and column distance spaces.
+Louvain runs on cosine similarity of cross-trait **profiles** (rows and columns of `S^*`). Edges with `|similarity| < similarity_threshold` are zeroed before clustering.
 
 ```{r step4-cluster}
-dist_rows <- dist(S_star, method = "euclidean")
-dist_cols <- dist(t(S_star), method = "euclidean")
-
-hc1 <- hclust(dist_rows, method = "average")
-hc2 <- hclust(dist_cols, method = "average")
-
-cross_clusters <- cluster_cross_trait_snps(S_star, linkage = "average")
-stopifnot(
-  identical(hc1$labels, cross_clusters$hclust_rows$labels),
-  identical(hc2$labels, cross_clusters$hclust_cols$labels)
-)
-```
-
-```{r step4-heatmap, fig.height = 7, fig.width = 9}
-heatmap(
-  S_star,
-  Rowv = as.dendrogram(hc1),
-  Colv = as.dendrogram(hc2),
-  scale = "none",
-  main = "Clustered cross-trait SNP similarity blocks",
-  xlab = "Trait 2 SNPs",
-  ylab = "Trait 1 SNPs"
-)
-```
-
-Bright blocks along the diagonal of the reordered heatmap indicate groups of SNPs from each trait with parallel pleiotropy footprints.
-
-## Step 5: Interpret the bivariate blocks
-
-Inspecting the clustered heatmap, SNP pairs segregate into structural blocks that describe how the two traits genetically intersect. The table below classifies each row-cluster × column-cluster panel. We then drill into representative blocks to see **which SNPs** fall in each group and **which trait categories** recur in their colocalisation footprints — the biological themes that make those SNP profiles similar.
-
-### Block A: Shared concordant modules (cells ≈ +0.5 to +1.0)
-
-Trait-1 and Trait-2 SNP groups with highly parallel pleiotropy profiles. These variants drive downstream traits in the same direction — a shared biological highway increasing risk for both diseases through the same mechanism.
-
-### Block B: Shared discordant / antagonistic modules (cells ≈ −0.5 to −1.0)
-
-Intensely negative cosine blocks. A biological toggle: variants that increase risk for one trait while protecting against the other — a genetic trade-off signature.
-
-### Block C: Trait-specific modules (cells ≈ 0)
-
-Flat, near-zero panels. Variants acting through isolated mechanisms unique to each trait, largely independent of the other disease network.
-
-```{r step5-cut}
-k1 <- 3
-k2 <- 3
-
 cross_modules <- cluster_cross_trait_snps(
   S_star,
-  linkage = "average",
-  k1 = k1,
-  k2 = k2
+  method = "louvain",
+  similarity_threshold = similarity_threshold,
+  gamma = louvain_gamma
+)
+
+knitr::kable(
+  dplyr::bind_rows(
+    data.frame(
+      trait = trait_1_name,
+      cluster = as.integer(names(table(cross_modules$clusters_rows))),
+      n_snps = as.integer(table(cross_modules$clusters_rows)),
+      stringsAsFactors = FALSE
+    ),
+    data.frame(
+      trait = trait_2_name,
+      cluster = as.integer(names(table(cross_modules$clusters_cols))),
+      n_snps = as.integer(table(cross_modules$clusters_cols)),
+      stringsAsFactors = FALSE
+    )
+  ) |>
+    dplyr::filter(n_snps >= min_module_size) |>
+    dplyr::arrange(trait, dplyr::desc(n_snps)),
+  caption = "Signed Louvain module sizes",
+  align = c("l", "r", "r")
 )
 ```
 
-```{r step5-summarise}
+Heatmap shows only SNPs in modules with more than `min_module_size` SNPs,
+ordered by module id (tiny modules omitted).
+
+```{r step4-heatmap, fig.height = 7, fig.width = 9}
+row_sizes <- table(cross_modules$clusters_rows)
+col_sizes <- table(cross_modules$clusters_cols)
+large_row_ids <- names(row_sizes)[row_sizes > min_module_size]
+large_col_ids <- names(col_sizes)[col_sizes > min_module_size]
+
+keep_rows <- names(cross_modules$clusters_rows)[
+  as.character(cross_modules$clusters_rows) %in% large_row_ids
+]
+keep_cols <- names(cross_modules$clusters_cols)[
+  as.character(cross_modules$clusters_cols) %in% large_col_ids
+]
+
+if (length(keep_rows) >= 2 && length(keep_cols) >= 2) {
+  row_ord <- keep_rows[order(cross_modules$clusters_rows[keep_rows])]
+  col_ord <- keep_cols[order(cross_modules$clusters_cols[keep_cols])]
+  S_plot <- S_star[row_ord, col_ord, drop = FALSE]
+
+  knitr::kable(
+    data.frame(
+      n_row_snps_plotted = length(row_ord),
+      n_col_snps_plotted = length(col_ord),
+      n_large_row_modules = length(large_row_ids),
+      n_large_col_modules = length(large_col_ids)
+    ),
+    caption = paste0(
+      "Heatmap subset (modules > ", min_module_size, " SNPs)"
+    ),
+    align = "r"
+  )
+
+  heatmap(
+    S_plot,
+    Rowv = NA,
+    Colv = NA,
+    scale = "none",
+    main = paste0(
+      "Cross-trait S* (modules > ", min_module_size, " SNPs)"
+    ),
+    xlab = paste(trait_2_name, "SNPs"),
+    ylab = paste(trait_1_name, "SNPs")
+  )
+} else {
+  cat(
+    "Fewer than 2 SNPs in large modules on one or both sides; ",
+    "skipping heatmap.\n",
+    sep = ""
+  )
+}
+```
+
+## Step 4.5: Shared-SNP concordance (orthogonal)
+
+The full rectangular \(S^*\) asks whether **programs** of trait-1 SNPs align with
+programs of trait-2 SNPs. A more direct answer to "how are these two traits
+related?" uses only **overlapping SNP IDs** (present as columns on both sides):
+
+1. Sign concordance of target-trait effects at those SNPs
+2. Same-SNP phenome-profile cosine (diagonal of \(S^*_{\mathrm{shared}}\))
+3. Full \(S^*_{\mathrm{shared}}\) among shared SNPs, with optional Louvain blocks
+
+```{r step4-shared-snps}
+shared_snp_ids <- intersect(colnames(X1_star), colnames(X2_star))
+
+knitr::kable(
+  data.frame(
+    n_snps_trait_1 = ncol(X1_star),
+    n_snps_trait_2 = ncol(X2_star),
+    n_shared_snps = length(shared_snp_ids),
+    frac_shared_of_trait_1 = round(length(shared_snp_ids) / ncol(X1_star), 3),
+    frac_shared_of_trait_2 = round(length(shared_snp_ids) / ncol(X2_star), 3)
+  ),
+  caption = "Overlapping SNP IDs between trait sides",
+  align = "r"
+)
+
+if (length(shared_snp_ids) == 0) {
+  S_shared <- NULL
+  shared_snp_table <- data.frame()
+  cat("No overlapping SNP IDs; shared-SNP concordance skipped.\n")
+} else {
+  X1_shared <- X1_star[, shared_snp_ids, drop = FALSE]
+  X2_shared <- X2_star[, shared_snp_ids, drop = FALSE]
+
+  # Target-effect signs from pre-orientation matrices (orientation forces
+  # target z >= 0, so oriented signs are not informative for concordance).
+  z1_target <- as.numeric(X1[as.character(trait_id_1), shared_snp_ids])
+  z2_target <- as.numeric(X2[as.character(trait_id_2), shared_snp_ids])
+  names(z1_target) <- shared_snp_ids
+  names(z2_target) <- shared_snp_ids
+
+  both_obs <- is.finite(z1_target) & is.finite(z2_target) &
+    z1_target != 0 & z2_target != 0
+  sign_concordant <- sign(z1_target[both_obs]) == sign(z2_target[both_obs])
+
+  S_shared <- cross_snp_similarity_matrix(X1_shared, X2_shared)$s_matrix
+  # Same column order on both sides => diagonal = same-SNP profile cosine
+  same_snp_profile_cos <- diag(S_shared[shared_snp_ids, shared_snp_ids, drop = FALSE])
+
+  shared_snp_table <- data.frame(
+    snp_id = shared_snp_ids,
+    z_trait_1 = z1_target,
+    z_trait_2 = z2_target,
+    sign_concordant = dplyr::case_when(
+      !is.finite(z1_target) | !is.finite(z2_target) ~ NA,
+      z1_target == 0 | z2_target == 0 ~ NA,
+      TRUE ~ sign(z1_target) == sign(z2_target)
+    ),
+    profile_cosine = as.numeric(same_snp_profile_cos),
+    stringsAsFactors = FALSE
+  )
+
+  knitr::kable(
+    data.frame(
+      n_with_both_target_z = sum(both_obs),
+      frac_sign_concordant = if (sum(both_obs) > 0) {
+        round(mean(sign_concordant), 3)
+      } else {
+        NA_real_
+      },
+      mean_same_snp_profile_cos = round(mean(same_snp_profile_cos, na.rm = TRUE), 3),
+      median_same_snp_profile_cos = round(
+        stats::median(same_snp_profile_cos, na.rm = TRUE),
+        3
+      ),
+      frac_profile_cos_gt_0.5 = round(
+        mean(same_snp_profile_cos > 0.5, na.rm = TRUE),
+        3
+      ),
+      frac_profile_cos_lt_m0.5 = round(
+        mean(same_snp_profile_cos < -0.5, na.rm = TRUE),
+        3
+      )
+    ),
+    caption = "Shared-SNP concordance summary",
+    align = "r"
+  )
+
+  knitr::kable(
+    shared_snp_table |>
+      dplyr::arrange(dplyr::desc(abs(profile_cosine))) |>
+      dplyr::mutate(
+        z_trait_1 = round(z_trait_1, 3),
+        z_trait_2 = round(z_trait_2, 3),
+        profile_cosine = round(profile_cosine, 3)
+      ),
+    caption = "Shared SNPs by |same-SNP profile cosine|",
+    row.names = FALSE
+  )
+}
+```
+
+```{r step4-shared-heatmap, fig.height = 7, fig.width = 7}
+if (!is.null(S_shared) && length(shared_snp_ids) >= 2) {
+  shared_modules <- cluster_cross_trait_snps(
+    S_shared,
+    method = "louvain",
+    similarity_threshold = similarity_threshold,
+    gamma = louvain_gamma
+  )
+  heatmap(
+    S_shared,
+    Rowv = as.dendrogram(shared_modules$hclust_rows),
+    Colv = as.dendrogram(shared_modules$hclust_cols),
+    scale = "none",
+    main = "Shared-SNP S* (Louvain ordering)",
+    xlab = paste(trait_2_name, "shared SNPs"),
+    ylab = paste(trait_1_name, "shared SNPs")
+  )
+
+  shared_blocks <- summarise_cross_trait_modules(
+    S_shared,
+    clusters_rows = shared_modules$clusters_rows,
+    clusters_cols = shared_modules$clusters_cols
+  ) |>
+    dplyr::filter(
+      n_snps_trait_1 > min_module_size,
+      n_snps_trait_2 > min_module_size
+    ) |>
+    dplyr::mutate(
+      block_score = abs(mean_similarity) * sqrt(n_snps_trait_1 * n_snps_trait_2)
+    )
+
+  knitr::kable(
+    shared_blocks |>
+      dplyr::count(block_type, name = "n_blocks") |>
+      dplyr::arrange(dplyr::desc(n_blocks)),
+    caption = paste0(
+      "Shared-SNP block counts (both sides > ", min_module_size, " SNPs)"
+    ),
+    align = "lr"
+  )
+
+  if (nrow(shared_blocks) > 0) {
+    knitr::kable(
+      shared_blocks |>
+        dplyr::group_by(block_type) |>
+        dplyr::slice_max(block_score, n = 1, with_ties = FALSE) |>
+        dplyr::ungroup() |>
+        dplyr::mutate(
+          mean_similarity = round(mean_similarity, 2),
+          block_score = round(block_score, 2)
+        ) |>
+        dplyr::select(
+          block_type, row_cluster, col_cluster,
+          mean_similarity, block_score, n_snps_trait_1, n_snps_trait_2
+        ),
+      caption = "Top-scoring shared-SNP block of each type",
+      align = "r",
+      row.names = FALSE
+    )
+  }
+} else {
+  cat("Fewer than 2 shared SNPs; skipping shared S* heatmap / blocks.\n")
+}
+```
+
+## Step 5: Bivariate blocks (all SNPs)
+
+Each heatmap cell block pairs one Louvain module of trait-1 SNPs with one module of trait-2 SNPs. Mean block similarity classifies the relationship:
+
+- **Concordant** — shared same-direction pleiotropy
+- **Discordant** — opposing pleiotropy (trade-off)
+- **Trait-specific** — weak cross-trait alignment
+
+Block counts and “strongest” examples use only blocks where **both** sides have `> min_module_size` SNPs. Within each type, blocks are ranked by
+`|mean_similarity| * sqrt(n1 * n2)` so tiny extreme cells do not dominate.
+
+```{r step5-blocks}
 module_summary <- summarise_cross_trait_modules(
   S_star,
   clusters_rows = cross_modules$clusters_rows,
   clusters_cols = cross_modules$clusters_cols
 )
 
-module_summary |>
+large_blocks <- module_summary |>
+  dplyr::filter(
+    n_snps_trait_1 > min_module_size,
+    n_snps_trait_2 > min_module_size
+  ) |>
   dplyr::mutate(
-    mean_similarity = round(mean_similarity, 2),
-    min_similarity = round(min_similarity, 2),
-    max_similarity = round(max_similarity, 2)
+    block_score = abs(mean_similarity) * sqrt(n_snps_trait_1 * n_snps_trait_2)
   )
-```
 
-```{r step5-by-type}
-module_summary |>
-  dplyr::count(block_type, name = "n_blocks") |>
-  dplyr::arrange(dplyr::desc(n_blocks))
-```
+knitr::kable(
+  large_blocks |>
+    dplyr::count(block_type, name = "n_blocks") |>
+    dplyr::arrange(dplyr::desc(n_blocks)),
+  caption = paste0(
+    "Block counts by type (both sides > ", min_module_size, " SNPs)"
+  ),
+  align = "lr"
+)
 
-### SNP groups and shared colocalisation themes
-
-For each block type, we take the panel with the strongest mean similarity and ask:
-
-1. **Which SNPs** are in the Trait-1 and Trait-2 clusters?
-2. **Which trait categories** appear in coloc groups at those SNP loci (excluding the target traits themselves)?
-3. **Which categories overlap** between the two SNP sets — the phenotypic “vocabulary” shared by that block?
-
-```{r step5-block-helpers}
-blocks_of_interest <- module_summary |>
+blocks_of_interest <- large_blocks |>
   dplyr::filter(block_type %in% c("concordant", "discordant", "trait_specific")) |>
   dplyr::group_by(block_type) |>
-  dplyr::slice_max(abs(mean_similarity), n = 1, with_ties = FALSE) |>
+  dplyr::slice_max(block_score, n = 1, with_ties = FALSE) |>
   dplyr::ungroup()
 
-snp_category_profile <- function(snp_ids, target_trait_id, coloc_groups) {
-  snp_ids <- as.character(snp_ids)
-  coloc_groups |>
-    dplyr::filter(as.character(variant_id) %in% snp_ids) |>
-    dplyr::filter(trait_id != target_trait_id, !is.na(trait_category)) |>
-    dplyr::mutate(
-      category = dplyr::if_else(data_type != "Phenotype", "Molecular", trait_category)
-    ) |>
-    dplyr::count(category, name = "n_coloc_signals") |>
-    dplyr::arrange(dplyr::desc(n_coloc_signals))
-}
-
-snp_examples <- function(snp_ids, snp_info) {
-  snp_info |>
-    dplyr::filter(as.character(variant_id) %in% as.character(snp_ids)) |>
-    dplyr::distinct(display_snp, variant_id, chr, bp) |>
-    dplyr::slice_head(n = 6)
-}
-```
-
-```{r step5-block-details}
-block_details <- lapply(seq_len(nrow(blocks_of_interest)), function(i) {
-  block <- blocks_of_interest[i, , drop = FALSE]
-  row_snps <- names(cross_modules$clusters_rows)[
-    cross_modules$clusters_rows == block$row_cluster
-  ]
-  col_snps <- names(cross_modules$clusters_cols)[
-    cross_modules$clusters_cols == block$col_cluster
-  ]
-
-  cat_trait_1 <- snp_category_profile(row_snps, trait_id_1, cg)
-  cat_trait_2 <- snp_category_profile(col_snps, trait_id_2, cg)
-  shared_cats <- dplyr::inner_join(
-    cat_trait_1 |> dplyr::rename(trait_1_signals = n_coloc_signals),
-    cat_trait_2 |> dplyr::rename(trait_2_signals = n_coloc_signals),
-    by = "category"
-  ) |>
-    dplyr::mutate(total_signals = trait_1_signals + trait_2_signals) |>
-    dplyr::arrange(dplyr::desc(total_signals))
-
-  list(
-    block_type = block$block_type,
-    mean_similarity = block$mean_similarity,
-    row_cluster = block$row_cluster,
-    col_cluster = block$col_cluster,
-    n_snps_trait_1 = length(row_snps),
-    n_snps_trait_2 = length(col_snps),
-    example_snps_trait_1 = snp_examples(row_snps, bivariate$snp_info_1),
-    example_snps_trait_2 = snp_examples(col_snps, bivariate$snp_info_2),
-    top_categories_trait_1 = dplyr::slice_head(cat_trait_1, n = 8),
-    top_categories_trait_2 = dplyr::slice_head(cat_trait_2, n = 8),
-    shared_categories = dplyr::slice_head(shared_cats, n = 10)
+if (nrow(blocks_of_interest) == 0) {
+  cat(
+    "No blocks with both sides > ", min_module_size,
+    " SNPs for concordant / discordant / trait_specific.\n",
+    sep = ""
   )
-})
-names(block_details) <- blocks_of_interest$block_type
-```
-
-```{r step5-block-overview}
-dplyr::bind_rows(lapply(block_details, function(b) {
-  data.frame(
-    block_type = b$block_type,
-    mean_similarity = round(b$mean_similarity, 2),
-    row_cluster = b$row_cluster,
-    col_cluster = b$col_cluster,
-    n_snps_trait_1 = b$n_snps_trait_1,
-    n_snps_trait_2 = b$n_snps_trait_2,
-    example_snps_trait_1 = paste(b$example_snps_trait_1$display_snp, collapse = ", "),
-    example_snps_trait_2 = paste(b$example_snps_trait_2$display_snp, collapse = ", "),
-    stringsAsFactors = FALSE
-  )
-}))
-```
-
-**Concordant block** — SNP clusters with parallel pleiotropy footprints. Shared categories below are the colocalisation themes that both SNP sets have in common (lipid/lipoprotein biology is typical for HDL/LDL):
-
-```{r step5-concordant-shared, echo=FALSE, results='asis'}
-b <- block_details$concordant
-if (!is.null(b) && nrow(b$shared_categories) > 0) {
-  knitr::kable(b$shared_categories, caption = "Shared trait categories in the strongest concordant block")
 } else {
-  cat("No concordant block with overlapping categories in this run.\n")
-}
-```
-
-**Discordant block** — SNP groups whose profiles point in opposite directions. Shared categories here are phenotypes where both loci have colocalisation evidence but with opposing oriented effects in `S*`:
-
-```{r step5-discordant-shared, echo=FALSE, results='asis'}
-b <- block_details$discordant
-if (!is.null(b) && nrow(b$shared_categories) > 0) {
-  knitr::kable(b$shared_categories, caption = "Shared trait categories in the strongest discordant block")
-} else {
-  cat("No discordant block with overlapping categories in this run.\n")
-}
-```
-
-**Trait-specific block** — weak cross-trait similarity; SNP groups may still share some categories locally, but their full pleiotropy profiles do not align across traits:
-
-```{r step5-specific-top, echo=FALSE, results='asis'}
-b <- block_details$trait_specific
-if (!is.null(b)) {
   knitr::kable(
-    dplyr::bind_rows(
-      b$top_categories_trait_1 |> dplyr::mutate(trait = "HDL SNPs"),
-      b$top_categories_trait_2 |> dplyr::mutate(trait = "LDL SNPs")
-    ),
-    caption = "Top colocalisation categories in the strongest trait-specific block (by trait)"
+    blocks_of_interest |>
+      dplyr::mutate(
+        mean_similarity = round(mean_similarity, 2),
+        block_score = round(block_score, 2)
+      ) |>
+      dplyr::select(
+        block_type, row_cluster, col_cluster,
+        mean_similarity, block_score, n_snps_trait_1, n_snps_trait_2
+      ),
+    caption = "Top-scoring large block of each type",
+    align = "r",
+    row.names = FALSE
   )
 }
 ```
 
-Concordant blocks are candidates for **shared causal pathways** — look for the same trait categories (especially lipid and lipoprotein classes) on both sides. Discordant blocks highlight **opposing biology** on overlapping phenotypic axes. Trait-specific blocks surface mechanisms enriched at one trait's SNPs that do not translate to the other trait's cluster.
+## Verification: module vs rest (categories and tissues)
+
+For each large Louvain module, ask whether trait categories or QTL tissues are
+elevated relative to all other SNPs on that trait side
+(`summarise_module_specific_traits()`, `enrich_snp_group_tissues(background = "rest")`).
+
+```{r verify-traits-1}
+group_traits_1 <- summarise_module_specific_traits(
+  trait_matrix = trait_matrix_1,
+  groups = cross_modules$clusters_rows,
+  trait_info = bivariate$trait_info,
+  coloc_groups = cg,
+  exclude_trait_ids = c(trait_id_1, trait_id_2),
+  min_group_size = min_group_size,
+  top_n = top_n_traits,
+  n_categories = 2L
+)
+
+knitr::kable(
+  group_traits_1$summary |>
+    dplyr::select(
+      group, n_snps, top_trait, top_specificity, top_trait_categories
+    ) |>
+    dplyr::mutate(top_specificity = round(top_specificity, 2)),
+  caption = paste0(
+    trait_1_name, ": categories/traits elevated vs rest (> ",
+    min_group_size, " SNPs)"
+  ),
+  na = "",
+  row.names = FALSE
+)
+```
+
+```{r verify-trait1-details, echo=FALSE, results='asis'}
+for (x in group_traits_1$by_group) {
+  cat("\n\n### ", trait_1_name, " module ", x$group, "\n\n", sep = "")
+  cat("SNPs: ", x$n_snps, "\n\n", sep = "")
+  if (nrow(x$categories) > 0) {
+    print(knitr::kable(
+      x$categories |>
+        dplyr::mutate(
+          score = round(score, 2),
+          mean_specificity = round(mean_specificity, 2)
+        ),
+      caption = "Trait categories elevated vs rest",
+      row.names = FALSE
+    ))
+  }
+  if (nrow(x$traits) > 0) {
+    print(knitr::kable(
+      x$traits |>
+        dplyr::select(
+          trait_name, trait_category, abs_mean_z, abs_mean_z_rest,
+          specificity, abs_mean_z_delta
+        ) |>
+        dplyr::mutate(
+          abs_mean_z = round(abs_mean_z, 3),
+          abs_mean_z_rest = round(abs_mean_z_rest, 3),
+          specificity = round(specificity, 2),
+          abs_mean_z_delta = round(abs_mean_z_delta, 3)
+        ),
+      caption = "Traits elevated vs rest",
+      row.names = FALSE
+    ))
+  }
+}
+```
+
+```{r verify-traits-2}
+group_traits_2 <- summarise_module_specific_traits(
+  trait_matrix = trait_matrix_2,
+  groups = cross_modules$clusters_cols,
+  trait_info = bivariate$trait_info,
+  coloc_groups = cg,
+  exclude_trait_ids = c(trait_id_1, trait_id_2),
+  min_group_size = min_group_size,
+  top_n = top_n_traits,
+  n_categories = 2L
+)
+
+knitr::kable(
+  group_traits_2$summary |>
+    dplyr::select(
+      group, n_snps, top_trait, top_specificity, top_trait_categories
+    ) |>
+    dplyr::mutate(top_specificity = round(top_specificity, 2)),
+  caption = paste0(
+    trait_2_name, ": categories/traits elevated vs rest (> ",
+    min_group_size, " SNPs)"
+  ),
+  na = "",
+  row.names = FALSE
+)
+```
+
+```{r verify-trait2-details, echo=FALSE, results='asis'}
+for (x in group_traits_2$by_group) {
+  cat("\n\n### ", trait_2_name, " module ", x$group, "\n\n", sep = "")
+  cat("SNPs: ", x$n_snps, "\n\n", sep = "")
+  if (nrow(x$categories) > 0) {
+    print(knitr::kable(
+      x$categories |>
+        dplyr::mutate(
+          score = round(score, 2),
+          mean_specificity = round(mean_specificity, 2)
+        ),
+      caption = "Trait categories elevated vs rest",
+      row.names = FALSE
+    ))
+  }
+  if (nrow(x$traits) > 0) {
+    print(knitr::kable(
+      x$traits |>
+        dplyr::select(
+          trait_name, trait_category, abs_mean_z, abs_mean_z_rest,
+          specificity, abs_mean_z_delta
+        ) |>
+        dplyr::mutate(
+          abs_mean_z = round(abs_mean_z, 3),
+          abs_mean_z_rest = round(abs_mean_z_rest, 3),
+          specificity = round(specificity, 2),
+          abs_mean_z_delta = round(abs_mean_z_delta, 3)
+        ),
+      caption = "Traits elevated vs rest",
+      row.names = FALSE
+    ))
+  }
+}
+```
+
+```{r verify-tissues-1}
+group_tissues_1 <- enrich_snp_group_tissues(
+  groups = cross_modules$clusters_rows,
+  coloc_groups = cg,
+  snp_key = "variant_id",
+  min_group_size = min_group_size,
+  background = "rest"
+)
+
+knitr::kable(
+  group_tissues_1$summary,
+  caption = paste0(
+    trait_1_name, ": tissues enriched vs rest (> ",
+    min_group_size, " SNPs)"
+  ),
+  na = "",
+  row.names = FALSE
+)
+```
+
+```{r verify-tissue1-details, echo=FALSE, results='asis'}
+for (x in group_tissues_1$by_group) {
+  if (nrow(x$enriched) == 0) {
+    next
+  }
+  cat("\n\n### ", trait_1_name, " module ", x$group, " tissues\n\n", sep = "")
+  cat(
+    "SNPs: ", x$n_snps,
+    "; tissue links: ", x$n_tissue_links, "\n\n",
+    sep = ""
+  )
+  print(knitr::kable(
+    x$enriched |>
+      dplyr::mutate(
+        fold_enrichment = round(fold_enrichment, 2),
+        p_value = signif(p_value, 3),
+        fdr = signif(fdr, 3)
+      ),
+    caption = "Tissues enriched vs rest (FDR <= 0.05)",
+    row.names = FALSE
+  ))
+}
+```
+
+```{r verify-tissues-2}
+group_tissues_2 <- enrich_snp_group_tissues(
+  groups = cross_modules$clusters_cols,
+  coloc_groups = cg,
+  snp_key = "variant_id",
+  min_group_size = min_group_size,
+  background = "rest"
+)
+
+knitr::kable(
+  group_tissues_2$summary,
+  caption = paste0(
+    trait_2_name, ": tissues enriched vs rest (> ",
+    min_group_size, " SNPs)"
+  ),
+  na = "",
+  row.names = FALSE
+)
+```
+
+```{r verify-tissue2-details, echo=FALSE, results='asis'}
+for (x in group_tissues_2$by_group) {
+  if (nrow(x$enriched) == 0) {
+    next
+  }
+  cat("\n\n### ", trait_2_name, " module ", x$group, " tissues\n\n", sep = "")
+  cat(
+    "SNPs: ", x$n_snps,
+    "; tissue links: ", x$n_tissue_links, "\n\n",
+    sep = ""
+  )
+  print(knitr::kable(
+    x$enriched |>
+      dplyr::mutate(
+        fold_enrichment = round(fold_enrichment, 2),
+        p_value = signif(p_value, 3),
+        fdr = signif(fdr, 3)
+      ),
+    caption = "Tissues enriched vs rest (FDR <= 0.05)",
+    row.names = FALSE
+  ))
+}
+```
+
+## Secondary check: pathway enrichment
+
+Pathway enrichment is often empty for the full BMI gene set, so it is not the primary verifier here. Results are summarised only.
+
+```{r verify-pathways-secondary}
+baseline_1 <- enrich_trait_pathways(
+  trait_id = trait_id_1,
+  coloc_groups = cg,
+  sources = c("KEGG", "Reactome")
+)
+baseline_2 <- enrich_trait_pathways(
+  trait_id = trait_id_2,
+  coloc_groups = cg,
+  sources = c("KEGG", "Reactome")
+)
+trait_1_enrichment <- enrich_snp_group_pathways(
+  groups = cross_modules$clusters_rows,
+  coloc_groups = cg,
+  min_group_size = min_group_size,
+  sources = c("KEGG", "Reactome")
+)
+trait_2_enrichment <- enrich_snp_group_pathways(
+  groups = cross_modules$clusters_cols,
+  coloc_groups = cg,
+  min_group_size = min_group_size,
+  sources = c("KEGG", "Reactome")
+)
+
+knitr::kable(
+  dplyr::bind_rows(baseline_1$summary, baseline_2$summary),
+  caption = "Baseline pathway enrichment (secondary)",
+  na = "",
+  row.names = FALSE
+)
+
+knitr::kable(
+  trait_1_enrichment$summary,
+  caption = paste0(trait_1_name, ": per-module pathway enrichment (secondary)"),
+  na = "",
+  row.names = FALSE
+)
+
+knitr::kable(
+  trait_2_enrichment$summary,
+  caption = paste0(trait_2_name, ": per-module pathway enrichment (secondary)"),
+  na = "",
+  row.names = FALSE
+)
+```
+
+## Comparison notes
+
+| Choice | Bivariate (this vignette) | SNP perturbation |
+|---|---|---|
+| Input | Shared background traits x SNPs (both sides) | SNP x trait + SNP x gene |
+| Similarity | Rectangular cross-trait \(S^*\) (+ shared-SNP \(S^*\)) | Weighted trait/gene cosine |
+| Clustering | Signed Louvain (each side), `gamma = 2` | Hierarchical + Leiden |
+| Extra | All-SNP blocks + shared-SNP concordance panel | — |
+| Verification | Module vs rest (categories/tissues); pathways secondary | Same |

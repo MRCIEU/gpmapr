@@ -7,21 +7,26 @@
 run_ebmf(
   beta_matrix,
   se_matrix,
+  se_mode = c("unit", "matrix"),
   greedy_Kmax = 50L,
   backfit = TRUE,
   ebnm_fn = NULL,
-  var_type = c(1L, 2L),
+  var_type = NULL,
   verbose = 1L
 )
 }
 \arguments{
-\item{beta_matrix}{Traits x SNPs matrix of signed effect sizes, typically
+\item{beta_matrix}{Features x SNPs matrix of signed z-scores, typically
 \code{build_ebmf_matrix()$beta_matrix}. Rows and columns that are entirely
-missing or zero are removed before fitting. \code{NA} entries are treated
-as missing data.}
+missing or zero are removed before fitting.}
 
-\item{se_matrix}{Traits x SNPs matrix of standard errors aligned with
-\code{beta_matrix}. Passed to flashier as \code{S}.}
+\item{se_matrix}{Features x SNPs matrix of standard errors aligned with
+\code{beta_matrix}. Used to mark missing cells when \code{se_mode = "unit"}
+and passed as flashier \code{S} when \code{se_mode = "matrix"}.}
+
+\item{se_mode}{\code{"unit"} (default): data keeps \code{NA} missingness and
+flashier uses \code{S = 1}. \code{"matrix"}: pass \code{se_matrix} with
+missing cells as \code{Y = 0}, \code{S = 1e6}.}
 
 \item{greedy_Kmax}{Maximum number of factors to add greedily. Factors are
 only added while they improve the variational lower bound. Defaults to 50.}
@@ -31,11 +36,13 @@ updated after the greedy phase until convergence.}
 
 \item{ebnm_fn}{EBNM function for priors on loadings and factors. Defaults to
 \code{ebnm::ebnm_point_normal} (point-normal prior). Pass a list of two
-functions to use different priors for loadings (traits) and factors (SNPs).}
+functions to use different priors for loadings (features) and factors (SNPs).}
 
-\item{var_type}{Residual variance structure. Defaults to \code{c(1, 2)} for
-Kronecker (two-way) estimation. Use \code{0} for constant variance,
-\code{1} for per-row, or \code{2} for per-column.}
+\item{var_type}{Residual variance structure. Defaults to \code{NULL} when
+\code{se_mode = "unit"} (S accounts for residual variance) and \code{1L}
+(per-row) when \code{se_mode = "matrix"}. Use \code{0} for constant,
+\code{1} for per-row, \code{2} for per-column, or \code{c(1, 2)} for
+Kronecker.}
 
 \item{verbose}{Verbosity: 0 = silent, 1 = summary, 2 = ELBO updates,
 3 = per-iteration.}
@@ -44,7 +51,7 @@ Kronecker (two-way) estimation. Use \code{0} for constant variance,
 A \code{flash} object from \pkg{flashier}. Key elements:
 \itemize{
 \item n_factors: number of discovered factors (programs)
-\item L_pm, L_lfsr: posterior means and lFSR for trait loadings (n x K)
+\item L_pm, L_lfsr: posterior means and lFSR for feature loadings (n x K)
 \item F_pm, F_lfsr: posterior means and lFSR for SNP factors (p x K)
 \item pve: proportion of variance explained per factor
 \item elbo: variational lower bound
@@ -52,12 +59,13 @@ A \code{flash} object from \pkg{flashier}. Key elements:
 }
 \description{
 Fit an Empirical Bayes Matrix Factorization model using
-\pkg{flashier}. The model decomposes the traits x SNPs effect matrix
+\pkg{flashier}. The model decomposes the features x SNPs z-score matrix
 \eqn{Y = LF' + E} into latent factors (\eqn{F}, SNP programs) and
-loadings (\eqn{L}, trait contributions), with sparse priors estimated
+loadings (\eqn{L}, feature contributions), with sparse priors estimated
 from the data.
 
-Known per-observation standard errors are passed to flashier via \code{S}
-(typically \code{build_ebmf_matrix()$se_matrix}). Residual variance structure
-is controlled by \code{var_type}.
+Known per-observation standard errors are passed to flashier via \code{S}.
+For z-score matrices, \code{se_mode = "unit"} (default) is recommended:
+missing cells stay \code{NA} and flashier uses \code{S = 1}. The legacy
+\code{se_mode = "matrix"} path fills missing values with 0 and large SEs.
 }

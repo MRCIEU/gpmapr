@@ -8,6 +8,8 @@ build_pathway_feature_map(
   genes,
   source = NULL,
   p_value_threshold = 0.05,
+  min_size = NULL,
+  max_size = NULL,
   minimum_count_in_network = NULL
 )
 }
@@ -17,6 +19,12 @@ build_pathway_feature_map(
 \item{source}{Optional pathway source: \code{"Reactome"}, \code{"KEGG"}, or \code{"HP"}.}
 
 \item{p_value_threshold}{FDR threshold for enriched pathways.}
+
+\item{min_size}{Optional minimum pathway size; pathways smaller than this are
+dropped. Defaults to \code{NULL} (no minimum).}
+
+\item{max_size}{Optional maximum pathway size; pathways larger than this are
+dropped. Defaults to \code{NULL} (no maximum).}
 
 \item{minimum_count_in_network}{Minimum overlap per pathway term.}
 }
