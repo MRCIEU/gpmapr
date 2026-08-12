@@ -5,6 +5,14 @@ vignette: >
   %\VignetteIndexEntry{Investigation of bivariate analysis}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
+params:
+  api: "production"
+  association_source: "coloc"
+  min_snp_signals: 5
+  louvain_gamma: 2
+  compress_method: "asinh"
+  similarity_threshold: 0.5
+  collapse_gene_tissue: FALSE
 ---
 
 
@@ -31,61 +39,112 @@ library(dplyr)
 library(tidyr)
 ```
 
-Non-collapsable bivariate analysis: each row is a **background trait** (no pathway/gene collapse). SNPs are oriented per trait, cross-trait similarity `S^*` is computed, and **signed Louvain** groups SNPs on each side.
+Bivariate analysis: SNPs are oriented per trait, cross-trait similarity `S^*` is
+computed, and **signed Louvain** groups SNPs on each side. Molecular QTL rows can
+be kept study-level or collapsed to **gene x tissue** features
+(`collapse_gene_tissue = TRUE`), which merges cis/trans and QTL types while
+preserving tissue labels.
 
 Pipeline (verification aligned with SNP perturbation clustering):
 
 1. Build / filter / orient trait x SNP pleiotropy matrices
-2. Cross-trait similarity → signed Louvain modules + bivariate blocks
-3. Shared-SNP panel (orthogonal): \(S^*\) and concordance restricted to overlapping SNP IDs
-4. **Verification:** module vs rest — trait/category specificity and tissue enrichment
-5. Pathway enrichment is retained as a secondary check (often empty for BMI)
+2. Report phenotypic vs molecular contribution to profile mass
+3. Cross-trait similarity → signed Louvain modules + bivariate blocks
+4. Shared-SNP panel (orthogonal): \(S^*\) and concordance restricted to overlapping SNP IDs
+5. **Verification:** module vs rest on the **same traits/features used for clustering**
+6. Pathway enrichment (secondary) uses molecular QTL genes from `coloc_groups`
 
 **Why module vs rest:** BMI pathway enrichment on the full gene set is often blank.
-Asking whether a category or QTL tissue is elevated in a module relative to all other
-SNPs still gives a readable biological check.
+Asking whether a trait category is elevated in a module relative to all other SNPs
+still gives a readable biological check. With gene x tissue collapse, elevated
+tables can also surface gene x tissue drivers directly.
 
 We use **BMI** (trait id `1992`) and **Waist-to-hip ratio** (trait id `1994`).
+
+Controllable run parameters (YAML `params` / `rmarkdown::render(..., params = )`):
+
+| Parameter | Values | Meaning |
+|---|---|---|
+| `api` | `production`, `local` | Public GPMap vs local QTL DB (`localhost:8000`) |
+| `association_source` | `coloc`, `full` | Coloc-only associations vs denser `/associations-full` |
+| `min_snp_signals` | `1`, `3`, `5` | Sparse-row hold-out threshold for \(S^*\) |
+| `louvain_gamma` | `2`, `3` | Louvain resolution |
+| `compress_method` | `none`, `asinh` | Soft z-score compression |
+| `similarity_threshold` | `0`, `0.5` | Min \|SNP–SNP similarity\| kept as a Louvain edge (`0` = dense) |
+| `collapse_gene_tissue` | `FALSE`, `TRUE` | Study-level QTLs vs gene x tissue Stouffer collapse |
 
 ```{r params}
 trait_id_1 <- 1992
 trait_id_2 <- 1994
 min_module_size <- 3
 min_group_size <- 5
-min_snp_signals <- 5L
 max_snp_fraction <- 0.8
-similarity_threshold <- 0.5
-louvain_gamma <- 2
-compress_method <- "asinh"
 top_n_traits <- 10L
 
-traits_data <- traits(c(trait_id_1, trait_id_2), include_associations = TRUE)
-cg <- traits_data$coloc_groups
-trait_1_name <- traits_data$traits$trait_name[traits_data$traits$id == trait_id_1]
-trait_2_name <- traits_data$traits$trait_name[traits_data$traits$id == trait_id_2]
+api <- params$api
+association_source <- params$association_source
+min_snp_signals <- as.integer(params$min_snp_signals)
+louvain_gamma <- as.numeric(params$louvain_gamma)
+compress_method <- params$compress_method
+similarity_threshold <- as.numeric(params$similarity_threshold)
+collapse_gene_tissue <- as.logical(params$collapse_gene_tissue)
+
+select_api(api)
+
+knitr::kable(
+  data.frame(
+    api = api,
+    gpmap_url = getOption("gpmap_url"),
+    association_source = association_source,
+    min_snp_signals = min_snp_signals,
+    louvain_gamma = louvain_gamma,
+    compress_method = compress_method,
+    similarity_threshold = similarity_threshold,
+    collapse_gene_tissue = collapse_gene_tissue,
+    stringsAsFactors = FALSE
+  ),
+  caption = "Active run parameters",
+  row.names = FALSE
+)
+
+traits_meta <- traits(c(trait_id_1, trait_id_2))
+trait_1_name <- traits_meta$traits$trait_name[traits_meta$traits$id == trait_id_1]
+trait_2_name <- traits_meta$traits$trait_name[traits_meta$traits$id == trait_id_2]
 ```
 
 ## Step 1: Pleiotropy matrices
 
-`build_bivariate_pleiotropy_matrices()` uses colocalisation summary z-scores
-(\(\beta / \mathrm{SE}\)) and aligns shared background trait rows across both traits.
+`build_bivariate_pleiotropy_matrices()` builds aligned trait x SNP z-score matrices.
+`association_source = "coloc"` uses coloc-merged associations only;
+`"full"` fills values from `/associations-full` at the same coloc-defined SNP columns.
+`collapse_gene_tissue = TRUE` replaces molecular QTL study rows with gene x tissue
+features (cis/trans and QTL types combined by weighted Stouffer).
 
 ```{r step1-build}
 bivariate <- build_bivariate_pleiotropy_matrices(
   trait_id_1 = trait_id_1,
   trait_id_2 = trait_id_2,
-  coloc_groups = cg,
-  snp_key = "variant_id"
+  snp_key = "variant_id",
+  association_source = association_source,
+  collapse_gene_tissue = collapse_gene_tissue
 )
 
 X1 <- bivariate$x1_matrix
 X2 <- bivariate$x2_matrix
+cg <- bivariate$coloc_groups
+
+n_pheno <- sum(bivariate$trait_info$feature_type == "phenotypic", na.rm = TRUE)
+n_mol <- sum(bivariate$trait_info$feature_type == "molecular", na.rm = TRUE)
 
 knitr::kable(
   data.frame(
     trait_1 = trait_1_name,
     trait_2 = trait_2_name,
-    n_traits = nrow(X1),
+    association_source = bivariate$association_source,
+    collapse_gene_tissue = bivariate$collapse_gene_tissue,
+    n_rows = nrow(X1),
+    n_phenotypic = n_pheno,
+    n_molecular = n_mol,
     n_snps_trait_1 = ncol(X1),
     n_snps_trait_2 = ncol(X2)
   ),
@@ -96,7 +155,11 @@ knitr::kable(
 
 ## Step 1.5: Filter sparse and ubiquitous traits
 
-Drop shared trait rows with fewer than `min_snp_signals` non-`NA` values in **both** matrices, or with non-`NA` fraction above `max_snp_fraction` in **either** matrix (target trait rows kept).
+Drop shared trait rows with fewer than `min_snp_signals` non-`NA` values in **both**
+matrices, or with non-`NA` fraction above `max_snp_fraction` in **either** matrix
+(target trait rows kept). The filtered matrices are used for \(S^*\), Louvain, and
+trait-vs-rest verification. Molecular QTL genes in `coloc_groups` are still available
+for pathway enrichment.
 
 ```{r step1-sparse-filter}
 protected_ids <- c(as.character(trait_id_1), as.character(trait_id_2))
@@ -128,11 +191,56 @@ knitr::kable(
     n_sparse_traits_removed = length(setdiff(sparse_trait_ids, protected_ids)),
     n_ubiquitous_traits_removed = length(setdiff(ubiquitous_trait_ids, protected_ids)),
     n_traits_after = nrow(X1),
+    n_phenotypic_after = sum(
+      bivariate$trait_info$feature_type == "phenotypic",
+      na.rm = TRUE
+    ),
+    n_molecular_after = sum(
+      bivariate$trait_info$feature_type == "molecular",
+      na.rm = TRUE
+    ),
     n_snps_trait_1 = ncol(X1),
     n_snps_trait_2 = ncol(X2)
   ),
   caption = "After sparse / ubiquitous trait filter",
   align = "r"
+)
+```
+
+## Step 1.6: Phenotypic vs molecular contribution
+
+How much of each SNP profile is carried by phenotypic traits versus molecular QTL
+rows? `frac_squared_mass` is the share of total \(\sum z^2\);
+`mean_snp_frac_mass` averages that share within each SNP column.
+
+```{r step1-contribution}
+contrib_1 <- summarise_feature_type_contribution(X1, bivariate$trait_info)
+contrib_2 <- summarise_feature_type_contribution(X2, bivariate$trait_info)
+
+knitr::kable(
+  contrib_1 |>
+    dplyr::mutate(
+      mean_abs_z = round(mean_abs_z, 3),
+      squared_mass = signif(squared_mass, 4),
+      frac_squared_mass = round(frac_squared_mass, 3),
+      mean_snp_frac_mass = round(mean_snp_frac_mass, 3)
+    ),
+  caption = paste0(trait_1_name, ": phenotypic vs molecular contribution"),
+  align = "r",
+  row.names = FALSE
+)
+
+knitr::kable(
+  contrib_2 |>
+    dplyr::mutate(
+      mean_abs_z = round(mean_abs_z, 3),
+      squared_mass = signif(squared_mass, 4),
+      frac_squared_mass = round(frac_squared_mass, 3),
+      mean_snp_frac_mass = round(mean_snp_frac_mass, 3)
+    ),
+  caption = paste0(trait_2_name, ": phenotypic vs molecular contribution"),
+  align = "r",
+  row.names = FALSE
 )
 ```
 
@@ -156,7 +264,7 @@ X2_star <- orient_pleiotropy_matrix(
 X1_star <- compress_effect_matrix(X1_star, method = compress_method)
 X2_star <- compress_effect_matrix(X2_star, method = compress_method)
 
-# SNPs x traits for verification helpers (same orientation / compression)
+# SNPs x traits for verification (same features used for clustering)
 trait_matrix_1 <- t(X1_star)
 trait_matrix_2 <- t(X2_star)
 ```
@@ -180,7 +288,9 @@ knitr::kable(
 
 ## Step 4: Signed Louvain modules
 
-Louvain runs on cosine similarity of cross-trait **profiles** (rows and columns of `S^*`). Edges with `|similarity| < similarity_threshold` are zeroed before clustering.
+Louvain runs on cosine similarity of cross-trait **profiles** (rows and columns of `S^*`).
+If `similarity_threshold > 0`, edges with `|similarity| < similarity_threshold` are
+zeroed before clustering (`0` keeps the dense SNP–SNP graph).
 
 ```{r step4-cluster}
 cross_modules <- cluster_cross_trait_snps(
@@ -499,11 +609,13 @@ if (nrow(blocks_of_interest) == 0) {
 }
 ```
 
-## Verification: module vs rest (categories and tissues)
+## Verification: module vs rest (clustering traits)
 
-For each large Louvain module, ask whether trait categories or QTL tissues are
-elevated relative to all other SNPs on that trait side
-(`summarise_module_specific_traits()`, `enrich_snp_group_tissues(background = "rest")`).
+For each large Louvain module, ask whether traits / features present in the
+**clustering matrix** are elevated relative to all other SNPs on that trait side
+(`summarise_module_specific_traits()`). With `collapse_gene_tissue = TRUE`,
+molecular rows appear as `gene | tissue` labels. Pathway enrichment from
+`coloc_groups` remains a secondary check below.
 
 ```{r verify-traits-1}
 group_traits_1 <- summarise_module_specific_traits(
@@ -629,97 +741,10 @@ for (x in group_traits_2$by_group) {
 }
 ```
 
-```{r verify-tissues-1}
-group_tissues_1 <- enrich_snp_group_tissues(
-  groups = cross_modules$clusters_rows,
-  coloc_groups = cg,
-  snp_key = "variant_id",
-  min_group_size = min_group_size,
-  background = "rest"
-)
+## Secondary check: pathway enrichment (QTL genes)
 
-knitr::kable(
-  group_tissues_1$summary,
-  caption = paste0(
-    trait_1_name, ": tissues enriched vs rest (> ",
-    min_group_size, " SNPs)"
-  ),
-  na = "",
-  row.names = FALSE
-)
-```
-
-```{r verify-tissue1-details, echo=FALSE, results='asis'}
-for (x in group_tissues_1$by_group) {
-  if (nrow(x$enriched) == 0) {
-    next
-  }
-  cat("\n\n### ", trait_1_name, " module ", x$group, " tissues\n\n", sep = "")
-  cat(
-    "SNPs: ", x$n_snps,
-    "; tissue links: ", x$n_tissue_links, "\n\n",
-    sep = ""
-  )
-  print(knitr::kable(
-    x$enriched |>
-      dplyr::mutate(
-        fold_enrichment = round(fold_enrichment, 2),
-        p_value = signif(p_value, 3),
-        fdr = signif(fdr, 3)
-      ),
-    caption = "Tissues enriched vs rest (FDR <= 0.05)",
-    row.names = FALSE
-  ))
-}
-```
-
-```{r verify-tissues-2}
-group_tissues_2 <- enrich_snp_group_tissues(
-  groups = cross_modules$clusters_cols,
-  coloc_groups = cg,
-  snp_key = "variant_id",
-  min_group_size = min_group_size,
-  background = "rest"
-)
-
-knitr::kable(
-  group_tissues_2$summary,
-  caption = paste0(
-    trait_2_name, ": tissues enriched vs rest (> ",
-    min_group_size, " SNPs)"
-  ),
-  na = "",
-  row.names = FALSE
-)
-```
-
-```{r verify-tissue2-details, echo=FALSE, results='asis'}
-for (x in group_tissues_2$by_group) {
-  if (nrow(x$enriched) == 0) {
-    next
-  }
-  cat("\n\n### ", trait_2_name, " module ", x$group, " tissues\n\n", sep = "")
-  cat(
-    "SNPs: ", x$n_snps,
-    "; tissue links: ", x$n_tissue_links, "\n\n",
-    sep = ""
-  )
-  print(knitr::kable(
-    x$enriched |>
-      dplyr::mutate(
-        fold_enrichment = round(fold_enrichment, 2),
-        p_value = signif(p_value, 3),
-        fdr = signif(fdr, 3)
-      ),
-    caption = "Tissues enriched vs rest (FDR <= 0.05)",
-    row.names = FALSE
-  ))
-}
-```
-
-## Secondary check: pathway enrichment
-
-Pathway enrichment is often empty for the full BMI gene set, so it is not the primary verifier here. Results are summarised only.
+Pathway enrichment uses molecular QTL genes linked to module SNPs via
+`coloc_groups`. It is often empty for the full BMI gene set, so it is secondary.
 
 ```{r verify-pathways-secondary}
 baseline_1 <- enrich_trait_pathways(
@@ -769,10 +794,10 @@ knitr::kable(
 
 ## Comparison notes
 
-| Choice | Bivariate (this vignette) | SNP perturbation |
+| Choice | Bivariate (this vignette) | EBMF |
 |---|---|---|
-| Input | Shared background traits x SNPs (both sides) | SNP x trait + SNP x gene |
-| Similarity | Rectangular cross-trait \(S^*\) (+ shared-SNP \(S^*\)) | Weighted trait/gene cosine |
-| Clustering | Signed Louvain (each side), `gamma = 2` | Hierarchical + Leiden |
-| Extra | All-SNP blocks + shared-SNP concordance panel | — |
-| Verification | Module vs rest (categories/tissues); pathways secondary | Same |
+| Input | Shared background traits x SNPs (both sides); optional gene x tissue QTL collapse | Phenotypic traits + gene-collapsed QTLs |
+| Similarity / model | Rectangular cross-trait \(S^*\) (+ shared-SNP \(S^*\)) | Sparse matrix factorization |
+| Clustering | Signed Louvain (each side) | Soft programs (`flashier`) |
+| Extra | All-SNP blocks + shared-SNP concordance panel | Automated \(K\) via ELBO |
+| Verification | Module vs rest on clustering traits; QTL pathways secondary | Program drivers + trait verification |

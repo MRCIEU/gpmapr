@@ -9,7 +9,11 @@ build_bivariate_pleiotropy_matrices(
   trait_id_2,
   coloc_groups = NULL,
   p_threshold = NULL,
-  snp_key = c("variant_id", "display_snp", "coloc_group_id")
+  snp_key = c("variant_id", "display_snp", "coloc_group_id"),
+  association_source = c("coloc", "full"),
+  full_associations_1 = NULL,
+  full_associations_2 = NULL,
+  collapse_gene_tissue = FALSE
 )
 }
 \arguments{
@@ -19,20 +23,35 @@ build_bivariate_pleiotropy_matrices(
 
 \item{coloc_groups}{A dataframe of coloc_groups with \code{beta} and \code{se} columns
 covering both traits. If NULL, fetched via
-\code{traits(c(trait_id_1, trait_id_2), include_associations = TRUE)}.}
+\code{traits(c(trait_id_1, trait_id_2), include_associations = TRUE)} (coloc mode)
+or per-trait \code{trait(..., include_full_associations = TRUE)} (full mode).}
 
 \item{p_threshold}{P-value threshold for including target-trait SNPs. If NULL,
 all SNPs with valid z-scores are retained.}
 
 \item{snp_key}{Column used to name SNP columns. Defaults to \code{"variant_id"}.}
+
+\item{association_source}{\code{"coloc"} (default): sparse matrix from coloc-merged
+associations only. \code{"full"}: denser matrix from \verb{/associations-full} at the
+same target SNP columns (still defined by coloc loci).}
+
+\item{full_associations_1, full_associations_2}{Optional full-association
+tables for each target when \code{association_source = "full"}. Fetched if NULL.}
+
+\item{collapse_gene_tissue}{If \code{TRUE}, molecular QTL rows are collapsed by
+gene x tissue (Stouffer over cis/trans and QTL types). If \code{FALSE} (default),
+each QTL study remains its own trait row.}
 }
 \value{
 A list with:
 \itemize{
 \item x1_matrix, x2_matrix: aligned numeric matrices (traits x SNPs)
 \item trait_info: dataframe of shared background trait metadata
+(\code{trait_id}, \code{trait_name}, \code{feature_type}, optional \code{gene}/\code{tissue})
 \item snp_info_1, snp_info_2: SNP metadata for each matrix
 \item trait_id_1, trait_id_2: target trait IDs
+\item association_source: the source used
+\item collapse_gene_tissue: whether gene x tissue collapse was applied
 }
 }
 \description{

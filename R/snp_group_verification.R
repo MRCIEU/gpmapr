@@ -2,8 +2,8 @@
 #' @description Rank complex-trait columns by mean absolute effect across a set
 #' of SNPs. Use as a verification baseline when pathway enrichment is empty or
 #' weak: do SNP groups recover distinct trait drivers?
-#' @param trait_matrix SNPs x traits numeric matrix (e.g. from
-#'   `build_perturbation_matrices()$trait_matrix`).
+#' @param trait_matrix SNPs x traits numeric matrix (e.g. oriented trait matrix
+#'   from bivariate / EBMF verification helpers).
 #' @param snp_ids Optional SNP ids to include. Defaults to all rows.
 #' @param trait_info Optional dataframe with `feature_id`/`trait_id` and
 #'   `feature_name`/`trait_name` columns for labels.

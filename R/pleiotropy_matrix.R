@@ -10,25 +10,34 @@
 #' @param p_threshold P-value threshold for including a target-trait SNP. Defaults to 5e-8.
 #' @param snp_key Column used to name SNP columns: `"variant_id"`, `"display_snp"`, or
 #'   `"coloc_group_id"`. Defaults to `"variant_id"`.
+#' @param collapse_gene_tissue If `TRUE`, molecular QTL rows are collapsed by
+#'   gene x tissue (Stouffer over cis/trans and QTL types). If `FALSE` (default),
+#'   each QTL study remains its own trait row.
 #' @return A list with:
 #'   \itemize{
 #'     \item x_matrix: numeric matrix (traits x SNPs) of z-scores; `NA` where a trait
 #'       has no colocalisation signal at that SNP's locus
 #'     \item trait_info: dataframe mapping row indices to `trait_id` and `trait_name`
+#'       (plus `feature_type`, and `gene`/`tissue` when available)
 #'     \item snp_info: dataframe mapping column names to `coloc_group_id`, `variant_id`,
 #'       `display_snp`, `chr`, and `bp`
 #'     \item target_trait_id: the target trait ID used
+#'     \item collapse_gene_tissue: whether gene x tissue collapse was applied
 #'   }
 #' @export
 build_pleiotropy_matrix <- function(trait_id,
                                     coloc_groups = NULL,
                                     p_threshold = NULL,
-                                    snp_key = c("variant_id", "display_snp", "coloc_group_id")) {
+                                    snp_key = c("variant_id", "display_snp", "coloc_group_id"),
+                                    collapse_gene_tissue = FALSE) {
   if (missing(trait_id) || is.null(trait_id)) {
     stop("trait_id is required")
   }
 
   snp_key <- match.arg(snp_key)
+  if (!is.logical(collapse_gene_tissue) || length(collapse_gene_tissue) != 1L) {
+    stop("collapse_gene_tissue must be a single logical")
+  }
   target_id <- trait_id
 
   if (is.null(coloc_groups)) {
@@ -42,35 +51,10 @@ build_pleiotropy_matrix <- function(trait_id,
     snp_key = snp_key
   )
 
-  z_long <- locus_data$cg |>
-    dplyr::group_by(trait_id, snp_id) |>
-    dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
-    dplyr::ungroup() |>
-    dplyr::select("trait_id", "trait_name", "snp_id", "z")
-
-  z_wide <- z_long |>
-    tidyr::pivot_wider(
-      names_from = "snp_id",
-      values_from = "z"
-    )
-
-  trait_info <- z_wide |>
-    dplyr::select("trait_id", "trait_name") |>
-    dplyr::distinct()
-
-  snp_ids <- setdiff(names(z_wide), c("trait_id", "trait_name"))
-  x_matrix <- as.matrix(z_wide[, snp_ids, drop = FALSE])
-  rownames(x_matrix) <- as.character(z_wide$trait_id)
-
-  snp_info <- locus_data$target_snps |>
-    dplyr::filter(snp_id %in% snp_ids) |>
-    dplyr::distinct()
-
-  return(list(
-    x_matrix = x_matrix,
-    trait_info = trait_info,
-    snp_info = snp_info,
-    target_trait_id = target_id
+  return(.finalize_pleiotropy_from_locus(
+    locus_data,
+    target_id,
+    collapse_gene_tissue = collapse_gene_tissue
   ))
 }
 
@@ -139,47 +123,114 @@ orient_pleiotropy_matrix <- function(x_matrix, target_trait_id, z_target = NULL)
 #' @param trait_id_2 Numeric ID of the second target trait (columns of \eqn{X_2}).
 #' @param coloc_groups A dataframe of coloc_groups with `beta` and `se` columns
 #'   covering both traits. If NULL, fetched via
-#'   `traits(c(trait_id_1, trait_id_2), include_associations = TRUE)`.
+#'   `traits(c(trait_id_1, trait_id_2), include_associations = TRUE)` (coloc mode)
+#'   or per-trait `trait(..., include_full_associations = TRUE)` (full mode).
 #' @param p_threshold P-value threshold for including target-trait SNPs. If NULL,
 #'   all SNPs with valid z-scores are retained.
 #' @param snp_key Column used to name SNP columns. Defaults to `"variant_id"`.
+#' @param association_source `"coloc"` (default): sparse matrix from coloc-merged
+#'   associations only. `"full"`: denser matrix from `/associations-full` at the
+#'   same target SNP columns (still defined by coloc loci).
+#' @param full_associations_1,full_associations_2 Optional full-association
+#'   tables for each target when `association_source = "full"`. Fetched if NULL.
+#' @param collapse_gene_tissue If `TRUE`, molecular QTL rows are collapsed by
+#'   gene x tissue (Stouffer over cis/trans and QTL types). If `FALSE` (default),
+#'   each QTL study remains its own trait row.
 #' @return A list with:
 #'   \itemize{
 #'     \item x1_matrix, x2_matrix: aligned numeric matrices (traits x SNPs)
 #'     \item trait_info: dataframe of shared background trait metadata
+#'       (`trait_id`, `trait_name`, `feature_type`, optional `gene`/`tissue`)
 #'     \item snp_info_1, snp_info_2: SNP metadata for each matrix
 #'     \item trait_id_1, trait_id_2: target trait IDs
+#'     \item association_source: the source used
+#'     \item collapse_gene_tissue: whether gene x tissue collapse was applied
 #'   }
 #' @export
 build_bivariate_pleiotropy_matrices <- function(trait_id_1,
                                                 trait_id_2,
                                                 coloc_groups = NULL,
                                                 p_threshold = NULL,
-                                                snp_key = c("variant_id", "display_snp", "coloc_group_id")) {
+                                                snp_key = c("variant_id", "display_snp", "coloc_group_id"),
+                                                association_source = c("coloc", "full"),
+                                                full_associations_1 = NULL,
+                                                full_associations_2 = NULL,
+                                                collapse_gene_tissue = FALSE) {
   if (missing(trait_id_1) || is.null(trait_id_1) ||
       missing(trait_id_2) || is.null(trait_id_2)) {
     stop("trait_id_1 and trait_id_2 are required")
   }
 
-  if (is.null(coloc_groups)) {
-    coloc_groups <- traits(
-      c(trait_id_1, trait_id_2),
-      include_associations = TRUE
-    )$coloc_groups
+  snp_key <- match.arg(snp_key)
+  association_source <- match.arg(association_source)
+  if (!is.logical(collapse_gene_tissue) || length(collapse_gene_tissue) != 1L) {
+    stop("collapse_gene_tissue must be a single logical")
   }
 
-  pleiotropy_1 <- build_pleiotropy_matrix(
-    trait_id = trait_id_1,
-    coloc_groups = coloc_groups,
-    p_threshold = p_threshold,
-    snp_key = snp_key
-  )
-  pleiotropy_2 <- build_pleiotropy_matrix(
-    trait_id = trait_id_2,
-    coloc_groups = coloc_groups,
-    p_threshold = p_threshold,
-    snp_key = snp_key
-  )
+  if (identical(association_source, "full")) {
+    if (is.null(coloc_groups) || is.null(full_associations_1) ||
+        is.null(full_associations_2)) {
+      trait_data_1 <- trait(
+        trait_id_1,
+        include_associations = TRUE,
+        include_full_associations = TRUE
+      )
+      trait_data_2 <- trait(
+        trait_id_2,
+        include_associations = TRUE,
+        include_full_associations = TRUE
+      )
+      if (is.null(coloc_groups)) {
+        coloc_groups <- dplyr::bind_rows(
+          trait_data_1$coloc_groups,
+          trait_data_2$coloc_groups
+        )
+      }
+      if (is.null(full_associations_1)) {
+        full_associations_1 <- trait_data_1$full_associations
+      }
+      if (is.null(full_associations_2)) {
+        full_associations_2 <- trait_data_2$full_associations
+      }
+    }
+    pleiotropy_1 <- .build_pleiotropy_matrix_dense(
+      trait_id = trait_id_1,
+      coloc_groups = coloc_groups,
+      full_associations = full_associations_1,
+      p_threshold = p_threshold,
+      snp_key = snp_key,
+      collapse_gene_tissue = collapse_gene_tissue
+    )
+    pleiotropy_2 <- .build_pleiotropy_matrix_dense(
+      trait_id = trait_id_2,
+      coloc_groups = coloc_groups,
+      full_associations = full_associations_2,
+      p_threshold = p_threshold,
+      snp_key = snp_key,
+      collapse_gene_tissue = collapse_gene_tissue
+    )
+  } else {
+    if (is.null(coloc_groups)) {
+      coloc_groups <- traits(
+        c(trait_id_1, trait_id_2),
+        include_associations = TRUE
+      )$coloc_groups
+    }
+    pleiotropy_1 <- build_pleiotropy_matrix(
+      trait_id = trait_id_1,
+      coloc_groups = coloc_groups,
+      p_threshold = p_threshold,
+      snp_key = snp_key,
+      collapse_gene_tissue = collapse_gene_tissue
+    )
+    pleiotropy_2 <- build_pleiotropy_matrix(
+      trait_id = trait_id_2,
+      coloc_groups = coloc_groups,
+      p_threshold = p_threshold,
+      snp_key = snp_key,
+      collapse_gene_tissue = collapse_gene_tissue
+    )
+  }
 
   shared_trait_ids <- union(
     rownames(pleiotropy_1$x_matrix),
@@ -194,16 +245,20 @@ build_bivariate_pleiotropy_matrices <- function(trait_id_1,
     pleiotropy_1$trait_info,
     pleiotropy_2$trait_info
   ) |>
+    dplyr::mutate(trait_id = as.character(trait_id)) |>
     dplyr::distinct(trait_id, .keep_all = TRUE) |>
-    dplyr::filter(as.character(trait_id) %in% shared_trait_ids)
+    dplyr::filter(trait_id %in% shared_trait_ids)
 
-  missing_trait_ids <- setdiff(shared_trait_ids, as.character(trait_info$trait_id))
+  missing_trait_ids <- setdiff(shared_trait_ids, trait_info$trait_id)
   if (length(missing_trait_ids) > 0) {
     trait_info <- dplyr::bind_rows(
       trait_info,
       data.frame(
-        trait_id = as.integer(missing_trait_ids),
+        trait_id = as.character(missing_trait_ids),
         trait_name = NA_character_,
+        feature_type = "phenotypic",
+        gene = NA_character_,
+        tissue = NA_character_,
         stringsAsFactors = FALSE
       )
     )
@@ -216,429 +271,195 @@ build_bivariate_pleiotropy_matrices <- function(trait_id_1,
     snp_info_1 = pleiotropy_1$snp_info,
     snp_info_2 = pleiotropy_2$snp_info,
     trait_id_1 = trait_id_1,
-    trait_id_2 = trait_id_2
+    trait_id_2 = trait_id_2,
+    association_source = association_source,
+    collapse_gene_tissue = collapse_gene_tissue,
+    coloc_groups = coloc_groups
   ))
 }
 
 
-#' @title Build Feature Pleiotropy Matrix
-#' @description Construct a pleiotropy matrix with standard background **trait** rows
-#' plus dense **feature** rows. Gene-linked molecular QTL signals are merged by
-#' `gene_id`, mapped to enriched pathways (`feature_type = "pathway"`), or kept as
-#' gene-level features. Non-molecular background traits are retained unchanged.
-#' Matrix values use gene contributions \eqn{z_{gj} \cdot P_{gt}} aggregated by
-#' mean within each pathway feature; orientation applies \eqn{\mathrm{sign}(z_j)}
-#' in `orient_pleiotropy_matrix()`.
-#'
-#' Cell values are populated from the dense association graph returned by
-#' `trait(..., include_full_associations = TRUE)$full_associations`
-#' (z = beta / se), joined to background traits and molecular QTL studies via
-#' `study_id` and restricted to target-trait SNPs from `coloc_groups`.
-#' @param trait_id Numeric ID of the target trait whose associated SNPs define the columns.
-#' @param p_threshold P-value threshold for including a target-trait SNP. Defaults to 5e-8.
-#' @param snp_key Column used to name SNP columns: `"variant_id"`, `"display_snp"`, or
-#'   `"coloc_group_id"`. Defaults to `"variant_id"`.
-#' @param feature_map Optional gene-to-feature mapping from `build_pathway_feature_map()`.
-#'   If NULL, built from genes at the target SNP loci.
-#' @param pathway_source Optional pathway source passed to `pathway_enrichment()`.
-#' @param pathway_min_size Minimum pathway size for collapse. Defaults to 5.
-#' @param pathway_max_size Maximum pathway size for collapse. Defaults to 200.
-#' @param minimum_count_in_network Minimum gene overlap per pathway term.
-#' @return A list with:
-#'   \itemize{
-#'     \item x_matrix: features x SNPs matrix (traits + pathway/gene features)
-#'     \item feature_info: metadata with `feature_id`, `feature_name`, `feature_type`
-#'     \item z_target: target-trait z-scores per SNP column (for orientation)
-#'     \item snp_info, target_trait_id, pathway_enrichment, feature_map
-#'   }
-#' @export
-build_feature_pleiotropy_matrix <- function(trait_id,
-                                            p_threshold = NULL,
-                                            snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-                                            feature_map = NULL,
-                                            pathway_source = NULL,
-                                            pathway_min_size = 5L,
-                                            pathway_max_size = 200L,
-                                            minimum_count_in_network = NULL) {
-  if (missing(trait_id) || is.null(trait_id)) {
-    stop("trait_id is required")
-  }
-
-  snp_key <- match.arg(snp_key)
-  target_id <- trait_id
-
-  trait_data <- trait(target_id, include_full_associations = TRUE)
-  coloc_groups <- trait_data$coloc_groups
-  full_associations <- trait_data$full_associations
-
+.build_pleiotropy_matrix_dense <- function(trait_id,
+                                           coloc_groups,
+                                           full_associations,
+                                           p_threshold,
+                                           snp_key,
+                                           collapse_gene_tissue = FALSE) {
   locus_data <- .prepare_dense_locus_data(
-    trait_id = target_id,
+    trait_id = trait_id,
     coloc_groups = coloc_groups,
     full_associations = full_associations,
     p_threshold = p_threshold,
     snp_key = snp_key
   )
+  return(.finalize_pleiotropy_from_locus(
+    locus_data,
+    trait_id,
+    collapse_gene_tissue = collapse_gene_tissue
+  ))
+}
+
+
+.finalize_pleiotropy_from_locus <- function(locus_data,
+                                            target_id,
+                                            collapse_gene_tissue = FALSE) {
+  cg <- locus_data$cg
+  if (!"tissue" %in% names(cg)) {
+    cg$tissue <- NA_character_
+  }
+  if (!"gene" %in% names(cg)) {
+    cg$gene <- NA_character_
+  }
 
   snp_ids <- as.character(unique(locus_data$target_snps$snp_id))
-  gene_z <- .collapse_gene_z_scores(locus_data$cg)
-  pathway_enrichment <- NULL
-
-  if (is.null(feature_map) && nrow(gene_z) > 0) {
-    map_result <- build_pathway_feature_map(
-      genes = unique(gene_z$gene_id),
-      source = pathway_source,
-      p_value_threshold = 1,
-      min_size = pathway_min_size,
-      max_size = pathway_max_size,
-      minimum_count_in_network = minimum_count_in_network
-    )
-    feature_map <- map_result$feature_map
-    pathway_enrichment <- map_result$pathway_enrichment
-  }
-
-  matrix_result <- .build_feature_pleiotropy_from_locus(
-    cg = locus_data$cg,
-    gene_z = gene_z,
-    feature_map = feature_map,
-    snp_ids = snp_ids
-  )
-
-  snp_cols <- colnames(matrix_result$x_matrix)
-  z_target <- stats::setNames(
-    rep(NA_real_, length(snp_cols)),
-    snp_cols
-  )
-  if (nrow(locus_data$z_target) > 0) {
-    z_idx <- match(snp_cols, locus_data$z_target$snp_id)
-    matched <- !is.na(z_idx)
-    z_target[matched] <- locus_data$z_target$z[z_idx[matched]]
-  }
-
-  target_row <- as.character(target_id)
-  if (target_row %in% rownames(matrix_result$x_matrix)) {
-    missing <- is.na(z_target)
-    if (any(missing)) {
-      z_target[missing] <- matrix_result$x_matrix[target_row, missing, drop = TRUE]
-    }
+  if (isTRUE(collapse_gene_tissue)) {
+    built <- .build_gene_tissue_pleiotropy_from_locus(cg, snp_ids)
+    x_matrix <- built$x_matrix
+    trait_info <- built$trait_info
+  } else {
+    built <- .build_study_level_pleiotropy_from_locus(cg, snp_ids)
+    x_matrix <- built$x_matrix
+    trait_info <- built$trait_info
   }
 
   snp_info <- locus_data$target_snps |>
-    dplyr::filter(snp_id %in% colnames(matrix_result$x_matrix)) |>
+    dplyr::filter(snp_id %in% colnames(x_matrix)) |>
     dplyr::distinct()
 
   return(list(
-    x_matrix = matrix_result$x_matrix,
-    feature_info = matrix_result$feature_info,
-    z_target = z_target,
+    x_matrix = x_matrix,
+    trait_info = trait_info,
     snp_info = snp_info,
     target_trait_id = target_id,
-    pathway_enrichment = pathway_enrichment,
-    feature_map = feature_map
+    collapse_gene_tissue = collapse_gene_tissue
   ))
 }
 
 
-#' @title Build Pathway Feature Map
-#' @description Map genes to enriched pathway features. Genes not in any enriched
-#' pathway are represented as gene-level features when building the matrix.
-#' @param genes Numeric gene IDs or gene names accepted by `pathway_enrichment()`.
-#' @param source Optional pathway source: `"Reactome"`, `"KEGG"`, or `"HP"`.
-#' @param p_value_threshold FDR threshold for enriched pathways.
-#' @param min_size Optional minimum pathway size; pathways smaller than this are
-#'   dropped. Defaults to `NULL` (no minimum).
-#' @param max_size Optional maximum pathway size; pathways larger than this are
-#'   dropped. Defaults to `NULL` (no maximum).
-#' @param minimum_count_in_network Minimum overlap per pathway term.
-#' @return A list with `feature_map` (gene_id, feature_id, feature_name, source)
-#'   and `pathway_enrichment`.
-#' @export
-build_pathway_feature_map <- function(genes,
-                                    source = NULL,
-                                    p_value_threshold = 0.05,
-                                    min_size = NULL,
-                                    max_size = NULL,
-                                    minimum_count_in_network = NULL) {
-  if (is.null(genes) || length(genes) == 0) {
-    stop("genes is required")
-  }
-
-  pathway_enrichment <- pathway_enrichment(
-    genes = genes,
-    source = source,
-    p_value_threshold = p_value_threshold,
-    minimum_count_in_network = minimum_count_in_network
-  )
-
-  feature_map <- data.frame(
-    gene_id = integer(0),
-    feature_id = character(0),
-    feature_name = character(0),
-    source = character(0),
-    stringsAsFactors = FALSE
-  )
-
-  if (is.data.frame(pathway_enrichment$results) && nrow(pathway_enrichment$results) > 0) {
-    pathway_results <- pathway_enrichment$results
-    if (!is.null(min_size)) {
-      pathway_results <- pathway_results |>
-        dplyr::filter(pathway_size >= min_size)
-    }
-    if (!is.null(max_size)) {
-      pathway_results <- pathway_results |>
-        dplyr::filter(pathway_size <= max_size)
-    }
-    pathway_rows <- lapply(seq_len(nrow(pathway_results)), function(i) {
-      row <- pathway_results[i, , drop = FALSE]
-      overlap_genes <- row$gene_ids[[1]]
-      if (length(overlap_genes) == 0) {
-        return(NULL)
-      }
-      data.frame(
-        gene_id = overlap_genes,
-        feature_id = paste0(row$source, ":", row$term_id),
-        feature_name = row$description,
-        source = row$source,
-        stringsAsFactors = FALSE
-      )
-    })
-    feature_map <- dplyr::bind_rows(pathway_rows)
-  }
-
-  return(list(
-    feature_map = feature_map,
-    pathway_enrichment = pathway_enrichment
-  ))
-}
-
-
-#' @title Build Bivariate Feature Pleiotropy Matrices
-#' @description Like `build_bivariate_pleiotropy_matrices()`, but gene-linked molecular
-#' QTL rows are collapsed into pathway/gene **features** while standard background
-#' trait rows are retained. Row names are aligned across both matrices.
-#'
-#' Cell values use the dense association graph from
-#' `trait(..., include_full_associations = TRUE)$full_associations` for each target
-#' trait (z = beta / se), as in `build_feature_pleiotropy_matrix()`. Pathway collapse
-#' keeps all returned pathways of size `pathway_min_size`--`pathway_max_size` with no
-#' FDR cut (`p_value_threshold = 1` in enrichment).
-#' @inheritParams build_bivariate_pleiotropy_matrices
-#' @inheritParams build_feature_pleiotropy_matrix
-#' @return A list with aligned `x1_matrix`, `x2_matrix`, `feature_info`, `z_target_1`,
-#'   `z_target_2`, SNP metadata, and the shared `feature_map`.
-#' @export
-build_bivariate_feature_pleiotropy_matrices <- function(trait_id_1,
-                                                        trait_id_2,
-                                                        coloc_groups = NULL,
-                                                        p_threshold = NULL,
-                                                        snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-                                                        pathway_source = NULL,
-                                                        pathway_min_size = 5L,
-                                                        pathway_max_size = 200L,
-                                                        minimum_count_in_network = NULL) {
-  if (missing(trait_id_1) || is.null(trait_id_1) ||
-      missing(trait_id_2) || is.null(trait_id_2)) {
-    stop("trait_id_1 and trait_id_2 are required")
-  }
-
-  snp_key <- match.arg(snp_key)
-
-  if (is.null(coloc_groups)) {
-    coloc_groups <- traits(
-      c(trait_id_1, trait_id_2),
-      include_associations = TRUE
-    )$coloc_groups
-  }
-
-  trait_data_1 <- trait(trait_id_1, include_full_associations = TRUE)
-  trait_data_2 <- trait(trait_id_2, include_full_associations = TRUE)
-
-  locus_data_1 <- .prepare_dense_locus_data(
-    trait_id = trait_id_1,
-    coloc_groups = coloc_groups,
-    full_associations = trait_data_1$full_associations,
-    p_threshold = p_threshold,
-    snp_key = snp_key
-  )
-  locus_data_2 <- .prepare_dense_locus_data(
-    trait_id = trait_id_2,
-    coloc_groups = coloc_groups,
-    full_associations = trait_data_2$full_associations,
-    p_threshold = p_threshold,
-    snp_key = snp_key
-  )
-
-  gene_z_1 <- .collapse_gene_z_scores(locus_data_1$cg)
-  gene_z_2 <- .collapse_gene_z_scores(locus_data_2$cg)
-  shared_genes <- union(gene_z_1$gene_id, gene_z_2$gene_id)
-
-  feature_map <- data.frame(
-    gene_id = integer(0),
-    feature_id = character(0),
-    feature_name = character(0),
-    source = character(0),
-    stringsAsFactors = FALSE
-  )
-  pathway_enrichment <- NULL
-
-  if (length(shared_genes) > 0) {
-    map_result <- build_pathway_feature_map(
-      genes = shared_genes,
-      source = pathway_source,
-      p_value_threshold = 1,
-      min_size = pathway_min_size,
-      max_size = pathway_max_size,
-      minimum_count_in_network = minimum_count_in_network
-    )
-    feature_map <- map_result$feature_map
-    pathway_enrichment <- map_result$pathway_enrichment
-  }
-
-  matrix_1 <- .build_feature_pleiotropy_from_locus(
-    cg = locus_data_1$cg,
-    gene_z = gene_z_1,
-    feature_map = feature_map,
-    snp_ids = as.character(unique(locus_data_1$target_snps$snp_id))
-  )
-  matrix_2 <- .build_feature_pleiotropy_from_locus(
-    cg = locus_data_2$cg,
-    gene_z = gene_z_2,
-    feature_map = feature_map,
-    snp_ids = as.character(unique(locus_data_2$target_snps$snp_id))
-  )
-
-  shared_feature_ids <- union(
-    rownames(matrix_1$x_matrix),
-    rownames(matrix_2$x_matrix)
-  )
-
-  feature_info <- dplyr::bind_rows(
-    matrix_1$feature_info,
-    matrix_2$feature_info
-  ) |>
-    dplyr::distinct(feature_id, .keep_all = TRUE) |>
-    dplyr::filter(feature_id %in% shared_feature_ids)
-
-  x1_matrix <- .align_pleiotropy_rows(matrix_1$x_matrix, shared_feature_ids)
-  x2_matrix <- .align_pleiotropy_rows(matrix_2$x_matrix, shared_feature_ids)
-
-  z_target_1 <- stats::setNames(
-    rep(NA_real_, ncol(x1_matrix)),
-    colnames(x1_matrix)
-  )
-  if (nrow(locus_data_1$z_target) > 0) {
-    z_idx <- match(colnames(x1_matrix), locus_data_1$z_target$snp_id)
-    matched <- !is.na(z_idx)
-    z_target_1[matched] <- locus_data_1$z_target$z[z_idx[matched]]
-  }
-  target_row_1 <- as.character(trait_id_1)
-  if (target_row_1 %in% rownames(x1_matrix)) {
-    missing <- is.na(z_target_1)
-    if (any(missing)) {
-      z_target_1[missing] <- x1_matrix[target_row_1, missing, drop = TRUE]
-    }
-  }
-
-  z_target_2 <- stats::setNames(
-    rep(NA_real_, ncol(x2_matrix)),
-    colnames(x2_matrix)
-  )
-  if (nrow(locus_data_2$z_target) > 0) {
-    z_idx <- match(colnames(x2_matrix), locus_data_2$z_target$snp_id)
-    matched <- !is.na(z_idx)
-    z_target_2[matched] <- locus_data_2$z_target$z[z_idx[matched]]
-  }
-  target_row_2 <- as.character(trait_id_2)
-  if (target_row_2 %in% rownames(x2_matrix)) {
-    missing <- is.na(z_target_2)
-    if (any(missing)) {
-      z_target_2[missing] <- x2_matrix[target_row_2, missing, drop = TRUE]
-    }
-  }
-
-  return(list(
-    x1_matrix = x1_matrix,
-    x2_matrix = x2_matrix,
-    feature_info = feature_info,
-    z_target_1 = z_target_1,
-    z_target_2 = z_target_2,
-    snp_info_1 = locus_data_1$target_snps |> dplyr::distinct(),
-    snp_info_2 = locus_data_2$target_snps |> dplyr::distinct(),
-    trait_id_1 = trait_id_1,
-    trait_id_2 = trait_id_2,
-    feature_map = feature_map,
-    pathway_enrichment = pathway_enrichment
-  ))
-}
-
-
-.is_molecular_gene_row <- function(cg) {
-  if (!"gene_id" %in% names(cg)) {
-    return(rep(FALSE, nrow(cg)))
-  }
-  !is.na(cg$gene_id)
-}
-
-
-.build_feature_pleiotropy_from_locus <- function(cg, gene_z, feature_map, snp_ids) {
+.build_study_level_pleiotropy_from_locus <- function(cg, snp_ids) {
   snp_ids <- as.character(snp_ids)
-  trait_part <- .trait_z_to_matrix(cg, snp_ids)
+  z_long <- cg |>
+    dplyr::mutate(snp_id = as.character(snp_id)) |>
+    dplyr::group_by(trait_id, snp_id) |>
+    dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
+    dplyr::ungroup() |>
+    dplyr::select("trait_id", "trait_name", "snp_id", "z")
 
-  if (nrow(gene_z) > 0 && !is.null(feature_map) && nrow(feature_map) > 0) {
-    feature_part <- .pathway_feature_z_to_matrix(gene_z, feature_map, snp_ids)
-  } else if (nrow(gene_z) > 0) {
-    feature_part <- .pathway_feature_z_to_matrix(
-      gene_z,
-      data.frame(
-        gene_id = integer(0),
-        feature_id = character(0),
-        feature_name = character(0),
-        source = character(0),
-        stringsAsFactors = FALSE
-      ),
-      snp_ids
+  z_wide <- z_long |>
+    tidyr::pivot_wider(
+      names_from = "snp_id",
+      values_from = "z"
     )
-  } else {
-    feature_part <- list(
-      x_matrix = matrix(numeric(0), nrow = 0, ncol = length(snp_ids)),
-      feature_info = data.frame(
-        feature_id = character(0),
-        feature_name = character(0),
-        feature_type = character(0),
-        source = character(0),
-        stringsAsFactors = FALSE
-      )
-    )
+
+  if (!"gene_id" %in% names(cg)) {
+    cg$gene_id <- NA_integer_
   }
 
-  return(.combine_row_matrices(trait_part, feature_part, snp_ids))
+  meta <- cg |>
+    dplyr::mutate(
+      trait_id = as.character(trait_id),
+      is_molecular = !is.na(gene_id)
+    ) |>
+    dplyr::group_by(trait_id) |>
+    dplyr::summarise(
+      feature_type = if (any(is_molecular)) "molecular" else "phenotypic",
+      gene = {
+        vals <- as.character(gene)
+        vals <- vals[!is.na(vals) & vals != ""]
+        if (length(vals) == 0) NA_character_ else vals[[1]]
+      },
+      tissue = {
+        vals <- as.character(tissue)
+        vals <- vals[!is.na(vals) & vals != ""]
+        if (length(vals) == 0) NA_character_ else vals[[1]]
+      },
+      .groups = "drop"
+    )
+
+  trait_info <- z_wide |>
+    dplyr::transmute(
+      trait_id = as.character(trait_id),
+      trait_name = trait_name
+    ) |>
+    dplyr::distinct(trait_id, .keep_all = TRUE) |>
+    dplyr::left_join(meta, by = "trait_id") |>
+    dplyr::mutate(
+      feature_type = dplyr::coalesce(feature_type, "phenotypic")
+    ) |>
+    dplyr::select("trait_id", "trait_name", "feature_type", "gene", "tissue")
+
+  snp_cols <- intersect(snp_ids, setdiff(names(z_wide), c("trait_id", "trait_name")))
+  x_matrix <- matrix(numeric(0), nrow = 0, ncol = length(snp_ids))
+  dimnames(x_matrix) <- list(character(0), snp_ids)
+  if (length(snp_cols) > 0) {
+    x_matrix <- as.matrix(z_wide[, snp_cols, drop = FALSE])
+    rownames(x_matrix) <- as.character(z_wide$trait_id)
+    x_matrix <- .ensure_matrix_columns(x_matrix, snp_ids)
+  }
+
+  return(list(x_matrix = x_matrix, trait_info = trait_info))
 }
 
 
-.trait_z_to_matrix <- function(cg, snp_ids) {
+.build_gene_tissue_pleiotropy_from_locus <- function(cg, snp_ids) {
   snp_ids <- as.character(snp_ids)
   molecular <- .is_molecular_gene_row(cg)
   trait_cg <- cg[!molecular, , drop = FALSE]
+  mol_cg <- cg[molecular, , drop = FALSE]
 
-  empty_info <- data.frame(
-    feature_id = character(0),
-    feature_name = character(0),
-    feature_type = character(0),
-    source = character(0),
-    stringsAsFactors = FALSE
+  trait_part <- .phenotypic_trait_z_to_matrix(trait_cg, snp_ids)
+  gene_tissue_part <- .gene_tissue_z_to_matrix(
+    .collapse_gene_tissue_z_scores(mol_cg),
+    snp_ids
   )
 
-  if (nrow(trait_cg) == 0) {
-    return(list(
-      x_matrix = matrix(numeric(0), nrow = 0, ncol = length(snp_ids)),
-      feature_info = empty_info
-    ))
+  parts <- list()
+  if (nrow(trait_part$x_matrix) > 0) {
+    parts[[length(parts) + 1L]] <- trait_part
+  }
+  if (nrow(gene_tissue_part$x_matrix) > 0) {
+    parts[[length(parts) + 1L]] <- gene_tissue_part
+  }
+  if (length(parts) == 0) {
+    stop("No phenotypic or gene x tissue rows could be constructed")
   }
 
-  z_long <- trait_cg |>
+  x_matrix <- do.call(rbind, lapply(parts, function(p) {
+    return(.ensure_matrix_columns(p$x_matrix, snp_ids))
+  }))
+  trait_info <- dplyr::bind_rows(lapply(parts, `[[`, "trait_info"))
+
+  return(list(x_matrix = x_matrix, trait_info = trait_info))
+}
+
+
+.phenotypic_trait_z_to_matrix <- function(cg, snp_ids) {
+  snp_ids <- as.character(snp_ids)
+  empty <- list(
+    x_matrix = matrix(
+      numeric(0),
+      nrow = 0,
+      ncol = length(snp_ids),
+      dimnames = list(character(0), snp_ids)
+    ),
+    trait_info = data.frame(
+      trait_id = character(0),
+      trait_name = character(0),
+      feature_type = character(0),
+      gene = character(0),
+      tissue = character(0),
+      stringsAsFactors = FALSE
+    )
+  )
+  if (is.null(cg) || nrow(cg) == 0) {
+    return(empty)
+  }
+
+  z_long <- cg |>
+    dplyr::mutate(snp_id = as.character(snp_id)) |>
     dplyr::group_by(trait_id, trait_name, snp_id) |>
     dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
     dplyr::ungroup() |>
-    dplyr::mutate(snp_id = as.character(snp_id)) |>
     dplyr::select("trait_id", "trait_name", "snp_id", "z")
 
   z_wide <- z_long |>
@@ -648,146 +469,195 @@ build_bivariate_feature_pleiotropy_matrices <- function(trait_id_1,
       values_fn = mean
     )
 
-  feature_info <- z_wide |>
+  trait_info <- z_wide |>
     dplyr::transmute(
-      feature_id = as.character(trait_id),
-      feature_name = trait_name,
-      feature_type = "trait",
-      source = "trait"
+      trait_id = as.character(trait_id),
+      trait_name = trait_name,
+      feature_type = "phenotypic",
+      gene = NA_character_,
+      tissue = NA_character_
     ) |>
-    dplyr::distinct(feature_id, .keep_all = TRUE)
+    dplyr::distinct(trait_id, .keep_all = TRUE)
 
   snp_cols <- intersect(snp_ids, setdiff(names(z_wide), c("trait_id", "trait_name")))
-  x_matrix <- matrix(numeric(0), nrow = 0, ncol = length(snp_ids))
-  dimnames(x_matrix) <- list(character(0), snp_ids)
-
+  x_matrix <- empty$x_matrix
   if (length(snp_cols) > 0) {
     x_matrix <- as.matrix(z_wide[, snp_cols, drop = FALSE])
     rownames(x_matrix) <- as.character(z_wide$trait_id)
     x_matrix <- .ensure_matrix_columns(x_matrix, snp_ids)
   }
 
-  return(list(
-    x_matrix = x_matrix,
-    feature_info = feature_info
-  ))
+  return(list(x_matrix = x_matrix, trait_info = trait_info))
 }
 
 
-.pathway_feature_z_to_matrix <- function(gene_z, feature_map, snp_ids) {
-  snp_ids <- as.character(snp_ids)
-  gene_z <- gene_z |> dplyr::mutate(snp_id = as.character(snp_id))
-
-  if (nrow(feature_map) > 0) {
-    pathway_z <- gene_z |>
-      dplyr::inner_join(feature_map, by = "gene_id") |>
-      dplyr::mutate(contribution = z) |>
-      dplyr::group_by(feature_id, feature_name, source, snp_id) |>
-      dplyr::summarise(z = mean(contribution), .groups = "drop") |>
-      dplyr::mutate(feature_type = "pathway")
-  } else {
-    pathway_z <- data.frame(
-      feature_id = character(0),
-      feature_name = character(0),
-      source = character(0),
+.collapse_gene_tissue_z_scores <- function(cg) {
+  if (is.null(cg) || nrow(cg) == 0) {
+    return(data.frame(
+      gene_id = integer(0),
+      gene = character(0),
+      tissue = character(0),
       snp_id = character(0),
       z = numeric(0),
-      feature_type = character(0),
       stringsAsFactors = FALSE
-    )
-  }
-
-  mapped_genes <- if (nrow(feature_map) > 0) {
-    unique(feature_map$gene_id)
-  } else {
-    integer(0)
-  }
-
-  gene_only_z <- gene_z |>
-    dplyr::filter(!gene_id %in% mapped_genes) |>
-    dplyr::transmute(
-      feature_id = paste0("gene:", gene_id),
-      feature_name = paste0("gene:", gene),
-      source = "gene",
-      snp_id = snp_id,
-      z = z,
-      feature_type = "gene"
-    )
-
-  feature_long <- dplyr::bind_rows(pathway_z, gene_only_z)
-
-  if (nrow(feature_long) == 0) {
-    return(list(
-      x_matrix = matrix(numeric(0), nrow = 0, ncol = length(snp_ids)),
-      feature_info = data.frame(
-        feature_id = character(0),
-        feature_name = character(0),
-        feature_type = character(0),
-        source = character(0),
-        stringsAsFactors = FALSE
-      )
     ))
   }
+  if (!"tissue" %in% names(cg)) {
+    cg$tissue <- NA_character_
+  }
+  if (!"se" %in% names(cg)) {
+    cg$se <- NA_real_
+  }
+  if (!"min_p" %in% names(cg)) {
+    cg$min_p <- NA_real_
+  }
 
-  feature_wide <- feature_long |>
+  long <- cg |>
+    dplyr::filter(!is.na(gene_id), !is.na(z)) |>
+    dplyr::mutate(
+      snp_id = as.character(snp_id),
+      gene = ifelse(
+        is.na(gene) | gene == "",
+        as.character(gene_id),
+        as.character(gene)
+      ),
+      tissue = ifelse(
+        is.na(tissue) | tissue == "",
+        "unknown",
+        as.character(tissue)
+      ),
+      z = as.numeric(z),
+      se = as.numeric(se),
+      min_p = as.numeric(min_p)
+    )
+
+  if (nrow(long) == 0) {
+    return(long[, c("gene_id", "gene", "tissue", "snp_id", "z"), drop = FALSE])
+  }
+
+  with_se <- long |> dplyr::filter(!is.na(se), se > 0)
+  without_se <- long |> dplyr::filter(is.na(se) | se <= 0)
+
+  stouffer_part <- data.frame(
+    gene_id = integer(0),
+    gene = character(0),
+    tissue = character(0),
+    snp_id = character(0),
+    z = numeric(0),
+    stringsAsFactors = FALSE
+  )
+  if (nrow(with_se) > 0) {
+    stouffer_part <- with_se |>
+      dplyr::group_by(gene_id, gene, tissue, snp_id) |>
+      dplyr::summarise(
+        z = {
+          w <- 1 / se
+          sum(w * z) / sqrt(sum(w * w))
+        },
+        .groups = "drop"
+      )
+  }
+
+  best_p_part <- data.frame(
+    gene_id = integer(0),
+    gene = character(0),
+    tissue = character(0),
+    snp_id = character(0),
+    z = numeric(0),
+    stringsAsFactors = FALSE
+  )
+  if (nrow(without_se) > 0) {
+    best_p_part <- without_se |>
+      dplyr::group_by(gene_id, gene, tissue, snp_id) |>
+      dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
+      dplyr::ungroup() |>
+      dplyr::select("gene_id", "gene", "tissue", "snp_id", "z")
+  }
+
+  # Prefer Stouffer when SE exists; fill remaining gene x tissue x snp from best-p
+  covered <- stouffer_part |>
+    dplyr::transmute(key = paste(gene_id, tissue, snp_id, sep = "\r"))
+  best_p_part <- best_p_part |>
+    dplyr::mutate(key = paste(gene_id, tissue, snp_id, sep = "\r")) |>
+    dplyr::filter(!key %in% covered$key) |>
+    dplyr::select(-"key")
+
+  return(dplyr::bind_rows(stouffer_part, best_p_part))
+}
+
+
+.gene_tissue_z_to_matrix <- function(gene_tissue_z, snp_ids) {
+  snp_ids <- as.character(snp_ids)
+  empty <- list(
+    x_matrix = matrix(
+      numeric(0),
+      nrow = 0,
+      ncol = length(snp_ids),
+      dimnames = list(character(0), snp_ids)
+    ),
+    trait_info = data.frame(
+      trait_id = character(0),
+      trait_name = character(0),
+      feature_type = character(0),
+      gene = character(0),
+      tissue = character(0),
+      stringsAsFactors = FALSE
+    )
+  )
+  if (is.null(gene_tissue_z) || nrow(gene_tissue_z) == 0) {
+    return(empty)
+  }
+
+  long <- gene_tissue_z |>
+    dplyr::mutate(
+      snp_id = as.character(snp_id),
+      feature_id = paste0("gene:", gene_id, "|", tissue),
+      feature_name = paste0(gene, " | ", tissue),
+      feature_type = "molecular",
+      gene = as.character(gene),
+      tissue = as.character(tissue)
+    )
+
+  feature_wide <- long |>
     tidyr::pivot_wider(
-      id_cols = c("feature_id", "feature_name", "feature_type", "source"),
+      id_cols = c("feature_id", "feature_name", "feature_type", "gene", "tissue"),
       names_from = "snp_id",
       values_from = "z",
       values_fn = mean
     )
 
-  feature_info <- feature_wide |>
-    dplyr::select("feature_id", "feature_name", "feature_type", "source")
+  trait_info <- feature_wide |>
+    dplyr::transmute(
+      trait_id = feature_id,
+      trait_name = feature_name,
+      feature_type = feature_type,
+      gene = gene,
+      tissue = tissue
+    )
 
-  snp_cols <- intersect(snp_ids, setdiff(names(feature_wide), c(
-    "feature_id", "feature_name", "feature_type", "source"
-  )))
-
-  x_matrix <- matrix(numeric(0), nrow = 0, ncol = length(snp_ids))
-  dimnames(x_matrix) <- list(character(0), snp_ids)
-
+  snp_cols <- intersect(
+    snp_ids,
+    setdiff(
+      names(feature_wide),
+      c("feature_id", "feature_name", "feature_type", "gene", "tissue")
+    )
+  )
+  x_matrix <- empty$x_matrix
   if (length(snp_cols) > 0) {
     x_matrix <- as.matrix(feature_wide[, snp_cols, drop = FALSE])
     rownames(x_matrix) <- feature_wide$feature_id
     x_matrix <- .ensure_matrix_columns(x_matrix, snp_ids)
   }
 
-  return(list(
-    x_matrix = x_matrix,
-    feature_info = feature_info
-  ))
+  return(list(x_matrix = x_matrix, trait_info = trait_info))
 }
 
 
-.combine_row_matrices <- function(trait_part, feature_part, snp_ids) {
-  snp_ids <- as.character(snp_ids)
-  parts <- list()
-
-  if (nrow(trait_part$x_matrix) > 0) {
-    parts[[length(parts) + 1L]] <- list(
-      x_matrix = .ensure_matrix_columns(trait_part$x_matrix, snp_ids),
-      feature_info = trait_part$feature_info
-    )
+.is_molecular_gene_row <- function(cg) {
+  if (!"gene_id" %in% names(cg)) {
+    return(rep(FALSE, nrow(cg)))
   }
-  if (nrow(feature_part$x_matrix) > 0) {
-    parts[[length(parts) + 1L]] <- list(
-      x_matrix = .ensure_matrix_columns(feature_part$x_matrix, snp_ids),
-      feature_info = feature_part$feature_info
-    )
-  }
-
-  if (length(parts) == 0) {
-    stop("No trait or feature rows could be constructed")
-  }
-
-  x_matrix <- do.call(rbind, lapply(parts, `[[`, "x_matrix"))
-  feature_info <- dplyr::bind_rows(lapply(parts, `[[`, "feature_info"))
-
-  return(list(
-    x_matrix = x_matrix,
-    feature_info = feature_info
-  ))
+  !is.na(cg$gene_id)
 }
 
 
@@ -887,9 +757,13 @@ build_bivariate_feature_pleiotropy_matrices <- function(trait_id_1,
     stop("No target-trait SNPs after filtering")
   }
 
+  if (!"tissue" %in% names(coloc_groups)) {
+    coloc_groups$tissue <- NA_character_
+  }
+
   study_map <- coloc_groups |>
     dplyr::filter(!is.na(study_id)) |>
-    dplyr::distinct(study_id, trait_id, trait_name, gene_id, gene)
+    dplyr::distinct(study_id, trait_id, trait_name, gene_id, gene, tissue)
 
   if ("existing_study_id" %in% names(coloc_groups)) {
     existing_map <- coloc_groups |>
@@ -899,11 +773,12 @@ build_bivariate_feature_pleiotropy_matrices <- function(trait_id_1,
         trait_id = trait_id,
         trait_name = trait_name,
         gene_id = gene_id,
-        gene = gene
+        gene = gene,
+        tissue = tissue
       ) |>
       dplyr::distinct()
     study_map <- dplyr::bind_rows(study_map, existing_map) |>
-      dplyr::distinct(study_id, trait_id, trait_name, gene_id, gene)
+      dplyr::distinct(study_id, trait_id, trait_name, gene_id, gene, tissue)
   }
 
   cg <- full_associations |>
@@ -928,16 +803,6 @@ build_bivariate_feature_pleiotropy_matrices <- function(trait_id_1,
     cg = cg,
     z_target = z_target
   ))
-}
-
-
-.collapse_gene_z_scores <- function(cg) {
-  cg |>
-    dplyr::filter(!is.na(gene_id)) |>
-    dplyr::group_by(gene_id, gene, snp_id) |>
-    dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
-    dplyr::ungroup() |>
-    dplyr::select("gene_id", "gene", "snp_id", "z")
 }
 
 
@@ -1222,6 +1087,86 @@ cluster_cross_trait_snps <- function(s_matrix,
   }
 
   return(s_matrix)
+}
+
+
+#' @title Summarise Phenotypic vs Molecular Matrix Contribution
+#' @description Report how much of a traits-x-SNPs matrix is carried by phenotypic
+#' versus molecular rows. Useful after sparse filtering to see whether clustering
+#' profiles are driven by complex traits or QTL features.
+#' @param x_matrix Numeric traits x SNPs matrix.
+#' @param trait_info Dataframe with `trait_id` matching `rownames(x_matrix)` and
+#'   `feature_type` values such as `"phenotypic"` / `"molecular"`.
+#' @return A dataframe with one row per `feature_type`:
+#'   \itemize{
+#'     \item n_features: number of rows of that type
+#'     \item n_nonzero_cells: non-`NA` cells
+#'     \item mean_abs_z: mean absolute z among non-`NA` cells
+#'     \item squared_mass: sum of squared z (NA treated as 0)
+#'     \item frac_squared_mass: share of total squared mass
+#'     \item mean_snp_frac_mass: mean over SNPs of that type's share of the
+#'       column's squared mass (SNPs with zero total mass skipped)
+#'   }
+#' @export
+summarise_feature_type_contribution <- function(x_matrix, trait_info) {
+  if (!is.matrix(x_matrix)) {
+    stop("x_matrix must be a matrix")
+  }
+  if (is.null(rownames(x_matrix))) {
+    stop("x_matrix must have rownames matching trait_info$trait_id")
+  }
+  if (is.null(trait_info) || nrow(trait_info) == 0) {
+    stop("trait_info is required")
+  }
+  if (!all(c("trait_id", "feature_type") %in% names(trait_info))) {
+    stop("trait_info must include trait_id and feature_type")
+  }
+
+  info <- trait_info |>
+    dplyr::mutate(
+      trait_id = as.character(trait_id),
+      feature_type = as.character(feature_type)
+    ) |>
+    dplyr::distinct(trait_id, .keep_all = TRUE)
+
+  row_ids <- rownames(x_matrix)
+  types <- info$feature_type[match(row_ids, info$trait_id)]
+  types[is.na(types)] <- "unknown"
+
+  x_sq <- x_matrix
+  x_sq[is.na(x_sq)] <- 0
+  x_sq <- x_sq^2
+  total_mass <- sum(x_sq)
+  col_mass <- colSums(x_sq)
+
+  type_levels <- unique(types)
+  rows <- lapply(type_levels, function(ftype) {
+    idx <- which(types == ftype)
+    sub <- x_matrix[idx, , drop = FALSE]
+    sub_sq <- x_sq[idx, , drop = FALSE]
+    type_mass <- sum(sub_sq)
+    type_col_mass <- colSums(sub_sq)
+    keep_cols <- col_mass > 0
+    mean_snp_frac <- if (any(keep_cols)) {
+      mean(type_col_mass[keep_cols] / col_mass[keep_cols])
+    } else {
+      NA_real_
+    }
+    return(data.frame(
+      feature_type = ftype,
+      n_features = length(idx),
+      n_nonzero_cells = sum(!is.na(sub)),
+      mean_abs_z = mean(abs(sub), na.rm = TRUE),
+      squared_mass = type_mass,
+      frac_squared_mass = if (total_mass > 0) type_mass / total_mass else NA_real_,
+      mean_snp_frac_mass = mean_snp_frac,
+      stringsAsFactors = FALSE
+    ))
+  })
+
+  out <- dplyr::bind_rows(rows) |>
+    dplyr::arrange(dplyr::desc(frac_squared_mass))
+  return(out)
 }
 
 

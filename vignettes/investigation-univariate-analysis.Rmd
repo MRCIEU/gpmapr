@@ -30,7 +30,7 @@ library(dplyr)
 library(tidyr)
 ```
 
-Non-collapsable univariate analysis: each row is a **background trait** (no pathway/gene collapse). Singleton trait rows are removed, SNP profiles are oriented to the target trait, and **signed Louvain** clusters SNPs on cosine similarity `S`. Compare with [Investigation of collapsable univariate analysis](investigation-collapsable-univariate-analysis.html), which uses the same traits and clustering parameters on collapsed feature rows.
+Univariate analysis: each row is a **background trait**. Singleton trait rows are removed, SNP profiles are oriented to the target trait, and **signed Louvain** clusters SNPs on cosine similarity `S`.
 
 We use **BMI** (trait id `1992`).
 

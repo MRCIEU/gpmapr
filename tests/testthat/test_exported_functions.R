@@ -281,28 +281,6 @@ test_that("extract_ebmf_clusters defaults to stricter magnitude_threshold", {
   expect_equal(eval(formals(run_ebmf)$se_mode), c("unit", "matrix"))
 })
 
-test_that("zscore_feature_columns() standardises columns", {
-  x <- matrix(
-    c(1, 2, 3, 10, 20, 30),
-    nrow = 3,
-    dimnames = list(c("s1", "s2", "s3"), c("f1", "f2"))
-  )
-  z <- zscore_feature_columns(x)
-  expect_equal(unname(round(colMeans(z), 10)), c(0, 0))
-  expect_equal(unname(round(apply(z, 2, sd), 10)), c(1, 1))
-})
-
-test_that("scale_feature_columns() can skip centering", {
-  x <- matrix(
-    c(1, 2, 3, 10, 20, 30),
-    nrow = 3,
-    dimnames = list(c("s1", "s2", "s3"), c("f1", "f2"))
-  )
-  scaled <- scale_feature_columns(x, center = FALSE)
-  expect_false(isTRUE(all.equal(unname(colMeans(scaled)), c(0, 0))))
-  expect_equal(unname(round(apply(scaled, 2, sd), 10)), c(1, 1))
-})
-
 test_that("filter_perturbation_features() drops sparse columns", {
   trait_matrix <- matrix(
     c(1, 2, 3, 3, NA, 4),
@@ -336,23 +314,6 @@ test_that("orient_perturbation_matrices() flips SNP rows by target sign", {
   out <- orient_perturbation_matrices(trait_matrix, gene_matrix, z_target)
   expect_equal(out$trait_matrix["s2", ], -trait_matrix["s2", ])
   expect_equal(out$gene_matrix["s1", ], gene_matrix["s1", ])
-})
-
-test_that("weighted_snp_similarity() combines trait and gene cosines", {
-  trait_matrix <- matrix(
-    c(1, 0, 0, 1, 1, 0),
-    nrow = 3,
-    dimnames = list(c("s1", "s2", "s3"), c("t1", "t2"))
-  )
-  gene_matrix <- matrix(
-    c(1, 1, 0, 0, 1, 1),
-    nrow = 3,
-    dimnames = list(c("s1", "s2", "s3"), c("g1", "g2"))
-  )
-  sim <- weighted_snp_similarity(trait_matrix, gene_matrix, w_gene = 0.5, w_trait = 0.5)
-  expect_equal(dim(sim$s_matrix), c(3L, 3L))
-  expect_equal(unname(diag(sim$s_matrix)), rep(1, 3), tolerance = 1e-8)
-  expect_equal(sim$s_matrix, 0.5 * sim$s_gene + 0.5 * sim$s_trait)
 })
 
 test_that("summarise_baseline_traits() ranks by abs mean z", {
@@ -491,6 +452,72 @@ test_that("build_pleiotropy_matrix filters to target trait SNPs from shared colo
   expect_equal(ncol(bivariate$x2_matrix), 2L)
   expect_true(setequal(colnames(bivariate$x1_matrix), c("v1", "v2", "v3")))
   expect_true(setequal(colnames(bivariate$x2_matrix), c("v4", "v5")))
+  expect_equal(bivariate$association_source, "coloc")
+  expect_equal(bivariate$collapse_gene_tissue, FALSE)
+  expect_true(is.data.frame(bivariate$coloc_groups))
+  expect_true("feature_type" %in% names(bivariate$trait_info))
+})
+
+test_that("build_bivariate_pleiotropy_matrices() collapses QTLs by gene x tissue", {
+  coloc_groups <- data.frame(
+    coloc_group_id = c(1L, 1L, 1L, 1L, 2L, 2L),
+    trait_id = c(1L, 10L, 10L, 11L, 2L, 10L),
+    trait_name = c(
+      "target1",
+      "GENEA Adipose eQTL",
+      "GENEA Adipose pQTL",
+      "GENEA Thyroid eQTL",
+      "target2",
+      "GENEA Adipose eQTL"
+    ),
+    gene_id = c(NA, 100L, 100L, 100L, NA, 100L),
+    gene = c(NA, "GENEA", "GENEA", "GENEA", NA, "GENEA"),
+    tissue = c(NA, "Adipose", "Adipose", "Thyroid", NA, "Adipose"),
+    data_type = c(
+      "continuous",
+      "gene_expression",
+      "protein_expression",
+      "gene_expression",
+      "continuous",
+      "gene_expression"
+    ),
+    cis_trans = c(NA, "cis", "trans", "cis", NA, "cis"),
+    variant_id = c("v1", "v1", "v1", "v1", "v2", "v2"),
+    display_snp = c("1:1 A/G", "1:1 A/G", "1:1 A/G", "1:1 A/G", "1:2 A/G", "1:2 A/G"),
+    chr = 1L,
+    bp = c(1L, 1L, 1L, 1L, 2L, 2L),
+    beta = c(1, 0.5, 0.5, 0.8, 1, 0.4),
+    se = c(0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
+    min_p = 1e-10,
+    stringsAsFactors = FALSE
+  )
+
+  bivariate <- build_bivariate_pleiotropy_matrices(
+    trait_id_1 = 1L,
+    trait_id_2 = 2L,
+    coloc_groups = coloc_groups,
+    collapse_gene_tissue = TRUE
+  )
+
+  expect_equal(bivariate$collapse_gene_tissue, TRUE)
+  expect_true(all(
+    c("phenotypic", "molecular") %in% bivariate$trait_info$feature_type
+  ))
+  expect_true("gene:100|Adipose" %in% rownames(bivariate$x1_matrix))
+  expect_true("gene:100|Thyroid" %in% rownames(bivariate$x1_matrix))
+  # two Adipose QTL types collapsed to one row
+  expect_equal(sum(grepl("^gene:100\\|Adipose$", rownames(bivariate$x1_matrix))), 1L)
+  adipose_z <- bivariate$x1_matrix["gene:100|Adipose", "v1"]
+  # Stouffer of two equal z=5 with equal se: 10/sqrt(2)
+  expect_equal(adipose_z, 10 / sqrt(2), tolerance = 1e-8)
+
+  contrib <- summarise_feature_type_contribution(
+    bivariate$x1_matrix,
+    bivariate$trait_info
+  )
+  expect_true(all(c("phenotypic", "molecular") %in% contrib$feature_type))
+  expect_true(all(contrib$frac_squared_mass >= 0 & contrib$frac_squared_mass <= 1))
+  expect_equal(sum(contrib$frac_squared_mass), 1, tolerance = 1e-8)
 })
 
 test_that("cluster_cross_trait_snps() hierarchical method is backward compatible", {

@@ -71,7 +71,6 @@ build_ebmf_matrix <- function(trait_id,
   )
   trait_mat <- compressed$trait_matrix
   gene_mat <- compressed$gene_matrix
-  snp_ids <- rownames(trait_mat)
 
   trait_info <- .ebmf_feature_info_from_perturbation(
     feature_info = pert$trait_info,

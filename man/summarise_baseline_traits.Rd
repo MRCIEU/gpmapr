@@ -16,8 +16,7 @@ summarise_baseline_traits(
 )
 }
 \arguments{
-\item{trait_matrix}{SNPs x traits numeric matrix (e.g. from
-\code{build_perturbation_matrices()$trait_matrix}).}
+\item{trait_matrix}{SNPs x traits numeric matrix (e.g. oriented trait matrix from bivariate / EBMF verification helpers).}
 
 \item{snp_ids}{Optional SNP ids to include. Defaults to all rows.}
 

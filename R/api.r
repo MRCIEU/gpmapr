@@ -1,19 +1,21 @@
 timeout_seconds <- 360
 
 #' @title Select API
-#' @description Select the API to use
-#' @param api A character string specifying the API to use. Default is "production".
-#' @return NULL
-#' @noRd
-select_api <- function(api = "dev") {
-  if (api == "dev") {
+#' @description Select the GPMap API endpoint to use.
+#' @param api `"production"` (default) for the public API, or `"local"` / `"dev"`
+#'   for a local server at `http://localhost:8000` (e.g. QTL development DB).
+#' @return The previous `gpmap_url` option value (invisibly), as from `options()`.
+#' @export
+select_api <- function(api = c("production", "local", "dev")) {
+  api <- match.arg(api)
+  if (api %in% c("local", "dev")) {
     api_option <- options("gpmap_url" = "http://localhost:8000")
-  } else if (api == "production") {
+  } else if (identical(api, "production")) {
     api_option <- options("gpmap_url" = "https://gpmap.opengwas.io/api")
   } else {
     stop("Invalid API")
   }
-  return(api_option)
+  return(invisible(api_option))
 }
 
 #' @title Get API Health

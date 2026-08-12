@@ -19,8 +19,7 @@ summarise_module_specific_traits(
 )
 }
 \arguments{
-\item{trait_matrix}{SNPs x traits numeric matrix (e.g. from
-\code{build_perturbation_matrices()$trait_matrix}).}
+\item{trait_matrix}{SNPs x traits numeric matrix (e.g. oriented trait matrix from bivariate / EBMF verification helpers).}
 
 \item{groups}{Named vector (\code{names} = SNP ids) or dataframe with \code{snp_id}
 plus \code{group} / \code{cluster} / \code{program}.}

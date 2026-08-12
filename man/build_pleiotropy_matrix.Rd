@@ -8,7 +8,8 @@ build_pleiotropy_matrix(
   trait_id,
   coloc_groups = NULL,
   p_threshold = NULL,
-  snp_key = c("variant_id", "display_snp", "coloc_group_id")
+  snp_key = c("variant_id", "display_snp", "coloc_group_id"),
+  collapse_gene_tissue = FALSE
 )
 }
 \arguments{
@@ -22,6 +23,10 @@ will fetch via \code{trait(trait_id, include_associations = TRUE)}.}
 
 \item{snp_key}{Column used to name SNP columns: \code{"variant_id"}, \code{"display_snp"}, or
 \code{"coloc_group_id"}. Defaults to \code{"variant_id"}.}
+
+\item{collapse_gene_tissue}{If \code{TRUE}, molecular QTL rows are collapsed by
+gene x tissue (Stouffer over cis/trans and QTL types). If \code{FALSE} (default),
+each QTL study remains its own trait row.}
 }
 \value{
 A list with:
@@ -29,9 +34,11 @@ A list with:
 \item x_matrix: numeric matrix (traits x SNPs) of z-scores; \code{NA} where a trait
 has no colocalisation signal at that SNP's locus
 \item trait_info: dataframe mapping row indices to \code{trait_id} and \code{trait_name}
+(plus \code{feature_type}, and \code{gene}/\code{tissue} when available)
 \item snp_info: dataframe mapping column names to \code{coloc_group_id}, \code{variant_id},
 \code{display_snp}, \code{chr}, and \code{bp}
 \item target_trait_id: the target trait ID used
+\item collapse_gene_tissue: whether gene x tissue collapse was applied
 }
 }
 \description{
