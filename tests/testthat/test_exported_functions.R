@@ -35,7 +35,7 @@ test_that("trait() returns full_associations when requested", {
   expect_true(all(expected_names %in% names(result$full_associations)))
 })
 
-test_that("build_ebmf_matrix() builds oriented z-score features with gene collapse", {
+test_that("build_ebmf_matrix() builds oriented z-score features", {
   skip_if_not(requireNamespace("flashier", quietly = TRUE))
   trait_id <- 5020
   ebmf_data <- build_ebmf_matrix(
@@ -137,6 +137,41 @@ test_that("traits(trait_ids) returns expected output", {
   expect_true(nrow(result$coloc_groups) > 0)
   expect_true(!is.null(result$study_extractions))
   expect_true(nrow(result$study_extractions) > 0)
+})
+
+test_that("GWAS upload own coloc rows are stamped with the lookup GUID", {
+  guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
+  cg <- data.frame(
+    study_id = c(10, NA, 10),
+    existing_study_id = c(NA, 99, NA),
+    gwas_upload_id = c(55, NA, 55),
+    trait_id = c(NA, 2527, 55),
+    trait_name = c(NA, "Allergic rhinitis", NA),
+    variant_id = c(1, 1, 2),
+    stringsAsFactors = FALSE
+  )
+  associations <- data.frame(
+    study_id = c(10, 10),
+    existing_study_id = c(NA, NA),
+    variant_id = c(1, 2),
+    beta = c(0.2, -0.1),
+    se = c(0.05, 0.04),
+    stringsAsFactors = FALSE
+  )
+  upload <- list(
+    trait = list(id = 55, name = "Atopic"),
+    coloc_groups = cg,
+    associations = associations
+  )
+  decorated <- .decorate_gwas_upload(upload, guid, include_associations = TRUE)
+  expect_true(all(c("beta", "se") %in% names(decorated$coloc_groups)))
+  own <- !is.na(decorated$coloc_groups$study_id) &
+    decorated$coloc_groups$study_id == 10
+  expect_equal(decorated$coloc_groups$trait_id[own], c(guid, guid))
+  expect_equal(
+    decorated$coloc_groups$trait_id[is.na(decorated$coloc_groups$study_id)],
+    "2527"
+  )
 })
 
 test_that("genes(gene_ids) returns expected output", {
@@ -395,6 +430,36 @@ test_that("summarise_module_specific_traits() ranks by module-vs-rest", {
   expect_true(all(out$summary$n_traits_ranked > 0))
 })
 
+test_that("summarise_module_specific_traits() returns typed empty summary", {
+  trait_matrix <- matrix(
+    c(1, 2, 3),
+    nrow = 3,
+    dimnames = list(c("s1", "s2", "s3"), "10")
+  )
+  groups <- c(s1 = 1, s2 = 2, s3 = 3)
+  out <- summarise_module_specific_traits(
+    trait_matrix = trait_matrix,
+    groups = groups,
+    min_group_size = 2L,
+    top_n = 3,
+    min_snps_with_signal = 1L
+  )
+  expect_equal(length(out$by_group), 0L)
+  expect_true("group" %in% names(out$summary))
+  expect_equal(nrow(out$summary), 0L)
+
+  keep_three <- summarise_module_specific_traits(
+    trait_matrix = trait_matrix,
+    groups = c(s1 = 1, s2 = 1, s3 = 1),
+    min_group_size = 3L,
+    top_n = 3,
+    min_snps_with_signal = 1L
+  )
+  expect_equal(length(keep_three$by_group), 1L)
+  expect_equal(keep_three$summary$group[[1]], "1")
+})
+
+
 test_that("enrich_snp_group_tissues() flags enriched tissues", {
   coloc_groups <- data.frame(
     variant_id = c("s1", "s1", "s2", "s2", "s3", "s3", "s4", "s4"),
@@ -406,18 +471,61 @@ test_that("enrich_snp_group_tissues() flags enriched tissues", {
     stringsAsFactors = FALSE
   )
   groups <- c(s1 = 1, s2 = 1, s3 = 2, s4 = 2)
-  out <- enrich_snp_group_tissues(
+  out_rest <- enrich_snp_group_tissues(
     groups = groups,
     coloc_groups = coloc_groups,
     min_group_size = 1,
     background = "rest"
   )
+  expect_true(nrow(out_rest$summary) >= 1)
+  expect_true("by_group" %in% names(out_rest))
+  expect_true("background" %in% names(out_rest))
+  expect_equal(out_rest$background_mode, "rest")
+  expect_true(nrow(out_rest$by_group[[1]]$comparison) >= 1)
+  expect_true("frac_group" %in% names(out_rest$by_group[[1]]$comparison))
+  expect_true(
+    "fold_enrichment" %in% names(out_rest$by_group[[1]]$enriched) ||
+      nrow(out_rest$by_group[[1]]$enriched) == 0
+  )
+
+  out_trait <- enrich_snp_group_tissues(
+    groups = groups,
+    coloc_groups = coloc_groups,
+    min_group_size = 1,
+    background = "trait",
+    baseline_snp_ids = names(groups)
+  )
+  expect_equal(out_trait$background_mode, "trait")
+  expect_true(out_trait$n_background_links >= 1)
+  expect_true(nrow(out_trait$by_group[[1]]$comparison) >= 1)
+})
+
+
+test_that("enrich_snp_group_trait_categories() uses trait baseline", {
+  coloc_groups <- data.frame(
+    variant_id = c("s1", "s1", "s2", "s2", "s3", "s3", "s4", "s4"),
+    trait_category = c(
+      "Metabolic", "Metabolic", "Metabolic", "Blood",
+      "Blood", "Blood", "Blood", "Neurological"
+    ),
+    stringsAsFactors = FALSE
+  )
+  groups <- c(s1 = 1, s2 = 1, s3 = 2, s4 = 2)
+  out <- enrich_snp_group_trait_categories(
+    groups = groups,
+    coloc_groups = coloc_groups,
+    min_group_size = 1,
+    baseline_snp_ids = names(groups)
+  )
+  expect_equal(out$background_mode, "trait")
   expect_true(nrow(out$summary) >= 1)
-  expect_true("by_group" %in% names(out))
-  expect_true("background" %in% names(out))
-  expect_equal(out$background_mode, "rest")
-  expect_true("fold_enrichment" %in% names(out$by_group[[1]]$enriched) ||
-    nrow(out$by_group[[1]]$enriched) == 0)
+  expect_true("trait_category" %in% names(out$background))
+  expect_true(nrow(out$by_group[[1]]$comparison) >= 1)
+  expect_true("frac_universe" %in% names(out$by_group[[1]]$comparison))
+  expect_true(
+    "fold_enrichment" %in% names(out$by_group[[1]]$enriched) ||
+      nrow(out$by_group[[1]]$enriched) == 0
+  )
 })
 
 
@@ -442,121 +550,164 @@ test_that("build_pleiotropy_matrix filters to target trait SNPs from shared colo
   expect_equal(ncol(p2$x_matrix), 2L)
   expect_true(setequal(colnames(p1$x_matrix), c("v1", "v2", "v3")))
   expect_true(setequal(colnames(p2$x_matrix), c("v4", "v5")))
-
-  bivariate <- build_bivariate_pleiotropy_matrices(
-    trait_id_1 = 1L,
-    trait_id_2 = 2L,
-    coloc_groups = coloc_groups
-  )
-  expect_equal(ncol(bivariate$x1_matrix), 3L)
-  expect_equal(ncol(bivariate$x2_matrix), 2L)
-  expect_true(setequal(colnames(bivariate$x1_matrix), c("v1", "v2", "v3")))
-  expect_true(setequal(colnames(bivariate$x2_matrix), c("v4", "v5")))
-  expect_equal(bivariate$association_source, "coloc")
-  expect_equal(bivariate$collapse_gene_tissue, FALSE)
-  expect_true(is.data.frame(bivariate$coloc_groups))
-  expect_true("feature_type" %in% names(bivariate$trait_info))
+  expect_true("feature_type" %in% names(p1$trait_info))
 })
 
-test_that("build_bivariate_pleiotropy_matrices() collapses QTLs by gene x tissue", {
-  coloc_groups <- data.frame(
-    coloc_group_id = c(1L, 1L, 1L, 1L, 2L, 2L),
-    trait_id = c(1L, 10L, 10L, 11L, 2L, 10L),
-    trait_name = c(
-      "target1",
-      "GENEA Adipose eQTL",
-      "GENEA Adipose pQTL",
-      "GENEA Thyroid eQTL",
-      "target2",
-      "GENEA Adipose eQTL"
+test_that("snp_similarity_matrix supports pairwise-complete overlap shrinkage", {
+  x_matrix <- matrix(
+    c(
+      1, 1, NA,
+      1, NA, 1
     ),
-    gene_id = c(NA, 100L, 100L, 100L, NA, 100L),
-    gene = c(NA, "GENEA", "GENEA", "GENEA", NA, "GENEA"),
-    tissue = c(NA, "Adipose", "Adipose", "Thyroid", NA, "Adipose"),
-    data_type = c(
-      "continuous",
-      "gene_expression",
-      "protein_expression",
-      "gene_expression",
-      "continuous",
-      "gene_expression"
+    nrow = 3,
+    dimnames = list(
+      paste0("trait", 1:3),
+      c("snp1", "snp2")
+    )
+  )
+
+  zero_fill <- snp_similarity_matrix(x_matrix)
+  pairwise <- snp_similarity_matrix(
+    x_matrix,
+    missing_method = "pairwise_complete"
+  )
+  shrunk <- snp_similarity_matrix(
+    x_matrix,
+    missing_method = "pairwise_complete",
+    overlap_shrinkage = 3
+  )
+  held_out <- snp_similarity_matrix(
+    x_matrix,
+    missing_method = "pairwise_complete",
+    min_overlap = 2L
+  )
+
+  expect_equal(zero_fill$s_matrix["snp1", "snp2"], 0.5)
+  expect_equal(pairwise$s_matrix["snp1", "snp2"], 1)
+  expect_equal(pairwise$overlap_matrix["snp1", "snp2"], 1)
+  expect_equal(shrunk$s_matrix["snp1", "snp2"], 0.25)
+  expect_equal(held_out$s_matrix["snp1", "snp2"], 0)
+  expect_false(held_out$eligible_matrix["snp1", "snp2"])
+})
+
+test_that("cluster_snp_profiles_louvain and spectral return named clusters", {
+  s_matrix <- matrix(
+    c(
+      1, 0.9, 0.85, 0.1,
+      0.9, 1, 0.8, 0.05,
+      0.85, 0.8, 1, 0.0,
+      0.1, 0.05, 0.0, 1
     ),
-    cis_trans = c(NA, "cis", "trans", "cis", NA, "cis"),
-    variant_id = c("v1", "v1", "v1", "v1", "v2", "v2"),
-    display_snp = c("1:1 A/G", "1:1 A/G", "1:1 A/G", "1:1 A/G", "1:2 A/G", "1:2 A/G"),
-    chr = 1L,
-    bp = c(1L, 1L, 1L, 1L, 2L, 2L),
-    beta = c(1, 0.5, 0.5, 0.8, 1, 0.4),
-    se = c(0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
-    min_p = 1e-10,
-    stringsAsFactors = FALSE
+    nrow = 4,
+    byrow = TRUE,
+    dimnames = list(paste0("s", 1:4), paste0("s", 1:4))
   )
 
-  bivariate <- build_bivariate_pleiotropy_matrices(
-    trait_id_1 = 1L,
-    trait_id_2 = 2L,
-    coloc_groups = coloc_groups,
-    collapse_gene_tissue = TRUE
-  )
-
-  expect_equal(bivariate$collapse_gene_tissue, TRUE)
-  expect_true(all(
-    c("phenotypic", "molecular") %in% bivariate$trait_info$feature_type
-  ))
-  expect_true("gene:100|Adipose" %in% rownames(bivariate$x1_matrix))
-  expect_true("gene:100|Thyroid" %in% rownames(bivariate$x1_matrix))
-  # two Adipose QTL types collapsed to one row
-  expect_equal(sum(grepl("^gene:100\\|Adipose$", rownames(bivariate$x1_matrix))), 1L)
-  adipose_z <- bivariate$x1_matrix["gene:100|Adipose", "v1"]
-  # Stouffer of two equal z=5 with equal se: 10/sqrt(2)
-  expect_equal(adipose_z, 10 / sqrt(2), tolerance = 1e-8)
-
-  contrib <- summarise_feature_type_contribution(
-    bivariate$x1_matrix,
-    bivariate$trait_info
-  )
-  expect_true(all(c("phenotypic", "molecular") %in% contrib$feature_type))
-  expect_true(all(contrib$frac_squared_mass >= 0 & contrib$frac_squared_mass <= 1))
-  expect_equal(sum(contrib$frac_squared_mass), 1, tolerance = 1e-8)
-})
-
-test_that("cluster_cross_trait_snps() hierarchical method is backward compatible", {
-  set.seed(1)
-  s_star <- matrix(stats::runif(30, min = -1, max = 1), nrow = 5, ncol = 6)
-  rownames(s_star) <- paste0("r", seq_len(5))
-  colnames(s_star) <- paste0("c", seq_len(6))
-
-  result <- cluster_cross_trait_snps(
-    s_star,
-    method = "hierarchical",
-    linkage = "average",
-    k1 = 2,
-    k2 = 2
-  )
-
-  expect_equal(result$method, "hierarchical")
-  expect_length(result$clusters_rows, 5)
-  expect_length(result$clusters_cols, 6)
-  expect_null(result$profile_similarity_rows)
-})
-
-test_that("cluster_cross_trait_snps() louvain clusters cross-trait profiles", {
-  set.seed(1)
-  s_star <- matrix(stats::runif(30, min = -1, max = 1), nrow = 5, ncol = 6)
-  rownames(s_star) <- paste0("r", seq_len(5))
-  colnames(s_star) <- paste0("c", seq_len(6))
-
-  result <- cluster_cross_trait_snps(
-    s_star,
-    method = "louvain",
-    similarity_threshold = 0.2,
+  louvain <- cluster_snp_profiles_louvain(
+    s_matrix,
+    similarity_threshold = 0.5,
     gamma = 1
   )
+  spectral <- cluster_snp_profiles_spectral(
+    s_matrix,
+    k = 2,
+    similarity_threshold = 0.5
+  )
 
-  expect_equal(result$method, "louvain")
-  expect_length(result$clusters_rows, 5)
-  expect_length(result$clusters_cols, 6)
-  expect_equal(nrow(result$profile_similarity_rows), 5)
-  expect_equal(nrow(result$profile_similarity_cols), 6)
-  expect_true(all(abs(diag(result$profile_similarity_rows) - 1) < 1e-10))
+  expect_equal(louvain$method, "louvain")
+  expect_equal(spectral$method, "spectral")
+  expect_equal(names(louvain$cluster), colnames(s_matrix))
+  expect_equal(names(spectral$cluster), colnames(s_matrix))
+  expect_equal(spectral$k, 2L)
+  expect_gte(louvain$n_clusters, 1L)
+})
+
+
+test_that("signed Louvain reports gamma-adjusted hierarchy modularity", {
+  affinity <- matrix(
+    c(
+      0, 0.9, -0.6, -0.5,
+      0.9, 0, -0.4, -0.6,
+      -0.6, -0.4, 0, 0.8,
+      -0.5, -0.6, 0.8, 0
+    ),
+    nrow = 4,
+    byrow = TRUE
+  )
+  gamma <- 2
+  result <- .cluster_louvain_signed(affinity, gamma = gamma, seed = 1L)
+
+  positive <- affinity * (affinity > 0)
+  negative <- -affinity * (affinity < 0)
+  positive_sum <- sum(positive)
+  negative_sum <- sum(negative)
+  within_group <- outer(result$cluster, result$cluster, `==`)
+  positive_degree <- colSums(positive)
+  negative_degree <- colSums(negative)
+  group_positive_degree <- tapply(positive_degree, result$cluster, sum)
+  group_negative_degree <- tapply(negative_degree, result$cluster, sum)
+
+  q_positive <- sum(positive[within_group]) -
+    gamma * sum(group_positive_degree^2) / positive_sum
+  q_negative <- sum(negative[within_group]) -
+    gamma * sum(group_negative_degree^2) / negative_sum
+  expected <- q_positive / positive_sum -
+    q_negative / (positive_sum + negative_sum)
+
+  expect_equal(result$modularity, expected, tolerance = 1e-10)
+})
+
+
+test_that("summarise_snp_module_quality() flags a tight module as reliable", {
+  s_matrix <- matrix(
+    c(
+      1, 0.9, 0.85, 0.1, 0.05,
+      0.9, 1, 0.8, 0.05, 0.1,
+      0.85, 0.8, 1, 0.0, 0.05,
+      0.1, 0.05, 0.0, 1, 0.95,
+      0.05, 0.1, 0.05, 0.95, 1
+    ),
+    nrow = 5,
+    byrow = TRUE,
+    dimnames = list(paste0("s", 1:5), paste0("s", 1:5))
+  )
+  cluster <- c(s1 = 1L, s2 = 1L, s3 = 1L, s4 = 2L, s5 = 2L)
+  out <- summarise_snp_module_quality(
+    s_matrix,
+    cluster,
+    edge_threshold = 0.5,
+    min_module_size = 2L,
+    min_mean_internal = 0.3,
+    min_connectedness = 0.5
+  )
+  expect_equal(nrow(out), 2L)
+  expect_true(all(c("connectedness", "mean_silhouette", "reliable") %in% names(out)))
+  expect_true(all(out$reliable))
+  expect_gt(out$mean_internal_similarity[out$cluster == 1], 0.7)
+  expect_gt(out$connectedness[out$cluster == 1], 0.9)
+})
+
+test_that("summarise_snp_module_quality() does not gate on silhouette", {
+  s_matrix <- matrix(
+    c(
+      1, 0.7, 0.75, 0.75,
+      0.7, 1, 0.75, 0.75,
+      0.75, 0.75, 1, 0.7,
+      0.75, 0.75, 0.7, 1
+    ),
+    nrow = 4,
+    byrow = TRUE,
+    dimnames = list(paste0("s", 1:4), paste0("s", 1:4))
+  )
+  cluster <- c(s1 = 1L, s2 = 1L, s3 = 2L, s4 = 2L)
+  out <- summarise_snp_module_quality(
+    s_matrix,
+    cluster,
+    edge_threshold = 0.5,
+    min_module_size = 2L,
+    min_mean_internal = 0.3,
+    min_connectedness = 0.5
+  )
+  expect_true(all(out$reliable))
+  expect_true(all(out$mean_silhouette < 0))
 })

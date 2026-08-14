@@ -26,7 +26,6 @@ Suggests:
     ggplot2,
     ggrepel,
     knitr,
-    mclust,
     RColorBrewer,
     reshape2,
     rmarkdown,

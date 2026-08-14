@@ -67,10 +67,16 @@ trait <- function(trait_id,
   }
 
   if (is_guid(trait_id)) {
-    trait_info <- get_gwas_api(trait_id, include_summary_stats = FALSE, include_associations = include_associations)
-    if (include_associations && !is.null(trait_info$associations)) {
-      trait_info$coloc_groups <- merge_gwas_upload_associations(trait_info$coloc_groups, trait_info$associations)
-    }
+    trait_info <- get_gwas_api(
+      trait_id,
+      include_summary_stats = FALSE,
+      include_associations = include_associations
+    )
+    trait_info <- .decorate_gwas_upload(
+      trait_info,
+      guid = trait_id,
+      include_associations = include_associations
+    )
   } else {
     trait_info <- trait_api(trait_id, include_associations)
 
@@ -159,7 +165,18 @@ traits <- function(trait_ids,
   }
 
   if (length(guid_ids) > 0) {
-    upload_results <- lapply(guid_ids, get_gwas_api)
+    upload_results <- lapply(guid_ids, function(gid) {
+      upload <- get_gwas_api(
+        gid,
+        include_summary_stats = FALSE,
+        include_associations = include_associations
+      )
+      return(.decorate_gwas_upload(
+        upload,
+        guid = gid,
+        include_associations = include_associations
+      ))
+    })
     for (upload in upload_results) {
       result <- merge_trait_result(result, upload)
     }

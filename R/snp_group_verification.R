@@ -3,7 +3,7 @@
 #' of SNPs. Use as a verification baseline when pathway enrichment is empty or
 #' weak: do SNP groups recover distinct trait drivers?
 #' @param trait_matrix SNPs x traits numeric matrix (e.g. oriented trait matrix
-#'   from bivariate / EBMF verification helpers).
+#'   from EBMF / verification helpers).
 #' @param snp_ids Optional SNP ids to include. Defaults to all rows.
 #' @param trait_info Optional dataframe with `feature_id`/`trait_id` and
 #'   `feature_name`/`trait_name` columns for labels.
@@ -50,14 +50,14 @@ summarise_baseline_traits <- function(trait_matrix,
 
 
 #' @title Top Associated Traits Per SNP Group
-#' @description For each SNP group larger than `min_group_size`, rank trait
+#' @description For each SNP group of size at least `min_group_size`, rank trait
 #' columns by mean absolute effect among member SNPs and report the leading
 #' trait categories. Prefer \code{summarise_module_specific_traits()} when
 #' common trait categories dominate magnitude rankings.
 #' @inheritParams summarise_baseline_traits
 #' @param groups Named vector (`names` = SNP ids) or dataframe with `snp_id`
 #'   plus `group` / `cluster` / `program`.
-#' @param min_group_size Only summarise groups with more than this many SNPs.
+#' @param min_group_size Only summarise groups with at least this many SNPs.
 #' @param top_n Maximum traits per group. Defaults to 10.
 #' @param min_snps_with_signal Drop traits observed in fewer than this many SNPs
 #'   within the group. Defaults to 3.
@@ -76,7 +76,25 @@ summarise_snp_group_traits <- function(trait_matrix,
                                        n_categories = 2L) {
   group_df <- .normalize_snp_groups(groups)
   group_sizes <- table(group_df$group)
-  large_groups <- names(group_sizes)[group_sizes > min_group_size]
+  large_groups <- names(group_sizes)[group_sizes >= min_group_size]
+
+  empty_summary <- data.frame(
+    group = character(0),
+    n_snps = integer(0),
+    n_traits_ranked = integer(0),
+    top_trait = character(0),
+    top_abs_mean_z = numeric(0),
+    top_trait_categories = character(0),
+    stringsAsFactors = FALSE
+  )
+
+  if (length(large_groups) == 0) {
+    return(list(
+      by_group = list(),
+      summary = empty_summary,
+      min_group_size = as.integer(min_group_size)
+    ))
+  }
 
   by_group <- lapply(large_groups, function(grp) {
     snp_ids <- group_df$snp_id[group_df$group == grp]
@@ -126,7 +144,7 @@ summarise_snp_group_traits <- function(trait_matrix,
 
 
 #' @title Module-Specific Trait Drivers
-#' @description For each SNP group larger than `min_group_size`, rank traits by
+#' @description For each SNP group of size at least `min_group_size`, rank traits by
 #' how much stronger their mean absolute effect is inside the module than in the
 #' remaining SNPs:
 #' \deqn{\mathrm{specificity} = \bar{|z|}_{\mathrm{module}} /
@@ -170,8 +188,30 @@ summarise_module_specific_traits <- function(trait_matrix,
 
   group_df <- .normalize_snp_groups(groups)
   group_sizes <- table(group_df$group)
-  large_groups <- names(group_sizes)[group_sizes > min_group_size]
+  large_groups <- names(group_sizes)[group_sizes >= min_group_size]
   all_snps <- rownames(trait_matrix)
+
+  empty_summary <- data.frame(
+    group = character(0),
+    n_snps = integer(0),
+    n_traits_ranked = integer(0),
+    n_traits_passing_min_specificity = integer(0),
+    top_trait = character(0),
+    top_specificity = numeric(0),
+    top_abs_mean_z = numeric(0),
+    top_trait_categories = character(0),
+    stringsAsFactors = FALSE
+  )
+
+  if (length(large_groups) == 0) {
+    return(list(
+      by_group = list(),
+      summary = empty_summary,
+      min_group_size = as.integer(min_group_size),
+      min_specificity = min_specificity,
+      specificity_eps = specificity_eps
+    ))
+  }
 
   by_group <- lapply(large_groups, function(grp) {
     snp_ids <- unique(group_df$snp_id[group_df$group == grp])
@@ -387,20 +427,25 @@ summarise_baseline_tissues <- function(snp_ids,
 
 
 #' @title Tissue Enrichment Per SNP Group
-#' @description For each SNP group larger than `min_group_size`, count tissues at
-#' member SNPs and test enrichment (hypergeometric on unique SNP-tissue links).
-#' By default the background is leave-one-out (`background = "rest"`): SNPs in
-#' other large groups, so reported tissues are module-specific rather than
-#' merely abundant in the pooled set.
+#' @description For each SNP group of size at least `min_group_size`, count
+#' tissues at member SNPs (from `coloc_groups`) and compare observed vs expected
+#' composition against a trait-level baseline by default. Baseline links come
+#' only from SNPs attributed to the analysed trait (`baseline_snp_ids`), not the
+#' full GPMap universe. For `background = "trait"`, each module is compared to
+#' the rest of the trait SNPs (leave-one-out within the trait).
 #' @param groups Named SNP group vector or group dataframe.
 #' @param coloc_groups Coloc-group dataframe with `tissue`.
 #' @param snp_key Column used to match SNPs.
-#' @param min_group_size Only test groups with more than this many SNPs.
-#' @param p_value_threshold FDR threshold for reporting enriched tissues.
-#' @param background `"rest"` (default; leave-one-out) or `"pooled"` (all SNPs
-#'   in large groups, including the tested group).
-#' @return A list with `by_group`, `summary`, and `background` (pooled counts
-#'   across large groups, for reference).
+#' @param min_group_size Only test groups with at least this many SNPs.
+#' @param p_value_threshold FDR threshold used to populate `enriched`. The full
+#'   observed-vs-expected table is always returned in `comparison`.
+#' @param background `"trait"` (default; leave-one-out vs other trait SNPs),
+#'   `"rest"` (leave-one-out vs other large groups), or `"pooled"` (all SNPs in
+#'   large groups, including the tested group).
+#' @param baseline_snp_ids SNP ids defining the trait baseline when
+#'   `background = "trait"`. Defaults to all SNPs in `groups` when `NULL`.
+#' @return A list with `by_group` (each with `tissues`, `comparison`,
+#'   `enriched`), `summary`, and `background` (baseline tissue counts).
 #' @export
 enrich_snp_group_tissues <- function(groups,
                                      coloc_groups,
@@ -411,38 +456,89 @@ enrich_snp_group_tissues <- function(groups,
                                      ),
                                      min_group_size = 5L,
                                      p_value_threshold = 0.05,
-                                     background = c("rest", "pooled")) {
+                                     background = c("trait", "rest", "pooled"),
+                                     baseline_snp_ids = NULL) {
   snp_key <- match.arg(snp_key)
   background <- match.arg(background)
   group_df <- .normalize_snp_groups(groups)
   group_sizes <- table(group_df$group)
-  large_groups <- names(group_sizes)[group_sizes > min_group_size]
+  large_groups <- names(group_sizes)[group_sizes >= min_group_size]
+
+  empty_summary <- data.frame(
+    group = character(0),
+    n_snps = integer(0),
+    n_tissue_links = integer(0),
+    n_enriched_tissues = integer(0),
+    top_tissue = character(0),
+    top_enriched_tissue = character(0),
+    stringsAsFactors = FALSE
+  )
+
+  if (length(large_groups) == 0) {
+    return(list(
+      by_group = list(),
+      summary = empty_summary,
+      background = .summarise_tissue_counts(
+        .snp_tissue_links(character(0), coloc_groups, snp_key)
+      ),
+      n_background_links = 0L,
+      background_mode = background,
+      min_group_size = as.integer(min_group_size)
+    ))
+  }
 
   pooled_snps <- unique(group_df$snp_id[group_df$group %in% large_groups])
-  pooled_links <- .snp_tissue_links(pooled_snps, coloc_groups, snp_key)
-  pooled_counts <- .summarise_tissue_counts(pooled_links)
+  if (identical(background, "trait")) {
+    if (is.null(baseline_snp_ids)) {
+      baseline_snp_ids <- unique(group_df$snp_id)
+    }
+    baseline_snp_ids <- unique(as.character(baseline_snp_ids))
+    universe_links <- .snp_tissue_links(
+      baseline_snp_ids,
+      coloc_groups,
+      snp_key
+    )
+  } else {
+    universe_links <- .snp_tissue_links(pooled_snps, coloc_groups, snp_key)
+  }
+  universe_counts <- .summarise_tissue_counts(universe_links)
 
   by_group <- lapply(large_groups, function(grp) {
     snp_ids <- unique(group_df$snp_id[group_df$group == grp])
-    if (identical(background, "rest")) {
-      bg_snps <- setdiff(pooled_snps, snp_ids)
-    } else {
-      bg_snps <- pooled_snps
-    }
     links <- .snp_tissue_links(snp_ids, coloc_groups, snp_key)
-    bg_links <- .snp_tissue_links(bg_snps, coloc_groups, snp_key)
     counts <- .summarise_tissue_counts(links)
-    enriched <- .hypergeometric_tissue_enrichment(
-      group_links = links,
-      background_links = bg_links,
-      p_value_threshold = p_value_threshold
+
+    if (identical(background, "trait")) {
+      bg_snps <- setdiff(baseline_snp_ids, snp_ids)
+      bg_links <- .snp_tissue_links(bg_snps, coloc_groups, snp_key)
+      n_bg_snps <- length(bg_snps)
+    } else if (identical(background, "rest")) {
+      bg_snps <- setdiff(pooled_snps, snp_ids)
+      bg_links <- .snp_tissue_links(bg_snps, coloc_groups, snp_key)
+      n_bg_snps <- length(bg_snps)
+    } else {
+      bg_links <- universe_links
+      n_bg_snps <- length(pooled_snps)
+    }
+
+    comparison <- .hypergeometric_link_enrichment(
+      group_values = links$tissue,
+      universe_values = bg_links$tissue,
+      p_value_threshold = NULL
     )
+    names(comparison)[names(comparison) == "value"] <- "tissue"
+    enriched <- comparison
+    if (!is.null(p_value_threshold) && nrow(enriched) > 0) {
+      enriched <- enriched[enriched$fdr <= p_value_threshold, , drop = FALSE]
+    }
+
     list(
       group = grp,
       n_snps = length(snp_ids),
-      n_rest_snps = length(bg_snps),
+      n_baseline_snps = n_bg_snps,
       n_tissue_links = nrow(links),
       tissues = counts,
+      comparison = comparison,
       enriched = enriched
     )
   })
@@ -472,9 +568,135 @@ enrich_snp_group_tissues <- function(groups,
   return(list(
     by_group = by_group,
     summary = summary_df,
-    background = pooled_counts,
-    n_background_links = nrow(pooled_links),
+    background = universe_counts,
+    n_background_links = nrow(universe_links),
     background_mode = background,
+    min_group_size = as.integer(min_group_size)
+  ))
+}
+
+
+#' @title Trait-Category Enrichment Per SNP Group
+#' @description For each SNP group, compare trait-category composition in
+#' `coloc_groups` to the rest of a trait-level SNP baseline (expected vs
+#' observed). Uses distinct SNP-category links from coloc results attributed to
+#' the analysed trait SNPs.
+#' @inheritParams enrich_snp_group_tissues
+#' @param baseline_snp_ids SNP ids defining the trait baseline. Defaults to all
+#'   SNPs in `groups` when `NULL`.
+#' @return A list with `by_group` (each with `categories`, `comparison`,
+#'   `enriched`), `summary`, and `background` category counts.
+#' @export
+enrich_snp_group_trait_categories <- function(groups,
+                                              coloc_groups,
+                                              snp_key = c(
+                                                "variant_id",
+                                                "display_snp",
+                                                "coloc_group_id"
+                                              ),
+                                              min_group_size = 5L,
+                                              p_value_threshold = 0.05,
+                                              baseline_snp_ids = NULL) {
+  snp_key <- match.arg(snp_key)
+  group_df <- .normalize_snp_groups(groups)
+  group_sizes <- table(group_df$group)
+  large_groups <- names(group_sizes)[group_sizes >= min_group_size]
+
+  empty_summary <- data.frame(
+    group = character(0),
+    n_snps = integer(0),
+    n_category_links = integer(0),
+    n_enriched_categories = integer(0),
+    top_category = character(0),
+    top_enriched_category = character(0),
+    stringsAsFactors = FALSE
+  )
+
+  if (is.null(baseline_snp_ids)) {
+    baseline_snp_ids <- unique(group_df$snp_id)
+  }
+  baseline_snp_ids <- unique(as.character(baseline_snp_ids))
+
+  if (length(large_groups) == 0) {
+    return(list(
+      by_group = list(),
+      summary = empty_summary,
+      background = .summarise_category_counts(
+        .snp_category_links(character(0), coloc_groups, snp_key)
+      ),
+      n_background_links = 0L,
+      background_mode = "trait",
+      min_group_size = as.integer(min_group_size)
+    ))
+  }
+
+  universe_links <- .snp_category_links(
+    baseline_snp_ids,
+    coloc_groups,
+    snp_key
+  )
+  universe_counts <- .summarise_category_counts(universe_links)
+
+  by_group <- lapply(large_groups, function(grp) {
+    snp_ids <- unique(group_df$snp_id[group_df$group == grp])
+    links <- .snp_category_links(snp_ids, coloc_groups, snp_key)
+    counts <- .summarise_category_counts(links)
+    bg_snps <- setdiff(baseline_snp_ids, snp_ids)
+    bg_links <- .snp_category_links(bg_snps, coloc_groups, snp_key)
+    comparison <- .hypergeometric_link_enrichment(
+      group_values = links$trait_category,
+      universe_values = bg_links$trait_category,
+      p_value_threshold = NULL
+    )
+    names(comparison)[names(comparison) == "value"] <- "trait_category"
+    enriched <- comparison
+    if (!is.null(p_value_threshold) && nrow(enriched) > 0) {
+      enriched <- enriched[enriched$fdr <= p_value_threshold, , drop = FALSE]
+    }
+
+    list(
+      group = grp,
+      n_snps = length(snp_ids),
+      n_baseline_snps = length(baseline_snp_ids),
+      n_category_links = nrow(links),
+      categories = counts,
+      comparison = comparison,
+      enriched = enriched
+    )
+  })
+
+  summary_df <- dplyr::bind_rows(lapply(by_group, function(x) {
+    top_category <- if (nrow(x$categories) > 0) {
+      x$categories$trait_category[1]
+    } else {
+      NA_character_
+    }
+    top_enriched <- if (nrow(x$enriched) > 0) {
+      paste0(
+        x$enriched$trait_category[1],
+        " (FDR=", signif(x$enriched$fdr[1], 3),
+        ", FE=", signif(x$enriched$fold_enrichment[1], 3), ")"
+      )
+    } else {
+      NA_character_
+    }
+    data.frame(
+      group = x$group,
+      n_snps = x$n_snps,
+      n_category_links = x$n_category_links,
+      n_enriched_categories = nrow(x$enriched),
+      top_category = top_category,
+      top_enriched_category = top_enriched,
+      stringsAsFactors = FALSE
+    )
+  }))
+
+  return(list(
+    by_group = by_group,
+    summary = summary_df,
+    background = universe_counts,
+    n_background_links = nrow(universe_links),
+    background_mode = "trait",
     min_group_size = as.integer(min_group_size)
   ))
 }
@@ -738,6 +960,39 @@ enrich_snp_group_tissues <- function(groups,
 }
 
 
+.snp_category_links <- function(snp_ids, coloc_groups, snp_key) {
+  if (is.null(snp_ids) || length(snp_ids) == 0) {
+    return(data.frame(
+      snp_id = character(0),
+      trait_category = character(0),
+      stringsAsFactors = FALSE
+    ))
+  }
+  if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {
+    stop("coloc_groups is required")
+  }
+  if (!"trait_category" %in% names(coloc_groups)) {
+    stop("coloc_groups must include a trait_category column")
+  }
+  if (!snp_key %in% names(coloc_groups)) {
+    stop("coloc_groups must include column: ", snp_key)
+  }
+
+  snp_ids <- unique(as.character(snp_ids))
+  snp_col <- as.character(coloc_groups[[snp_key]])
+  out <- coloc_groups |>
+    dplyr::mutate(snp_id = snp_col) |>
+    dplyr::filter(
+      snp_id %in% snp_ids,
+      !is.na(trait_category),
+      trait_category != ""
+    ) |>
+    dplyr::distinct(snp_id, trait_category)
+
+  return(out)
+}
+
+
 .summarise_tissue_counts <- function(links) {
   if (nrow(links) == 0) {
     return(data.frame(
@@ -764,53 +1019,90 @@ enrich_snp_group_tissues <- function(groups,
 }
 
 
-.hypergeometric_tissue_enrichment <- function(group_links,
-                                              background_links,
-                                              p_value_threshold) {
-  if (nrow(group_links) == 0 || nrow(background_links) == 0) {
+.summarise_category_counts <- function(links) {
+  if (nrow(links) == 0) {
     return(data.frame(
-      tissue = character(0),
-      n_group = integer(0),
-      n_background = integer(0),
-      n_group_total = integer(0),
-      n_background_total = integer(0),
-      fold_enrichment = numeric(0),
-      p_value = numeric(0),
-      fdr = numeric(0),
+      trait_category = character(0),
+      n_links = integer(0),
+      n_snps = integer(0),
+      frac_links = numeric(0),
       stringsAsFactors = FALSE
     ))
   }
 
-  n_group_total <- nrow(group_links)
-  n_background_total <- nrow(background_links)
-  background_counts <- table(background_links$tissue)
-  group_counts <- table(group_links$tissue)
-  # Include tissues present only in the module (absent from rest/background).
-  tissues <- names(group_counts)
+  total <- nrow(links)
+  out <- links |>
+    dplyr::group_by(trait_category) |>
+    dplyr::summarise(
+      n_links = dplyr::n(),
+      n_snps = dplyr::n_distinct(snp_id),
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(frac_links = n_links / total) |>
+    dplyr::arrange(dplyr::desc(n_links), trait_category)
 
-  rows <- lapply(tissues, function(tissue) {
-    k <- as.integer(group_counts[[tissue]])
-    k_bg <- if (tissue %in% names(background_counts)) {
-      as.integer(background_counts[[tissue]])
+  return(out)
+}
+
+
+.hypergeometric_link_enrichment <- function(group_values,
+                                            universe_values,
+                                            p_value_threshold = NULL) {
+  empty <- data.frame(
+    value = character(0),
+    n_group = integer(0),
+    n_universe = integer(0),
+    n_group_total = integer(0),
+    n_universe_total = integer(0),
+    frac_group = numeric(0),
+    frac_universe = numeric(0),
+    fold_enrichment = numeric(0),
+    p_value = numeric(0),
+    fdr = numeric(0),
+    stringsAsFactors = FALSE
+  )
+  group_values <- as.character(group_values)
+  universe_values <- as.character(universe_values)
+  group_values <- group_values[!is.na(group_values) & group_values != ""]
+  universe_values <- universe_values[
+    !is.na(universe_values) & universe_values != ""
+  ]
+
+  if (length(group_values) == 0 || length(universe_values) == 0) {
+    return(empty)
+  }
+
+  n_group_total <- length(group_values)
+  n_universe_total <- length(universe_values)
+  group_counts <- table(group_values)
+  universe_counts <- table(universe_values)
+  values <- names(group_counts)
+
+  rows <- lapply(values, function(val) {
+    k <- as.integer(group_counts[[val]])
+    k_u <- if (val %in% names(universe_counts)) {
+      as.integer(universe_counts[[val]])
     } else {
       0L
     }
     frac_group <- k / n_group_total
-    frac_bg <- k_bg / n_background_total
-    fold_enrichment <- if (frac_bg > 0) frac_group / frac_bg else Inf
+    frac_u <- k_u / n_universe_total
+    fold_enrichment <- if (frac_u > 0) frac_group / frac_u else Inf
     p_value <- stats::phyper(
       q = k - 1L,
-      m = k_bg,
-      n = n_background_total - k_bg,
+      m = k_u,
+      n = n_universe_total - k_u,
       k = n_group_total,
       lower.tail = FALSE
     )
     data.frame(
-      tissue = tissue,
+      value = val,
       n_group = k,
-      n_background = k_bg,
+      n_universe = k_u,
       n_group_total = n_group_total,
-      n_background_total = n_background_total,
+      n_universe_total = n_universe_total,
+      frac_group = frac_group,
+      frac_universe = frac_u,
       fold_enrichment = fold_enrichment,
       p_value = p_value,
       stringsAsFactors = FALSE
@@ -819,16 +1111,34 @@ enrich_snp_group_tissues <- function(groups,
 
   out <- dplyr::bind_rows(rows)
   if (nrow(out) == 0) {
-    return(out)
+    return(empty)
   }
   out$fdr <- stats::p.adjust(out$p_value, method = "BH")
-  out <- out[out$fdr <= p_value_threshold, , drop = FALSE]
+  if (!is.null(p_value_threshold)) {
+    out <- out[out$fdr <= p_value_threshold, , drop = FALSE]
+  }
   out <- out[order(
     out$fdr,
     -out$fold_enrichment,
     out$p_value,
-    out$tissue
+    out$value
   ), , drop = FALSE]
   rownames(out) <- NULL
+  return(out)
+}
+
+
+# Backward-compatible wrapper used by older call sites / tests if needed.
+.hypergeometric_tissue_enrichment <- function(group_links,
+                                              background_links,
+                                              p_value_threshold) {
+  out <- .hypergeometric_link_enrichment(
+    group_values = group_links$tissue,
+    universe_values = background_links$tissue,
+    p_value_threshold = p_value_threshold
+  )
+  names(out)[names(out) == "value"] <- "tissue"
+  names(out)[names(out) == "n_universe"] <- "n_background"
+  names(out)[names(out) == "n_universe_total"] <- "n_background_total"
   return(out)
 }

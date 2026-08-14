@@ -4,25 +4,49 @@
 \alias{snp_similarity_matrix}
 \title{SNP–SNP Cosine Similarity Matrix}
 \usage{
-snp_similarity_matrix(x_matrix, na_as_zero = TRUE)
+snp_similarity_matrix(
+  x_matrix,
+  na_as_zero = TRUE,
+  missing_method = c("zero_fill", "pairwise_complete"),
+  min_overlap = 1L,
+  overlap_shrinkage = 0
+)
 }
 \arguments{
 \item{x_matrix}{A numeric matrix (traits x SNPs), typically the oriented matrix
 from \code{orient_pleiotropy_matrix()$x_matrix}.}
 
 \item{na_as_zero}{Logical; treat \code{NA} entries as zero before normalisation.
-Defaults to \code{TRUE} (no colocalisation signal at a trait is treated as zero effect).}
+Used only when \code{missing_method = "zero_fill"}. Defaults to \code{TRUE}.}
+
+\item{missing_method}{How to handle missing trait-SNP values. \code{"zero_fill"}
+(default) preserves the original behaviour and treats missing values as zero
+effects. \code{"pairwise_complete"} calculates each SNP-pair cosine using only
+traits observed for both SNPs.}
+
+\item{min_overlap}{Minimum number of jointly observed traits required when
+\code{missing_method = "pairwise_complete"}. Pairs below this threshold receive
+similarity zero (an absent graph edge). Defaults to \code{1}.}
+
+\item{overlap_shrinkage}{Non-negative shrinkage strength for pairwise-complete
+similarity. Each cosine is multiplied by
+\eqn{n_{\mathrm{overlap}} / (n_{\mathrm{overlap}} + \lambda)}. Defaults to
+\code{0} (no shrinkage).}
 }
 \value{
 A list with:
 \itemize{
 \item s_matrix: symmetric SNP-by-SNP cosine similarity matrix
 \item col_norms: Euclidean norm of each SNP column before normalisation
+\item overlap_matrix: number of jointly observed traits for each SNP pair
+\item eligible_matrix: whether each pair met the overlap and norm criteria
+\item missing_method: missing-value method used
+\item min_overlap, overlap_shrinkage: pairwise-complete settings used
 }
 }
 \description{
 Compute pairwise cosine similarity between SNP pleiotropy profiles.
-Each column of the oriented matrix \eqn{X^*} is normalised to unit length, then
-\deqn{S_{jk} = \frac{{x^*_j}^{\top} x^*_k}{\|x^*_j\| \|x^*_k\|}}
-is obtained as \eqn{{X^*}^\top X^*} on the unit-normalised columns.
+With zero filling, each column of \eqn{X^*} is normalised to unit length and
+similarity is obtained by cross-product. Pairwise-complete similarity instead
+normalises each SNP pair over its jointly observed trait rows.
 }

@@ -1,12 +1,9 @@
 #' @title Build SNP Perturbation Feature Matrices
 #' @description Construct the two feature matrices from the SNP perturbation
 #' clustering framework: a SNP x complex-trait matrix of signed z-scores
-#' (\eqn{\beta / \mathrm{SE}}) and a SNP x gene matrix of signed gene-perturbation
-#' scores. Gene scores collapse all molecular QTL rows for each SNP-gene pair
-#' with a weighted Stouffer combination
-#' \eqn{Z = \sum_i w_i Z_i / \sqrt{\sum_i w_i^2}} where \eqn{w_i = 1/\mathrm{SE}_i}.
-#' Colocalisation probability is not currently returned by GPMap association
-#' tables, so inverse-SE weights are used instead.
+#' (\eqn{\beta / \mathrm{SE}}) and a SNP x molecular-QTL-study matrix of signed
+#' z-scores. Each study remains its own column; multiple rows for the same
+#' study-SNP pair keep the smallest `min_p`.
 #' @param trait_id Numeric ID of the target trait whose GWAS SNPs define the rows.
 #' @param p_threshold P-value threshold for including a target-trait SNP.
 #'   Defaults to 5e-8.
@@ -15,7 +12,7 @@
 #' @return A list with:
 #'   \itemize{
 #'     \item trait_matrix: SNPs x complex traits (signed z)
-#'     \item gene_matrix: SNPs x genes (weighted Stouffer z)
+#'     \item gene_matrix: SNPs x molecular QTL studies (signed z)
 #'     \item trait_info, gene_info, snp_info
 #'     \item z_target: named target-trait z-scores for orientation
 #'     \item coloc_groups, target_trait_id
@@ -54,15 +51,13 @@ build_perturbation_matrices <- function(trait_id,
     cg = cg[!molecular, , drop = FALSE],
     snp_ids = snp_ids,
     feature_id_col = "trait_id",
-    feature_name_col = "trait_name",
-    collapse = "best_p"
+    feature_name_col = "trait_name"
   )
   gene_matrix <- .snp_feature_matrix_from_long(
     cg = cg[molecular, , drop = FALSE],
     snp_ids = snp_ids,
-    feature_id_col = "gene_id",
-    feature_name_col = "gene",
-    collapse = "stouffer"
+    feature_id_col = "trait_id",
+    feature_name_col = "trait_name"
   )
 
   snp_info <- locus_data$target_snps |>
@@ -236,9 +231,7 @@ compress_perturbation_matrices <- function(trait_matrix,
 .snp_feature_matrix_from_long <- function(cg,
                                           snp_ids,
                                           feature_id_col,
-                                          feature_name_col,
-                                          collapse = c("best_p", "stouffer")) {
-  collapse <- match.arg(collapse)
+                                          feature_name_col) {
   snp_ids <- as.character(snp_ids)
   empty <- list(
     x_matrix = matrix(
@@ -283,24 +276,11 @@ compress_perturbation_matrices <- function(trait_matrix,
     return(empty)
   }
 
-  if (collapse == "best_p") {
-    scored <- long |>
-      dplyr::group_by(snp_id, feature_id, feature_name) |>
-      dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
-      dplyr::ungroup() |>
-      dplyr::select(snp_id, feature_id, feature_name, z)
-  } else {
-    scored <- long |>
-      dplyr::filter(!is.na(se), se > 0) |>
-      dplyr::group_by(snp_id, feature_id, feature_name) |>
-      dplyr::summarise(
-        z = {
-          w <- 1 / se
-          sum(w * z) / sqrt(sum(w * w))
-        },
-        .groups = "drop"
-      )
-  }
+  scored <- long |>
+    dplyr::group_by(snp_id, feature_id, feature_name) |>
+    dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
+    dplyr::ungroup() |>
+    dplyr::select(snp_id, feature_id, feature_name, z)
 
   if (nrow(scored) == 0) {
     return(empty)

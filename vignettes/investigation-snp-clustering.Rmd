@@ -1,11 +1,15 @@
 ---
-title: "Investigation of SNP clustering"
-output: rmarkdown::html_vignette
+title: "Univariate SNP biological clustering"
+output:
+  rmarkdown::html_vignette:
+    includes:
+      in_header: investigation-wide.html
 vignette: >
   %\VignetteIndexEntry{Investigation of SNP clustering}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -19,200 +23,339 @@ knitr::opts_chunk$set(
 )
 ```
 
-## Overview
+## Goal
 
-This note is an **overview** of how we cluster SNPs from GPMap colocalisation and pleiotropy data. The goal is to group variants that share **concordant**, **discordant**, or **trait-specific** pleiotropy structure — without manually guessing the number of clusters.
+Take a **single trait** and decompose its genetic architecture by grouping SNPs
+according to their genome-wide pleiotropic profiles.
 
-The detailed, runnable workflows live in the investigation vignettes linked below. Each vignette implements one slice of the method comparison outlined here.
+The central question is: **within one trait, what distinct biological programs
+are represented by its associated SNPs?**
 
-## Outline
+The output is a set of SNP modules, each annotated with background traits,
+QTL studies, tissues, genes, and pathways. The runnable implementation is
+[Investigation of univariate analysis](investigation-univariate-analysis.html).
+[Investigation of EBMF analysis](investigation-ebmf-analysis.html) is the
+overlapping-program alternative.
 
-1. [Three core clustering preferences](#three-core-clustering-preferences)
-2. [Statistical methods evaluated](#statistical-methods-evaluated)
-3. [Dimensionality reduction: genes and tissues](#dimensionality-reduction-genes-and-tissues)
-4. [Pathway verification](#pathway-verification)
-5. [Workflow diagram](#workflow-diagram)
-6. [Investigation vignettes](#investigation-vignettes)
+Background traits stay at **study level**. Molecular QTL studies are not
+collapsed by gene, tissue, cis/trans, or QTL type.
 
-## Summary so far
+### Core clustering preferences
 
-| Preference | EBMF | Signed Leiden / Louvain | hclust | Leading eigen |
-|------------|------|-------------------------|--------|---------------|
-| High sparsity | Strong | Moderate (graph sparsification helps) | Weak | Weak |
-| Sign-aware | Yes | Yes | Only with custom metrics | Hacky |
-| Automated *K* | Yes (ELBO) | Yes (modularity) | No | No |
-| Soft clusters | Yes | No | No | No |
-| Results | Improving: drop F1 + stricter membership | Ok: distinct but large clusters | NA | NA |
+Any method we adopt for SNP grouping should satisfy:
 
-**Recommended path:** EBMF for discovery and soft program assignment; signed graph clustering (Louvain today, Leiden target) on trait (optionally gene x tissue) matrices for hard SNP modules and bivariate concordance / discordance blocks. Use the linked investigation vignettes for reproducible examples on GPMap data.
+1. **Handles high sparsity** — Must natively process large, sparse matrices
+   (thousands of singleton feature rows) without treating structural zeros as
+   low-variance signal.  Alternatively, we can limit the sparsity by a hard
+   threshold on the number of non-missing SNPs per trait.
+2. **Signed and sign-driven clustering** — Must preserve the meaning of
+   continuous positive/negative z-scores so variants group by **directional
+   alignment**, not magnitude alone.
+3. **Automated \(K\) discovery** — The engine should learn the number of
+   clusters or latent factors from the data (modularity, ELBO), rather than
+   relying on an arbitrary cut.  Filtering the results by a minimum module size
+   can help with this.
 
-## Investigation vignettes
-
-| Workflow | Vignette | What it demonstrates |
-|----------|----------|----------------------|
-| EBMF (matrix factorization) | [Investigation of EBMF analysis](investigation-ebmf-analysis.html) | Soft programs via `flashier`; automated *K*; sign-aware sparse priors |
-| Univariate | [Investigation of univariate analysis](investigation-univariate-analysis.html) | Trait-only matrix; signed Louvain on `S` (BMI) |
-| Bivariate | [Investigation of bivariate analysis](investigation-bivariate-analysis.html) | Trait matrices with optional gene x tissue QTL collapse; Louvain on `S*` (BMI + WHR) |
-
-## Three core clustering preferences
-
-Any method we adopt for SNP (or SNP-block) grouping should satisfy:
-
-1. **Handles high sparsity** — Must natively process large, sparse matrices (e.g. thousands of singleton feature rows) without numerical gridlock or treating structural zeros as low-variance signal.
-
-2. **Signed and sign-driven clustering** — Must preserve the biological meaning of continuous positive/negative values (z-scores / betas) so variants group by **directional alignment** (concordant vs. discordant effects), not magnitude alone.
-
-3. **Automated *K* discovery** — The engine should learn the effective number of clusters or latent factors from the data (ELBO, modularity, or similar), rather than relying on arbitrary manual cuts.
-
-## Statistical methods evaluated
-
-### EBMF (`flashier`) — best fit (current champion)
-
-Native sparsity via empirical Bayes priors; fully sign-aware; automatically chooses *K* through ELBO optimisation; supports **soft clustering** (pleiotropic SNPs can load on multiple programs).
-
-**Tunable parameters**
-
-- **`ebnm_fn`:** Switch from `point_normal` to `point_laplace` for sharper shrinkage and to break up dense macro-clusters.
-- **`var_type`:** Set to `1` with `row.group.assignment` vectors for fast, robust background noise models instead of slow iterative loops.
-- **`greedy_Kmax` and `tol`:** Raise discovery ceilings (e.g. 30–50) so the model searches beyond a global intercept factor.
-- **Input architecture (`Y` and `S`):** Pass separate beta (`Y`) and SE (`S`) matrices for a weighted meta-analytic fit; impute missing cells explicitly (`Y = 0`, `S = 1e6`) to stabilise optimisation.
-
-See [Investigation of EBMF analysis](investigation-ebmf-analysis.html).
-
-### Signed Leiden — excellent graph alternative
-
-Addresses structural flaws of signed Louvain (fewer disconnected or trapped communities). Fully sign-aware. **Hard clustering** only (one SNP, one group).
-
-**Tunable parameters:** `louvain_gamma` (resolution; scales community size) and upstream `similarity_threshold` (drop weak signed edges before building the adjacency matrix).
-
-*Not yet implemented in gpmapr vignettes; listed here as the preferred graph upgrade over Louvain.*
-
-### Signed Louvain — graph method in current vignettes
-
-Fast and sign-aware, but can fragment in high-sparsity regions (local modularity traps). Hard clustering.
-
-**Tunable parameters:** Same as Leiden — `gamma` and `similarity_threshold` in `cluster_snp_profiles()` and `cluster_cross_trait_snps()`.
-
-See [Investigation of univariate analysis](investigation-univariate-analysis.html) and [Investigation of bivariate analysis](investigation-bivariate-analysis.html).
-
-### Hierarchical clustering (`hclust`) — poor fit
-
-Traditional distance-based clustering. Does not handle extreme sparsity cleanly, cannot model overlapping soft clusters, and does not choose *K* automatically (requires arbitrary tree cuts). Standard distance metrics also collapse directional sign unless custom signed similarity matrices are used.
-
-Used in baseline investigation vignettes for comparison and heatmap ordering only.
-
-### Leading eigenvector — poor fit
-
-Top-down spectral bisection; background modularity is structurally dense (*O*(*n*³) scaling). Requires manual handling of signed edges and forces hard clustering.
-
-## Dimensionality reduction: genes and tissues
-
-Molecular QTL studies are sparse at the study level. The bivariate workflow can
-optionally collapse them with `collapse_gene_tissue = TRUE`, merging cis/trans and
-QTL types within each gene x tissue while keeping tissue labels for annotation.
-
-Pathway enrichment remains a **post-hoc verification** step on module genes
-(`enrich_trait_pathways()` / `enrich_snp_group_pathways()`), not a matrix-row
-collapse for Louvain.
-
-## Pathway and alternative verification
-
-Investigation vignettes use shared verification helpers:
-
-1. **Baseline** — before clustering, summarise recoverable signal for the trait SNP set.
-2. **Analysis** — run Louvain / EBMF as usual.
-3. **Per-group** — for modules / programs with more than 5 SNPs, repeat the check and compare to baseline.
-
-Primary checks when pathway enrichment is empty (common for broad traits like BMI):
-
-- `summarise_baseline_traits()` / `summarise_snp_group_traits()` / `compare_group_traits()`
-- `summarise_baseline_tissues()` / `enrich_snp_group_tissues()`
-
-Pathway checks remain available via `enrich_trait_pathways()`, `enrich_snp_group_pathways()`, and `compare_group_pathways()`.
-
-## Workflow diagram
-
-The flowchart below matches the Mermaid design used in method planning. It is rendered with **DiagrammeR** (`grViz`, Graphviz DOT) so it builds offline inside package vignettes.
-
-```{r workflow-diagram, echo=FALSE, fig.height=14, fig.width=12}
+```{r workflow-diagram, echo=FALSE, fig.height=8, fig.width=8}
 workflow_dot <- "
 digraph workflow {
-  graph [rankdir=TB bgcolor=transparent fontname=Helvetica nodesep=0.4 ranksep=0.5]
-
-  node [shape=box style=filled fontname=Helvetica fontsize=10 margin=0.15]
-
-  subgraph cluster_prefs {
-    label=\"Our 3 Clustering Preferences\"
-    style=filled color=lightgrey
-    P1 [label=\"1. Handles High Sparsity\" fillcolor=\"#e1f5fe\" color=\"#01579b\"]
-    P2 [label=\"2. Signed & Sign-Driven\" fillcolor=\"#e1f5fe\" color=\"#01579b\"]
-    P3 [label=\"3. Automated K Detection\" fillcolor=\"#e1f5fe\" color=\"#01579b\"]
-  }
-
-  subgraph cluster_prep {
-    label=\"Dimensionality Reduction & Data Prep\"
-    style=filled color=lightgrey
-    D1 [label=\"Raw Studies: Beta & SE\" fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
-    D2 [label=\"Filter Pathway Size\" shape=diamond fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
-    D3 [label=\"15 to 200 Genes\\n(Optimize Resolution)\" fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
-    D4 [label=\">500 Genes\\n(Prune Umbrella Folders)\" fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
-    D5 [label=\"Multi-Pathway Gene?\" shape=diamond fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
-    D6 [label=\"Concatenate Labels\\n(1-3 pathways)\" fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
-    D7 [label=\"Collapse to Parent\\nOR Duplicate Rows\" fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
-    D8 [label=\"Impute Gaps: Y=0, S=1e6\" fillcolor=\"#fff3e0\" color=\"#ef6c00\"]
-    D1 -> D2
-    D2 -> D3 [label=\"15-200\"]
-    D2 -> D4 [label=\">500\"]
-    D3 -> D5
-    D5 -> D6 [label=\"1-3\"]
-    D5 -> D7 [label=\">3\"]
-    D6 -> D8
-    D7 -> D8
-    D4 -> D8
-  }
-
-  M [label=\"Select Statistical Method\" shape=diamond fillcolor=white]
-
-  subgraph cluster_methods {
-    label=\"Method Evaluation\"
-    style=filled color=lightgrey
-    M1 [label=\"EBMF (flashier)\\nMatrix / Soft Clusters\" fillcolor=\"#c8e6c9\" color=\"#2e7d32\" penwidth=2]
-    M2 [label=\"Signed Leiden\\nGraph / Hard Clusters\" fillcolor=\"#fff9c4\" color=\"#fbc02d\"]
-    M3 [label=\"Signed Louvain\\n(local traps)\" fillcolor=\"#efebe9\" color=\"#4e342e\" style=\"filled,dashed\"]
-    M4 [label=\"Leading Eigenvector\\n(dense bottleneck)\" fillcolor=\"#efebe9\" color=\"#4e342e\" style=\"filled,dashed\"]
-  }
-
-  subgraph cluster_tune {
-    label=\"EBMF Optimisation Loops\"
-    style=filled color=lightgrey
-    T1 [label=\"Adjust Parameters\" fillcolor=\"#e8f5e9\" color=\"#2e7d32\"]
-    T2 [label=\"Prior: ebnm_point_laplace\" fillcolor=\"#e8f5e9\" color=\"#2e7d32\"]
-    T3 [label=\"Noise: var_type=1 + Labels\" fillcolor=\"#e8f5e9\" color=\"#2e7d32\"]
-    T4 [label=\"Search: higher greedy_Kmax\" fillcolor=\"#e8f5e9\" color=\"#2e7d32\"]
-    T5 [label=\"Isolate global intercept\" fillcolor=\"#e8f5e9\" color=\"#2e7d32\"]
-    T1 -> T2
-    T1 -> T3
-    T1 -> T4
-    T1 -> T5
-  }
-
-  O [label=\"Output:\\nSparse, Decoupled\\nBiological SNP Clusters\" fillcolor=\"#c8e6c9\" color=\"#2e7d32\" penwidth=2]
-
-  P1 -> D1 [style=invis]
-  D8 -> M
-  M -> M1 [label=\"soft\"]
-  M -> M2 [label=\"hard\"]
-  M -> M3 [style=dashed label=\"legacy\"]
-  M -> M4 [style=dashed label=\"legacy\"]
-  M1 -> T1
-  T2 -> O
-  T3 -> O
-  T4 -> O
-  T5 -> O
-  M2 -> O [style=dashed]
+  graph [rankdir=TB bgcolor=transparent fontname=Helvetica nodesep=0.35 ranksep=0.45]
+  node [shape=box style=filled fontname=Helvetica fontsize=10 margin=0.12
+        fillcolor=\"#e1f5fe\" color=\"#01579b\"]
+  S1 [label=\"1. Pleiotropy matrix\\n(study-level rows x SNPs)\"]
+  S2 [label=\"2. Orient by sign(z_target)\\noptional asinh compression\"]
+  S3 [label=\"3. SNP-SNP cosine similarity S\"]
+  S4 [label=\"4. Cluster (signed Louvain default)\"]
+  S5 [label=\"5. Reliability + magnitude annotations\"]
+  S6 [label=\"6. Interpret reliable modules\\ntraits, tissues, pathways\"]
+  S1 -> S2 -> S3 -> S4 -> S5 -> S6
 }
 "
-
-DiagrammeR::grViz(workflow_dot)
+if (requireNamespace("DiagrammeR", quietly = TRUE)) {
+  DiagrammeR::grViz(workflow_dot)
+}
 ```
 
+## Steps
+
+### 1. Construct the pleiotropy matrix
+
+Given:
+
+- `nsnp` = independent SNPs associated with the target trait (coloc groups)
+- `ntrait` = background studies in GPMap (phenotypic and molecular)
+
+Construct a **traits x SNPs** matrix of signed z-scores (\(z = \beta / \mathrm{SE}\)).
+Conceptually this is a SNP-by-trait profile matrix; the code stores traits as
+rows and SNPs as columns.
+
+```text
+              SNP1   SNP2   SNP3   SNP4   ...
+Trait A        z      z      z      z
+Trait B        z      z      z      z
+Trait C        z      z      z      z
+...
+```
+
+Sparse rows (few non-missing SNPs) and ubiquitous rows (non-missing on almost
+every SNP) are dropped; the target trait row is kept.
+
+### 2. Orient SNP profiles relative to the target trait
+
+Remove arbitrary allele coding so every column represents increasing target
+liability. For SNP \(j\):
+
+\[
+X^*_{tj} = \mathrm{sign}(z_j)\, X_{tj}
+\]
+
+Optional \(\mathrm{asinh}(z)\) compression then limits the leverage of extreme
+z-scores without a hard clip.
+
+### 3. Calculate SNP-SNP similarity
+
+Compare every SNP with every other SNP by its oriented trajectory across
+background traits. Cosine similarity:
+
+\[
+S_{jk} = \frac{{x^*_j}^{\top} x^*_k}{\|x^*_j\|\,\|x^*_k\|}
+\]
+
+The result is SNP x SNP:
+
+- \(+1\) = concordant (parallel) profiles
+- \(0\) = unrelated
+- \(-1\) = discordant (anti-parallel) profiles
+
+### 4. Cluster the SNPs
+
+Group SNPs into modules from \(S\). The univariate vignette uses
+`cluster_snp_profiles_louvain()`. Spectral clustering is available as
+`cluster_snp_profiles_spectral()`. Soft overlapping programs live in the EBMF
+vignette.
+
+The recommended trial order is below. The first method provides the current
+baseline; the following methods increasingly test different assumptions.
+
+#### 1. Signed Louvain (current baseline)
+
+Represent \(S\) as a signed weighted graph: SNP = node, similarity = edge.
+Weak edges with \(|S| <\) `similarity_threshold` can be zeroed first.
+Implemented as `cluster_snp_profiles_louvain()`.
+
+Advantages:
+
+- Returns a data-driven number of modules for fixed graph parameters
+- Handles sparse networks
+- Signed Louvain uses negative edges (anti-parallel profiles) rather than
+  discarding them
+
+Problems:
+
+- Standard (unsigned) Louvain is directionally blind; we therefore use signed
+  modularity
+- Very sparse graphs can produce many tiny communities
+- Resolution (`gamma`) and the similarity threshold both change community size
+- Local optimisation can vary across runs or become trapped in suboptimal
+  partitions
+
+Use repeated runs across seeds, `gamma`, and `similarity_threshold` as the
+reference against which other methods are compared.
+
+#### 2. Signed Leiden (highest-priority addition)
+
+Leiden is a community-detection refinement designed to produce better-connected
+and more stable communities than Louvain.
+
+Advantages:
+
+- Closest methodological upgrade to the current pipeline
+- Retains sparse graph processing and data-driven module discovery
+- Reduces disconnected or poorly connected communities
+
+Problems:
+
+- Standard Leiden implementations generally assume non-negative weights
+- A valid implementation needs signed modularity or coupled positive and
+  negative graph layers; negative \(S\) values must not simply be discarded
+- Resolution and edge-threshold choices still affect the number of modules
+
+#### 3. Empirical Bayes matrix factorization
+
+Treat the SNP x trait matrix as noisy observations of latent programs:
+
+\[
+Y = LF^{\top} + E
+\]
+
+- \(Y\) = SNP x trait matrix
+- \(L\) = SNP loadings
+- \(F\) = trait factors
+- \(E\) = residual error
+
+Advantages: SNPs can belong to multiple programs; \(K\) is inferred (ELBO);
+overlapping biology is the default assumption.
+
+Problems: factors are not necessarily mutually exclusive SNP modules and can
+capture broad technical or global effects. Hard module labels require a
+separate loading-to-membership rule.
+
+Prefer this if the architecture is expected to be overlapping rather than
+mutually exclusive SNP groups. See
+[Investigation of EBMF analysis](investigation-ebmf-analysis.html).
+
+#### 4. Signed degree-corrected stochastic block model
+
+Model positive and negative graph edges as arising from latent SNP blocks.
+A nested model with minimum-description-length selection can infer the number
+of blocks while allowing SNPs to have different overall connectivity.
+
+Advantages:
+
+- Strong conceptual match for sparse signed networks
+- Degree correction helps distinguish modules from highly connected hub SNPs
+- Model selection can estimate the number of blocks
+
+Problems:
+
+- Weighted signed-edge support is more specialised than Louvain or Leiden
+- Considerably more implementation and validation work
+- Block structure is not identical to clustering by directional profile
+
+#### 5. HDBSCAN on a sign-preserving embedding
+
+Apply HDBSCAN to a low-dimensional representation of the oriented SNP profiles
+or signed similarity graph.
+
+Advantages:
+
+- Learns a data-driven number of clusters
+- Can label poorly supported SNPs as noise instead of forcing membership
+- Handles clusters with unequal density
+
+Problems:
+
+- Does not operate directly on signed edges
+- Results depend on the embedding, distance, and minimum cluster-size choices
+- Sparse missing values must be handled before constructing the embedding
+
+#### 6. Spectral clustering
+
+Uses the graph Laplacian and its eigenvectors via
+`cluster_snp_profiles_spectral()`.
+
+Advantages: compresses many background traits into major axes of variation.
+
+Problems: fragmented similarity graphs produce many disconnected components;
+usually requires selecting \(K\).
+
+### 5. Assessing module quality
+
+Two complementary checks. Graph diagnostics ask whether a module is a real
+blob on \(S\). Trait specificity asks whether that blob has a distinct
+biological driver.
+
+#### Module reliability scores
+
+After clustering, go back to \(S\) with `summarise_snp_module_quality()`.
+These diagnostics are not Louvain-specific: they need \(S\) and hard cluster
+labels from any method.
+
+A module is marked `reliable` only if all three hold:
+
+1. Size \(\ge 3\) SNPs
+2. Mean internal similarity \(\ge 0.3\)
+3. Connectedness \(\ge 0.5\)
+
+Size, internal similarity, and connectedness ask "is this a real blob?"
+Downstream interpretation uses only SNPs in modules that pass all three.
+
+**Internal similarity.** Mean signed cosine among member SNPs (diagonal
+excluded). High values mean oriented profiles are roughly parallel. The
+cutoff \(0.3\) is a weak "same direction, not noise" bar.
+
+External similarity is the mean \(S\) from members to all other SNPs.
+**Separation** is internal minus external. It is diagnostic, not a cutoff: a
+module can be internally coherent but still sit inside a similar background.
+
+**Connectedness.** Graph density on the thresholded unsigned graph
+(\(|S| \ge\) `similarity_threshold`). Internal similarity can look decent if a
+few pairs are very similar and the rest are near zero. Connectedness \(\ge 0.5\)
+requires at least half of all pairs to be strong edges.
+
+**Silhouette.** Rousseeuw silhouette with distance \(1 - S\) is still reported,
+but is not part of the `reliable` rule. Because SNPs can participate in more
+than one biological program, negative silhouettes are expected under hard
+clustering and should not by themselves discard a coherent module.
+
+The table also reports the number of connected components and the fraction of
+SNPs in the largest component; those are not part of the `reliable` rule.
+
+#### Enrichment of background traits
+
+If no traits are specifically elevated in a module relative to the rest of the
+SNPs, the module is harder to trust biologically.
+`summarise_module_specific_traits()` ranks traits by module-vs-rest contrast:
+
+| Metric | Meaning |
+|---|---|
+| `abs_mean_z` | Mean absolute z for the trait among SNPs in the module |
+| `abs_mean_z_rest` | Mean absolute z among all other SNPs |
+| `specificity` | Relative enrichment of the trait inside the module |
+| `abs_mean_z_delta` | Absolute lift versus the rest |
+
+\[
+\mathrm{specificity} = \frac{\overline{|z|}_{\mathrm{module}}}{\overline{|z|}_{\mathrm{rest}} + 0.1}
+\]
+
+\[
+\mathrm{abs\_mean\_z\_delta} = \overline{|z|}_{\mathrm{module}} - \overline{|z|}_{\mathrm{rest}}
+\]
+
+These describe what drives each cluster without using pathway enrichment as
+the clustering criterion.
+
+### 6. Interpret biological modules
+
+The univariate vignette currently interprets **reliable** modules as:
+
+- **Top traits by magnitude** (`abs_mean_z` within the module).
+- **Trait-category composition** (`enrich_snp_group_trait_categories()`):
+  observed vs expected share against the rest of the trait SNP baseline
+  (coloc rows for SNPs attributed to the analysed trait, not the whole GPMap
+  universe). Top elevated categories are shown with obs/exp/FE; FDR is noted
+  when significant.
+- **Tissue composition** (`enrich_snp_group_tissues()`, `background = "trait"`)
+  on the same leave-one-out trait baseline.
+- **Pathway enrichment** on QTL genes (KEGG and Reactome), treated as
+  secondary because the full-trait gene set is often empty for broad traits
+  such as BMI.
+
+## Variables to consider
+
+Exposed in the univariate vignette today:
+
+| Parameter | Values | Meaning | Explanation |
+|---|---|---|---|
+| `api` | `production`, `local` | Public GPMap vs local QTL DB | Local data can add trans-QTL studies, increasing matrix density and changing the regulatory signals that connect SNPs. This can alter both module membership and tissue/gene interpretation. Production is more reproducible but may omit those signals. |
+| `min_snp_signals` | `1`, `3`, `5` | Minimum SNPs with a value for a background trait | Raising it removes singleton or very sparse rows, reducing unstable edges and computation. It can also remove rare, module-specific biology. Lowering it preserves those signals but makes similarity more sensitive to sparse observations. |
+| `similarity_threshold` | `0`, `0.5` | Minimum \(\|S\|\) retained as a Louvain edge | Raising it removes weak positive and negative edges, producing a sparser graph that may split into more or smaller modules. Lowering it preserves gradual structure but weak or noisy links can merge otherwise distinct modules. |
+| `compress_method` | `none`, `asinh` | Transformation applied to z-scores | `asinh` is nearly linear around zero but compresses extreme values, so cosine similarity reflects patterns across several traits rather than one very large z-score. `none` preserves effect scale but allows outliers to dominate direction and norm. |
+| `louvain_gamma` | `2`, `3` | Signed Louvain resolution | Higher `gamma` rewards smaller communities and generally increases the number of modules; lower values merge broader profiles. It directly affects module size, separation, connectedness, and the number passing reliability filters. |
+| `similarity_missing_method` | `zero_fill`, `pairwise_complete` | How missing trait-SNP cells enter cosine similarity | `zero_fill` treats absence as a measured null effect. `pairwise_complete` compares only jointly observed traits, separating effect alignment from coverage but making low-overlap pairs unstable. This choice changes \(S\), every graph-based clustering result, and all reliability metrics calculated from \(S\). |
+| `min_pairwise_overlap` | `3`, `5`, `10` | Shared traits required for pairwise-complete cosine | Raising it removes similarities supported by little common evidence, but also deletes more edges and may isolate sparse SNPs. Lowering it improves graph coverage while allowing extreme similarities based on only a few traits. |
+| `overlap_shrinkage` | `0`, `5`, `10` | Strength of low-overlap similarity shrinkage | Higher values pull similarities based on few shared traits more strongly toward zero, reducing false strong edges. Similarities with substantial overlap change little. Excessive shrinkage may hide real but narrowly supported programs. |
+
+Also relevant, but not currently params of the univariate vignette:
+
+| Parameter | Values | Meaning | Explanation |
+|---|---|---|---|
+| Association source | `coloc`, `full` | Coloc-merged z-scores vs denser `/associations-full` | `coloc` prioritises locus-level evidence and yields a sparse, specific matrix. `full` increases overlap and may stabilise similarity, but non-colocalising associations can add LD, power, or shared-polygenicity structure and produce broader modules. Not yet a `build_pleiotropy_matrix()` argument; dense associations are used by the perturbation / EBMF builders. |
+| Trans QTLs | include / exclude | Whether distant molecular effects are retained | Including trans effects can reveal distributed regulatory programs and improve tissue/pathway interpretation, while increasing density and possible noise. Excluding them gives a more local cis-focused analysis but may miss system-level mechanisms. |
+| Clustering method | Louvain, Leiden, EBMF, SBM, HDBSCAN, spectral | Model used to define modules or programs | Louvain/Leiden/SBM produce graph communities; EBMF allows overlapping programs; HDBSCAN can leave uncertain SNPs unassigned; spectral methods usually require \(K\). Different assumptions change module count and membership, so compare stability and interpretation rather than scores alone. |
+
+Trans QTL include/exclude is currently a manual `cis_trans` filter or an API
+choice (`local` vs `production`).
+
+Reliability cutoffs used after clustering: `min_module_size = 3`,
+`min_mean_internal = 0.3`, `min_connectedness = 0.5`.

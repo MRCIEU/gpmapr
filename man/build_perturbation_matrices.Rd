@@ -23,7 +23,7 @@ or \code{"coloc_group_id"}. Defaults to \code{"variant_id"}.}
 A list with:
 \itemize{
 \item trait_matrix: SNPs x complex traits (signed z)
-\item gene_matrix: SNPs x genes (weighted Stouffer z)
+\item gene_matrix: SNPs x molecular QTL studies (signed z)
 \item trait_info, gene_info, snp_info
 \item z_target: named target-trait z-scores for orientation
 \item coloc_groups, target_trait_id
@@ -32,10 +32,7 @@ A list with:
 \description{
 Construct the two feature matrices from the SNP perturbation
 clustering framework: a SNP x complex-trait matrix of signed z-scores
-(\eqn{\beta / \mathrm{SE}}) and a SNP x gene matrix of signed gene-perturbation
-scores. Gene scores collapse all molecular QTL rows for each SNP-gene pair
-with a weighted Stouffer combination
-\eqn{Z = \sum_i w_i Z_i / \sqrt{\sum_i w_i^2}} where \eqn{w_i = 1/\mathrm{SE}_i}.
-Colocalisation probability is not currently returned by GPMap association
-tables, so inverse-SE weights are used instead.
+(\eqn{\beta / \mathrm{SE}}) and a SNP x molecular-QTL-study matrix of signed
+z-scores. Each study remains its own column; multiple rows for the same
+study-SNP pair keep the smallest \code{min_p}.
 }

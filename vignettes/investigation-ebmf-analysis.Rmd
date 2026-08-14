@@ -1,6 +1,9 @@
 ---
 title: "Investigation of EBMF analysis"
-output: rmarkdown::html_vignette
+output:
+  rmarkdown::html_vignette:
+    includes:
+      in_header: investigation-wide.html
 vignette: >
   %\VignetteIndexEntry{Investigation of EBMF analysis}
   %\VignetteEngine{knitr::rmarkdown}
@@ -37,7 +40,7 @@ This vignette clusters SNPs using **Empirical Bayes Matrix Factorization (EBMF)*
 
 Pipeline (aligned with the SNP-perturbation investigation):
 
-1. Build / filter / orient the EBMF matrix (phenotypic traits + Stouffer-collapsed genes)
+1. Build / filter / orient the EBMF matrix (study-level phenotypic and molecular rows)
 2. **Verification (baseline):** top associated traits + tissue composition
 3. Fit an EBNM x `var_type` comparison grid; pick a run by total PVE
 4. **Verification (programs):** top traits and tissue enrichment per program
@@ -59,7 +62,7 @@ top_n_traits <- 10L
 ## Step 1: Construct the features x SNP matrix
 
 - **Phenotypic rows:** signed \(z = \beta / \mathrm{SE}\) (best \(p\) per trait-SNP).
-- **Gene rows:** molecular QTLs Stouffer-collapsed to genes, then kept only if seen in
+- **Molecular rows:** each QTL study stays its own row, then kept only if seen in
   at least `min_snp_signals` SNPs (same sparsity rule as phenotypic traits).
 - SNP columns are oriented by \(\mathrm{sign}(z_{\mathrm{target}})\).
 - Soft \(\mathrm{asinh}(z)\) compression limits leverage of extreme / corrupt values
@@ -402,20 +405,39 @@ for (x in group_traits$by_group) {
 ```
 
 ```{r verify2-tissues}
+baseline_snp_ids <- unique(names(ebmf_clusters$clusters))
 group_tissues <- enrich_snp_group_tissues(
   groups = ebmf_clusters$clusters,
   coloc_groups = coloc_groups,
   snp_key = "variant_id",
   min_group_size = min_group_size,
-  background = "rest"
+  background = "trait",
+  baseline_snp_ids = baseline_snp_ids
+)
+group_categories <- enrich_snp_group_trait_categories(
+  groups = ebmf_clusters$clusters,
+  coloc_groups = coloc_groups,
+  snp_key = "variant_id",
+  min_group_size = min_group_size,
+  baseline_snp_ids = baseline_snp_ids
 )
 
 knitr::kable(
   group_tissues$summary,
   caption = paste0(
-    "Module-specific tissue enrichment (> ",
+    "Tissue enrichment vs trait baseline (> ",
     min_group_size,
-    " SNPs; vs rest)"
+    " SNPs)"
+  ),
+  na = "",
+  row.names = FALSE
+)
+knitr::kable(
+  group_categories$summary,
+  caption = paste0(
+    "Trait-category enrichment vs trait baseline (> ",
+    min_group_size,
+    " SNPs)"
   ),
   na = "",
   row.names = FALSE
@@ -426,19 +448,21 @@ knitr::kable(
 for (x in group_tissues$by_group) {
   cat("\n\n### Program ", x$group, " tissues\n\n", sep = "")
   cat("SNPs: ", x$n_snps, "\n\n", sep = "")
-  if (nrow(x$enriched) > 0) {
+  if (nrow(x$comparison) > 0) {
     print(knitr::kable(
-      x$enriched |>
+      utils::head(x$comparison, 10) |>
         dplyr::mutate(
+          frac_group = round(frac_group, 3),
+          frac_universe = round(frac_universe, 3),
           fold_enrichment = round(fold_enrichment, 2),
           p_value = signif(p_value, 3),
           fdr = signif(fdr, 3)
         ),
-      caption = "Enriched tissues vs rest",
+      caption = "Tissue observed vs expected (rest of trait)",
       row.names = FALSE
     ))
   } else {
-    cat("No significantly enriched tissues.\n\n")
+    cat("No tissue links available.\n\n")
   }
 }
 ```

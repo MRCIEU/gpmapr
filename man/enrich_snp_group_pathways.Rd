@@ -21,7 +21,7 @@ or a dataframe with \code{snp_id} plus a group column (\code{group}, \code{clust
 
 \item{coloc_groups}{Coloc-group dataframe used to map SNPs to genes.}
 
-\item{min_group_size}{Only enrich groups with more than this many SNPs.
+\item{min_group_size}{Only enrich groups with at least this many SNPs.
 Defaults to 5.}
 
 \item{snp_key}{Column used to match SNP ids in \code{coloc_groups}.}

@@ -48,10 +48,9 @@ compressed), for post-clustering trait verification helpers
 \description{
 Construct a features x SNPs matrix for Empirical Bayes Matrix
 Factorization. Cell values are signed z-scores (\eqn{\beta / \mathrm{SE}}).
-Phenotypic traits are retained as individual rows. Molecular QTL studies are
-Stouffer-collapsed to gene rows (same weighting as
-\code{build_perturbation_matrices()}), then sparse features observed in fewer
-than \code{min_snp_signals} SNPs are dropped. SNP columns are oriented by
+Phenotypic traits and molecular QTL studies are retained as individual
+study-level rows. Sparse features observed in fewer than
+\code{min_snp_signals} SNPs are dropped. SNP columns are oriented by
 \eqn{\mathrm{sign}(z_{\mathrm{target}})}. Matching standard errors for
 flashier are 1 for observed cells and missing for unobserved cells (filled
 with a large value inside \code{run_ebmf()}).

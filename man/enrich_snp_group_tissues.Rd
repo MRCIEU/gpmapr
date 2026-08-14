@@ -10,7 +10,8 @@ enrich_snp_group_tissues(
   snp_key = c("variant_id", "display_snp", "coloc_group_id"),
   min_group_size = 5L,
   p_value_threshold = 0.05,
-  background = c("rest", "pooled")
+  background = c("trait", "rest", "pooled"),
+  baseline_snp_ids = NULL
 )
 }
 \arguments{
@@ -20,21 +21,27 @@ enrich_snp_group_tissues(
 
 \item{snp_key}{Column used to match SNPs.}
 
-\item{min_group_size}{Only test groups with more than this many SNPs.}
+\item{min_group_size}{Only test groups with at least this many SNPs.}
 
-\item{p_value_threshold}{FDR threshold for reporting enriched tissues.}
+\item{p_value_threshold}{FDR threshold used to populate \code{enriched}. The full
+observed-vs-expected table is always returned in \code{comparison}.}
 
-\item{background}{\code{"rest"} (default; leave-one-out) or \code{"pooled"} (all SNPs
-in large groups, including the tested group).}
+\item{background}{\code{"trait"} (default; leave-one-out vs other trait SNPs),
+\code{"rest"} (leave-one-out vs other large groups), or \code{"pooled"} (all SNPs in
+large groups, including the tested group).}
+
+\item{baseline_snp_ids}{SNP ids defining the trait baseline when
+\code{background = "trait"}. Defaults to all SNPs in \code{groups} when \code{NULL}.}
 }
 \value{
-A list with \code{by_group}, \code{summary}, and \code{background} (pooled counts
-across large groups, for reference).
+A list with \code{by_group} (each with \code{tissues}, \code{comparison},
+\code{enriched}), \code{summary}, and \code{background} (baseline tissue counts).
 }
 \description{
-For each SNP group larger than \code{min_group_size}, count tissues at
-member SNPs and test enrichment (hypergeometric on unique SNP-tissue links).
-By default the background is leave-one-out (\code{background = "rest"}): SNPs in
-other large groups, so reported tissues are module-specific rather than
-merely abundant in the pooled set.
+For each SNP group of size at least \code{min_group_size}, count
+tissues at member SNPs (from \code{coloc_groups}) and compare observed vs expected
+composition against a trait-level baseline by default. Baseline links come
+only from SNPs attributed to the analysed trait (\code{baseline_snp_ids}), not the
+full GPMap universe. For \code{background = "trait"}, each module is compared to
+the rest of the trait SNPs (leave-one-out within the trait).
 }

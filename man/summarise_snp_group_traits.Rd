@@ -17,7 +17,8 @@ summarise_snp_group_traits(
 )
 }
 \arguments{
-\item{trait_matrix}{SNPs x traits numeric matrix (e.g. oriented trait matrix from bivariate / EBMF verification helpers).}
+\item{trait_matrix}{SNPs x traits numeric matrix (e.g. oriented trait matrix
+from EBMF / verification helpers).}
 
 \item{groups}{Named vector (\code{names} = SNP ids) or dataframe with \code{snp_id}
 plus \code{group} / \code{cluster} / \code{program}.}
@@ -30,7 +31,7 @@ plus \code{group} / \code{cluster} / \code{program}.}
 
 \item{exclude_trait_ids}{Optional trait ids to drop (e.g. the target trait).}
 
-\item{min_group_size}{Only summarise groups with more than this many SNPs.}
+\item{min_group_size}{Only summarise groups with at least this many SNPs.}
 
 \item{top_n}{Maximum traits per group. Defaults to 10.}
 
@@ -44,7 +45,7 @@ A list with \code{by_group} (per-group trait tables and categories) and
 \code{summary} (top trait and top categories per group).
 }
 \description{
-For each SNP group larger than \code{min_group_size}, rank trait
+For each SNP group of size at least \code{min_group_size}, rank trait
 columns by mean absolute effect among member SNPs and report the leading
 trait categories. Prefer \code{summarise_module_specific_traits()} when
 common trait categories dominate magnitude rankings.

@@ -93,6 +93,97 @@ merge_gwas_upload_associations <- function(coloc_groups, associations) {
   return(coloc_groups)
 }
 
+
+#' Attach GWAS-upload associations and a stable trait_id
+#'
+#' Upload coloc rows are keyed by `gwas_upload_id` / own `study_id`, not the GUID
+#' used to fetch them. Stamp that GUID onto the upload's own rows so downstream
+#' filters of the form `trait_id == <user id>` work for numeric traits and uploads.
+#'
+#' @param upload A GWAS upload result from `get_gwas_api()`.
+#' @param guid The GUID used to fetch the upload.
+#' @param include_associations Whether associations were requested.
+#' @return The upload with associations merged and `trait_id` stamped.
+#' @keywords internal
+#' @noRd
+.decorate_gwas_upload <- function(upload, guid, include_associations = FALSE) {
+  if (is.null(upload)) {
+    return(upload)
+  }
+  if (isTRUE(include_associations) && !is.null(upload$associations)) {
+    upload$coloc_groups <- merge_gwas_upload_associations(
+      upload$coloc_groups,
+      upload$associations
+    )
+  }
+
+  upload_id <- NULL
+  trait_name <- NULL
+  if (!is.null(upload$trait)) {
+    upload_id <- upload$trait$id
+    trait_name <- upload$trait$name
+    upload$trait$guid <- guid
+    if (is.null(upload$trait$trait_name) && !is.null(trait_name)) {
+      upload$trait$trait_name <- trait_name
+    }
+  }
+
+  upload$coloc_groups <- .stamp_gwas_upload_trait_id(
+    coloc_groups = upload$coloc_groups,
+    lookup_id = guid,
+    upload_id = upload_id,
+    trait_name = trait_name
+  )
+  return(upload)
+}
+
+
+#' Stamp a lookup id onto a GWAS upload's own coloc_groups rows
+#'
+#' @param coloc_groups A coloc_groups dataframe.
+#' @param lookup_id The id callers use (usually the upload GUID).
+#' @param upload_id Optional numeric upload id (`trait$id` / `gwas_upload_id`).
+#' @param trait_name Optional display name for own rows missing `trait_name`.
+#' @return `coloc_groups` with `trait_id` set on the upload's own rows.
+#' @keywords internal
+#' @noRd
+.stamp_gwas_upload_trait_id <- function(coloc_groups,
+                                        lookup_id,
+                                        upload_id = NULL,
+                                        trait_name = NULL) {
+  if (!is.data.frame(coloc_groups) || nrow(coloc_groups) == 0) {
+    return(coloc_groups)
+  }
+  if (!"trait_id" %in% names(coloc_groups)) {
+    coloc_groups$trait_id <- NA_character_
+  }
+  coloc_groups$trait_id <- as.character(coloc_groups$trait_id)
+
+  own_rows <- rep(FALSE, nrow(coloc_groups))
+  if (!is.null(upload_id)) {
+    upload_key <- as.character(upload_id)
+    own_rows <- own_rows |
+      (!is.na(coloc_groups$trait_id) & coloc_groups$trait_id == upload_key)
+    if ("gwas_upload_id" %in% names(coloc_groups)) {
+      own_rows <- own_rows |
+        (!is.na(coloc_groups$gwas_upload_id) &
+          as.character(coloc_groups$gwas_upload_id) == upload_key)
+    }
+  }
+  if ("study_id" %in% names(coloc_groups) && "existing_study_id" %in% names(coloc_groups)) {
+    own_rows <- own_rows |
+      (!is.na(coloc_groups$study_id) & is.na(coloc_groups$existing_study_id))
+  }
+  coloc_groups$trait_id[own_rows] <- as.character(lookup_id)
+
+  if (!is.null(trait_name) && "trait_name" %in% names(coloc_groups)) {
+    fill_name <- own_rows & (is.na(coloc_groups$trait_name) | coloc_groups$trait_name == "")
+    coloc_groups$trait_name[fill_name] <- as.character(trait_name)[[1]]
+  }
+
+  return(coloc_groups)
+}
+
 #' Create a source url for a study
 #'
 #' @param study_name character string specifying the study name

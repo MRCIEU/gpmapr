@@ -213,7 +213,7 @@ enrich_trait_pathways <- function(trait_id,
 #'   or a dataframe with `snp_id` plus a group column (`group`, `cluster`, or
 #'   `program`).
 #' @param coloc_groups Coloc-group dataframe used to map SNPs to genes.
-#' @param min_group_size Only enrich groups with more than this many SNPs.
+#' @param min_group_size Only enrich groups with at least this many SNPs.
 #'   Defaults to 5.
 #' @param snp_key Column used to match SNP ids in `coloc_groups`.
 #' @param sources Pathway sources; see `enrich_trait_pathways()`.
@@ -243,7 +243,24 @@ enrich_snp_group_pathways <- function(groups,
 
   group_df <- .normalize_snp_groups(groups)
   group_sizes <- table(group_df$group)
-  large_groups <- names(group_sizes)[group_sizes > min_group_size]
+  large_groups <- names(group_sizes)[group_sizes >= min_group_size]
+
+  empty_summary <- data.frame(
+    group = character(0),
+    n_snps = integer(0),
+    n_genes = integer(0),
+    n_enriched_pathways = integer(0),
+    top_enriched_pathway = character(0),
+    stringsAsFactors = FALSE
+  )
+
+  if (length(large_groups) == 0) {
+    return(list(
+      by_group = list(),
+      summary = empty_summary,
+      min_group_size = as.integer(min_group_size)
+    ))
+  }
 
   by_group <- lapply(large_groups, function(grp) {
     snp_ids <- group_df$snp_id[group_df$group == grp]
