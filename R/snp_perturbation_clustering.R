@@ -183,13 +183,22 @@ orient_perturbation_matrices <- function(trait_matrix, gene_matrix, z_target) {
 #' \eqn{\mathrm{asinh}(z) = \log(z + \sqrt{z^2 + 1})}.
 #' @param x_matrix Numeric matrix of signed effects / z-scores.
 #' @param method Compression method. \code{"asinh"} (default) or \code{"none"}.
+#' @param asinh_scale Positive scale for the \code{asinh} transformation. The
+#'   transformation is \code{asinh_scale * asinh(x / asinh_scale)}; larger
+#'   values apply gentler compression. Ignored when \code{method = "none"}.
 #' @return Matrix of the same dimensions / dimnames with finite entries
 #'   transformed (NAs retained).
 #' @export
-compress_effect_matrix <- function(x_matrix, method = c("asinh", "none")) {
+compress_effect_matrix <- function(x_matrix,
+                                   method = c("asinh", "none"),
+                                   asinh_scale = 1) {
   method <- match.arg(method)
   if (!is.matrix(x_matrix)) {
     stop("x_matrix must be a matrix")
+  }
+  if (!is.numeric(asinh_scale) || length(asinh_scale) != 1L ||
+      !is.finite(asinh_scale) || asinh_scale <= 0) {
+    stop("asinh_scale must be one positive finite number")
   }
   if (method == "none") {
     return(x_matrix)
@@ -197,7 +206,7 @@ compress_effect_matrix <- function(x_matrix, method = c("asinh", "none")) {
 
   out <- x_matrix
   obs <- is.finite(out)
-  out[obs] <- asinh(out[obs])
+  out[obs] <- asinh_scale * asinh(out[obs] / asinh_scale)
   return(out)
 }
 
@@ -212,7 +221,8 @@ compress_effect_matrix <- function(x_matrix, method = c("asinh", "none")) {
 #' @export
 compress_perturbation_matrices <- function(trait_matrix,
                                            gene_matrix,
-                                           method = c("asinh", "none")) {
+                                           method = c("asinh", "none"),
+                                           asinh_scale = 1) {
   method <- match.arg(method)
   if (!is.matrix(trait_matrix) || !is.matrix(gene_matrix)) {
     stop("trait_matrix and gene_matrix must be matrices")
@@ -221,8 +231,12 @@ compress_perturbation_matrices <- function(trait_matrix,
     stop("trait_matrix and gene_matrix must have identical rownames (SNP ids)")
   }
   return(list(
-    trait_matrix = compress_effect_matrix(trait_matrix, method = method),
-    gene_matrix = compress_effect_matrix(gene_matrix, method = method),
+    trait_matrix = compress_effect_matrix(
+      trait_matrix, method = method, asinh_scale = asinh_scale
+    ),
+    gene_matrix = compress_effect_matrix(
+      gene_matrix, method = method, asinh_scale = asinh_scale
+    ),
     method = method
   ))
 }
@@ -320,5 +334,4 @@ compress_perturbation_matrices <- function(trait_matrix,
 
   return(list(x_matrix = x_matrix, feature_info = feature_info))
 }
-
 

@@ -10,7 +10,10 @@ enrich_snp_group_trait_categories(
   snp_key = c("variant_id", "display_snp", "coloc_group_id"),
   min_group_size = 5L,
   p_value_threshold = 0.05,
-  baseline_snp_ids = NULL
+  baseline_snp_ids = NULL,
+  bootstrap = TRUE,
+  permutations = 1000L,
+  seed = 1L
 )
 }
 \arguments{
@@ -27,10 +30,21 @@ observed-vs-expected table is always returned in \code{comparison}.}
 
 \item{baseline_snp_ids}{SNP ids defining the trait baseline. Defaults to all
 SNPs in \code{groups} when \code{NULL}.}
+
+\item{bootstrap}{Compute bootstrap 95\% confidence intervals for the fold
+enrichment (\code{fe_ci_lower}/\code{fe_ci_upper}). Defaults to \code{TRUE}.}
+
+\item{permutations}{Number of link-label permutations for the empirical
+p-values (\code{p_perm}). Set to \code{0} to skip. Defaults to \code{1000L}.}
+
+\item{seed}{RNG seed for the bootstrap FE confidence intervals and the
+permutation p-values. Defaults to \code{1L}.}
 }
 \value{
 A list with \code{by_group} (each with \code{categories}, \code{comparison},
-\code{enriched}), \code{summary}, and \code{background} category counts.
+\code{enriched}, \code{enriched_any}), \code{summary}, and \code{background} category counts.
+\code{comparison} and \code{summary} add the alternative significance summaries
+described in \code{enrich_snp_group_tissues()}.
 }
 \description{
 For each SNP group, compare trait-category composition in

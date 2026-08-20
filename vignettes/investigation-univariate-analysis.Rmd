@@ -12,11 +12,12 @@ params:
   api: "production"
   min_snp_signals: 5
   louvain_gamma: 2
-  compress_method: "asinh"
-  similarity_threshold: 0.5
-  similarity_missing_method: "zero_fill"
-  min_pairwise_overlap: 5
-  overlap_shrinkage: 5
+  compress_method: "none"
+  compress_scale: 2
+  include_trans: false
+  include_situated_gene: false 
+  similarity_threshold: 0
+  associations: "coloc"
 ---
 
 
@@ -42,6 +43,7 @@ if (requireNamespace("devtools", quietly = TRUE)) {
 }
 library(dplyr)
 library(tidyr)
+library(ggplot2)
 ```
 
 Single-trait SNP clustering: each column is a GWAS SNP for the target trait,
@@ -58,6 +60,7 @@ min_module_size <- 3
 min_group_size <- 5
 max_snp_fraction <- 0.8
 top_n_traits <- 10L
+min_specificity <- 1.25
 min_mean_internal <- 0.3
 min_connectedness <- 0.5
 
@@ -65,10 +68,11 @@ api <- params$api
 min_snp_signals <- as.integer(params$min_snp_signals)
 louvain_gamma <- as.numeric(params$louvain_gamma)
 compress_method <- params$compress_method
+compress_scale <- as.numeric(params$compress_scale)
+include_trans <- isTRUE(params$include_trans)
+include_situated_gene <- isTRUE(params$include_situated_gene)
 similarity_threshold <- as.numeric(params$similarity_threshold)
-similarity_missing_method <- params$similarity_missing_method
-min_pairwise_overlap <- as.integer(params$min_pairwise_overlap)
-overlap_shrinkage <- as.numeric(params$overlap_shrinkage)
+associations <- params$associations
 
 select_api(api)
 
@@ -79,10 +83,12 @@ knitr::kable(
     min_snp_signals = min_snp_signals,
     louvain_gamma = louvain_gamma,
     compress_method = compress_method,
+    compress_scale = compress_scale,
+    include_trans = include_trans,
+    include_situated_gene = include_situated_gene,
+    min_specificity = min_specificity,
     similarity_threshold = similarity_threshold,
-    similarity_missing_method = similarity_missing_method,
-    min_pairwise_overlap = min_pairwise_overlap,
-    overlap_shrinkage = overlap_shrinkage,
+    associations = associations,
     stringsAsFactors = FALSE
   ),
   caption = "Active run parameters",
@@ -97,15 +103,24 @@ target_trait_name <- traits_meta$traits$trait_name[
 
 ## Step 1: Pleiotropy matrix
 
-`build_pleiotropy_matrix()` uses colocalisation z-scores (`beta / se`) at each
-target SNP. Molecular QTL studies stay as their own rows.
+`build_pleiotropy_matrix()` builds z-scores (`beta / se`) at each target SNP.
+With `associations = "coloc"` it uses colocalisation rows only; with
+`associations = "full"` it uses all full associations
+(`/associations-full`). Molecular QTL studies stay as their own rows.
+When `include_trans = FALSE`, trans target markers are removed from the
+association rows before the matrix is built.
 
 ```{r step1-build}
 coloc_groups <- trait(target_trait_id, include_associations = TRUE)$coloc_groups
+if (!include_trans && "cis_trans" %in% names(coloc_groups)) {
+  coloc_groups <- coloc_groups |>
+    dplyr::filter(is.na(cis_trans) | tolower(cis_trans) != "trans")
+}
 pleiotropy <- build_pleiotropy_matrix(
   trait_id = target_trait_id,
   coloc_groups = coloc_groups,
-  snp_key = "variant_id"
+  snp_key = "variant_id",
+  associations = associations
 )
 X <- pleiotropy$x_matrix
 cg <- coloc_groups
@@ -167,28 +182,21 @@ X_star <- orient_pleiotropy_matrix(
   X,
   target_trait_id = target_trait_id
 )$x_matrix
-X_star <- compress_effect_matrix(X_star, method = compress_method)
+X_star <- compress_effect_matrix(
+  X_star,
+  method = compress_method,
+  asinh_scale = compress_scale
+)
 trait_matrix <- t(X_star)
 ```
 
 ## Step 3: SNP similarity (S)
 
-`similarity_missing_method = "zero_fill"` treats missing trait-SNP cells as
-zero effects, preserving the original cosine calculation.
-`"pairwise_complete"` instead calculates each SNP-pair cosine using only traits
-observed for both SNPs. Pairs with fewer than `min_pairwise_overlap` shared
-traits receive similarity zero. Remaining similarities are multiplied by
-\(n_{\mathrm{overlap}} / (n_{\mathrm{overlap}} +
-\mathrm{overlap\_shrinkage})\), so extreme similarities based on little shared
-evidence are pulled toward zero.
+Missing trait-SNP cells are treated as zero effects, preserving the original
+cosine similarity calculation.
 
 ```{r step3-similarity}
-similarity <- snp_similarity_matrix(
-  X_star,
-  missing_method = similarity_missing_method,
-  min_overlap = min_pairwise_overlap,
-  overlap_shrinkage = overlap_shrinkage
-)
+similarity <- snp_similarity_matrix(X_star)
 S <- similarity$s_matrix
 s_upper <- S[upper.tri(S)]
 overlap_upper <- similarity$overlap_matrix[
@@ -222,30 +230,15 @@ clusters_louvain <- cluster_snp_profiles_louvain(
   similarity_threshold = similarity_threshold,
   gamma = louvain_gamma
 )
-
-knitr::kable(
-  data.frame(
-    cluster = as.integer(names(table(clusters_louvain$cluster))),
-    n_snps = as.integer(table(clusters_louvain$cluster)),
-    stringsAsFactors = FALSE
-  ) |>
-    dplyr::filter(n_snps >= min_module_size) |>
-    dplyr::arrange(dplyr::desc(n_snps)),
-  caption = "Signed Louvain module sizes",
-  align = "rr"
-)
 ```
 
-## Step 4.5: Module reliability
+## Step 4.5: Signed Louvain clustering and Module reliability
 
 `summarise_snp_module_quality()` scores each module on the similarity graph:
 
 - **mean_internal_similarity** — mean off-diagonal `S` inside the module
 - **separation** — internal minus external mean similarity
 - **connectedness** — fraction of SNP pairs with `|S| >= similarity_threshold`
-- **largest_component_frac** — share of SNPs in the largest thresholded component
-- **mean_silhouette** — diagnostic only (distance `1 - S`); not used to gate
-  reliability, because SNPs can participate in multiple biological programs
 
 A module is `reliable` if it has at least `min_module_size` SNPs, internal
 similarity `>= min_mean_internal`, and connectedness `>= min_connectedness`.
@@ -262,13 +255,11 @@ module_quality <- summarise_snp_module_quality(
 
 knitr::kable(
   module_quality |>
+    dplyr::select(-largest_component_frac, -n_components, -mean_silhouette) |>
     dplyr::filter(n_snps >= min_module_size) |>
     dplyr::mutate(
       dplyr::across(
-        c(
-          mean_internal_similarity, mean_external_similarity, separation,
-          connectedness, largest_component_frac, mean_silhouette
-        ),
+        c(mean_internal_similarity, mean_external_similarity, separation, connectedness),
         ~ round(.x, 3)
       )
     ),
@@ -301,17 +292,40 @@ if (length(clusters_analysis) >= 2) {
 
 ## Step 5: Interpret reliable modules
 
-For each reliable module, rank background traits by magnitude
-(`abs_mean_z` via `summarise_snp_group_traits()`), then summarise
+For each reliable module, rank background traits by **module specificity vs the
+rest of the trait** (`summarise_module_specific_traits()`), then summarise
 **trait-category and tissue enrichments vs the trait baseline**, plus
-pathway hits.
+pathway hits. `specificity = mean |z| in the module / (mean |z| in the rest +
+0.1)` and `abs_mean_z_delta = module - rest` highlight traits that are
+specifically elevated in this module rather than merely large everywhere (which
+ranking by `abs_mean_z` alone would over-emphasise). Pathway enrichment is
+queried across KEGG, Reactome, and Human Phenotype Ontology (HP): KEGG/Reactome
+hits are reported as **pathways** and HP terms as **phenotypes**, so the two
+never compete for the same headline.
 
 Trait baseline = all SNPs attributed to this trait in the clustering analysis
 (`names(clusters_louvain$cluster)`), using coloc rows for those SNPs only—not
 the whole GPMap universe. Each module is compared to the **rest of the trait**
 (leave-one-out): observed link share vs expected share, with fold enrichment.
+
 Annotation tables show the top elevated categories/tissues even when FDR is not
-significant; FDR is reported when it passes 0.05.
+significant; FDR is reported when it passes 0.05. Hits that are significant by
+any of the three methods at 0.05 are shown in **bold**.
+
+Each hit is scored with three BH-corrected significance summaries, all
+thresholded at 0.05:
+
+- **FDR** — hypergeometric test of the module vs the rest of the trait.
+- **perm** — permutation p-values from shuffling link labels across the
+  baseline, BH-corrected within the module (`fdr_perm`).
+- **vsmod** — one-sided Fisher test of the module against the pooled links of
+  the *other* modules, BH-corrected within the module (`fdr_modules`).
+
+They agree on strong signal and differ only on marginal, low-count calls. The
+bootstrap `CI` for the fold enrichment shows how precisely the ratio is
+estimated; because modules are small, a big ratio built on a few links carries
+a wide interval that includes 1 (the null), so read the CI together with the
+FDR rather than alone.
 
 ```{r step5-interpret}
 baseline_snp_ids <- names(clusters_louvain$cluster)
@@ -323,15 +337,16 @@ if (length(clusters_analysis) == 0) {
   group_tissues <- NULL
   module_enrichment <- NULL
 } else {
-  group_traits <- summarise_snp_group_traits(
+    group_traits <- summarise_module_specific_traits(
     trait_matrix = trait_matrix,
     groups = clusters_analysis,
     trait_info = pleiotropy$trait_info,
     coloc_groups = cg,
     exclude_trait_ids = target_trait_id,
     min_group_size = min_module_size,
-    top_n = top_n_traits,
-    n_categories = 3L
+      top_n = top_n_traits,
+      n_categories = 3L,
+      min_specificity = min_specificity
   )
   group_categories <- enrich_snp_group_trait_categories(
     groups = clusters_analysis,
@@ -352,7 +367,8 @@ if (length(clusters_analysis) == 0) {
     groups = clusters_analysis,
     coloc_groups = cg,
     min_group_size = min_module_size,
-    sources = c("KEGG", "Reactome")
+    sources = c("KEGG", "Reactome", "HP"),
+    include_situated_gene = include_situated_gene
   )
 }
 
@@ -377,16 +393,26 @@ if (length(clusters_analysis) == 0) {
   }
   top <- utils::head(elevated, max_n)
   labels <- vapply(seq_len(nrow(top)), function(i) {
-    fdr_txt <- if (is.finite(top$fdr[i]) && top$fdr[i] <= 0.05) {
-      paste0(", FDR=", signif(top$fdr[i], 3))
+    tag <- .method_tag(top$fdr[i], top$fdr_perm[i], top$fdr_modules[i])
+    ci <- if (is.finite(top$fe_ci_lower[i]) && is.finite(top$fe_ci_upper[i])) {
+      paste0(
+        ", CI=[", signif(top$fe_ci_lower[i], 2),
+        ",", signif(top$fe_ci_upper[i], 2), "]"
+      )
     } else {
       ""
     }
+    fdr_txt <- if (nzchar(tag)) paste0(", ", tag) else ""
+    label <- top[[label_col]][i]
+    if (nzchar(tag)) {
+      label <- paste0("<b>", label, "</b>")
+    }
     paste0(
-      top[[label_col]][i],
+      label,
       " (obs=", sprintf("%.0f%%", 100 * top$frac_group[i]),
       ", exp=", sprintf("%.0f%%", 100 * top$frac_universe[i]),
-      ", ratio=", signif(top$fold_enrichment[i], 2),
+      ", FE=", signif(top$fold_enrichment[i], 2),
+      ci,
       fdr_txt,
       ")"
     )
@@ -404,6 +430,68 @@ if (length(clusters_analysis) == 0) {
     labels <- paste0(labels, " (FDR=", signif(top$fdr, 3), ")")
   }
   paste(labels, collapse = "<br>")
+}
+```
+
+```{r step5-module-overview, echo=FALSE, results='asis'}
+if (!is.null(group_traits) && length(group_traits$by_group) > 0) {
+  specific_traits <- dplyr::bind_rows(lapply(group_traits$by_group, function(x) {
+    passing <- x$traits |>
+      dplyr::filter(passes_min_specificity) |>
+      utils::head(3L)
+    data.frame(
+      group = x$group,
+      module_specific_traits = if (nrow(passing) == 0) {
+        "none"
+      } else {
+        paste0(
+          passing$trait_name,
+          " (", round(passing$specificity, 2), ")",
+          collapse = "<br>"
+        )
+      },
+      stringsAsFactors = FALSE
+    )
+  }))
+  overview <- dplyr::full_join(
+    group_traits$summary |>
+      dplyr::select(group, n_snps),
+    group_categories$summary |>
+      dplyr::select(group, top_enriched_category_any),
+    by = "group"
+  ) |>
+    dplyr::full_join(
+    group_tissues$summary |>
+      dplyr::select(group, top_enriched_tissue_any),
+    by = "group"
+  ) |>
+    dplyr::full_join(
+      module_enrichment$summary |>
+        dplyr::select(group, top_enriched_pathway),
+      by = "group"
+    ) |>
+    dplyr::full_join(
+      module_enrichment$summary |>
+        dplyr::select(group, top_enriched_phenotype),
+      by = "group"
+    ) |>
+    dplyr::left_join(specific_traits, by = "group") |>
+    dplyr::mutate(
+      top_enriched_category_any = tidyr::replace_na(top_enriched_category_any, "none"),
+      top_enriched_tissue_any = tidyr::replace_na(top_enriched_tissue_any, "none"),
+      top_enriched_pathway = tidyr::replace_na(top_enriched_pathway, "none"),
+      top_enriched_phenotype = tidyr::replace_na(top_enriched_phenotype, "none")
+    ) |>
+    dplyr::arrange(dplyr::desc(n_snps), as.integer(group)) |>
+    dplyr::select(group, n_snps, module_specific_traits, dplyr::everything())
+
+  cat("\n\n### Overview of significant annotations across modules\n\n")
+  print(knitr::kable(
+    overview,
+    caption = "Top module-specific traits and significant category, tissue, pathway (KEGG/Reactome), and phenotype (HP) annotations; trait values are specificity scores, and enrichment method tags are shown when FDR, permutation FDR, or module-vs-modules Fisher passes 0.05",
+    row.names = FALSE,
+    escape = FALSE
+  ))
 }
 ```
 
@@ -433,21 +521,31 @@ if (!is.null(group_traits) && length(group_traits$by_group) > 0) {
     category_x <- categories_by_group[[grp]]
     tissue_x <- tissues_by_group[[grp]]
     pathway_x <- pathways_by_group[[grp]]
+    phenotype_x <- if (is.null(pathway_x)) {
+      NULL
+    } else {
+      pathway_x$pathways[
+        pathway_x$pathways$source == "HP",
+        ,
+        drop = FALSE
+      ]
+    }
     annotation <- data.frame(
-      annotation = c("trait_categories", "tissues", "pathways"),
-      details = c(
-        .format_enrichment_hits(
+      module = paste0("Module ", grp, " (", x$n_snps, " SNPs)"),
+      trait_categories = .format_enrichment_hits(
           if (is.null(category_x)) NULL else category_x$comparison,
           "trait_category"
         ),
-        .format_enrichment_hits(
+      tissues = .format_enrichment_hits(
           if (is.null(tissue_x)) NULL else tissue_x$comparison,
           "tissue"
         ),
-        .format_pathway_hits(
-          if (is.null(pathway_x)) NULL else pathway_x$pathways
-        )
-      ),
+      pathways = .format_pathway_hits(
+          if (is.null(pathway_x)) NULL else pathway_x$pathways[
+            pathway_x$pathways$source != "HP", , drop = FALSE
+          ]
+        ),
+      phenotypes = .format_pathway_hits(phenotype_x),
       stringsAsFactors = FALSE
     )
     print(knitr::kable(
@@ -457,20 +555,142 @@ if (!is.null(group_traits) && length(group_traits$by_group) > 0) {
       escape = FALSE
     ))
 
-    if (nrow(x$traits) > 0) {
+    traits_to_show <- x$traits |>
+      dplyr::filter(passes_min_specificity) |>
+      dplyr::select(
+        trait_name, trait_category,
+        abs_mean_z, abs_mean_z_delta, specificity, mean_z
+      ) |>
+      dplyr::mutate(
+        abs_mean_z = round(abs_mean_z, 3),
+        abs_mean_z_delta = round(abs_mean_z_delta, 3),
+        specificity = round(specificity, 2),
+        mean_z = round(mean_z, 3)
+      )
+
+    if (nrow(traits_to_show) > 0) {
       print(knitr::kable(
-        x$traits |>
-          dplyr::select(trait_name, trait_category, abs_mean_z, mean_z) |>
-          dplyr::mutate(
-            abs_mean_z = round(abs_mean_z, 3),
-            mean_z = round(mean_z, 3)
-          ),
-        caption = "Top traits by magnitude",
+        traits_to_show,
+        caption = paste0(
+          "Module-specific traits (specificity >= ", min_specificity,
+          "; module mean |z| / (rest mean |z| + 0.1))"
+        ),
         row.names = FALSE
       ))
     } else {
-      cat("No traits with sufficient signal.\n\n")
+      cat("No traits passed the module-specificity cutoff (specificity >= ",
+          min_specificity, ").\n\n", sep = "")
     }
   }
+}
+```
+
+## Step 6: Module typology by SNP pleiotropy
+
+Each SNP in GPMap carries a pleiotropy score: the number of distinct trait
+categories and the number of distinct protein-coding genes it is associated
+with via coloc groups (`get_all_variant_pleiotropies()`). These describe how
+**broad** a SNP's biology is, independent of its effect profile. They give
+modules a second axis of description:
+
+- **Breadth** — the mean per-SNP pleiotropy within the module (trait-category
+  pleiotropy and gene pleiotropy).
+- **Tightness** — separation (internal minus external similarity).
+
+Plotting the two yields a descriptive module typology (not a filter, and not a
+reliability criterion):
+
+- **tight + narrow** — a specific biological program (e.g. a tissue module);
+- **tight + broad** — a regulatory hub affecting many categories or genes;
+- **loose + broad** — generic background shared across the trait;
+- **loose + narrow** — a private, low-signal module.
+
+```{r step6-pleiotropy-typology, fig.width=7, fig.height=5, out.width="100%"}
+variant_pleiotropy <- get_all_variant_pleiotropies()
+module_pleiotropy <- summarise_snp_group_pleiotropy(
+  groups = clusters_analysis,
+  variant_pleiotropies = variant_pleiotropy,
+  min_group_size = min_module_size
+)
+
+module_annotation_status <- group_categories$summary |>
+  dplyr::select(group, top_enriched_category_any) |>
+  dplyr::full_join(
+    group_tissues$summary |>
+      dplyr::select(group, top_enriched_tissue_any),
+    by = "group"
+  ) |>
+  dplyr::full_join(
+    module_enrichment$summary |>
+      dplyr::select(group, top_enriched_pathway, top_enriched_phenotype),
+    by = "group"
+  ) |>
+  dplyr::mutate(
+    annotated = !(is.na(top_enriched_category_any) &
+      is.na(top_enriched_tissue_any) &
+      is.na(top_enriched_pathway) &
+      is.na(top_enriched_phenotype))
+  ) |>
+  dplyr::select(group, annotated)
+
+typology <- module_pleiotropy |>
+  dplyr::left_join(
+    module_quality |>
+      dplyr::mutate(cluster = as.character(cluster)) |>
+      dplyr::select(cluster, separation, mean_internal_similarity, connectedness),
+    by = c("group" = "cluster")
+  ) |>
+  dplyr::left_join(module_annotation_status, by = "group")
+
+typology_long <- typology |>
+  tidyr::pivot_longer(
+    c(mean_trait_category_pleiotropy, mean_gene_pleiotropy),
+    names_to = "metric",
+    values_to = "pleiotropy"
+  ) |>
+  dplyr::mutate(
+    metric = dplyr::if_else(
+      metric == "mean_trait_category_pleiotropy",
+      "trait-category pleiotropy (distinct categories per SNP)",
+      "gene pleiotropy (distinct genes per SNP)"
+    )
+  )
+
+if (nrow(typology_long) >= 2) {
+  medians <- typology_long |>
+    dplyr::group_by(metric) |>
+    dplyr::summarise(mx = stats::median(separation), my = stats::median(pleiotropy))
+
+  print(ggplot2::ggplot(
+    typology_long,
+    ggplot2::aes(x = separation, y = pleiotropy, size = n_snps, color = annotated)
+  ) +
+    ggplot2::geom_vline(
+      data = medians,
+      ggplot2::aes(xintercept = mx),
+      linetype = "dashed",
+      alpha = 0.5
+    ) +
+    ggplot2::geom_hline(
+      data = medians,
+      ggplot2::aes(yintercept = my),
+      linetype = "dashed",
+      alpha = 0.5
+    ) +
+    ggplot2::geom_point(alpha = 0.75) +
+    ggplot2::scale_size_area(max_size = 8) +
+    ggplot2::facet_wrap(~metric, scales = "free_y") +
+    ggplot2::scale_color_manual(
+      values = c(`FALSE` = "grey60", `TRUE` = "#c2571b")
+    ) +
+    ggplot2::labs(
+      title = "Module typology: separation vs SNP pleiotropy breadth",
+      subtitle = "Dashed lines at medians; colour = module has a significant annotation",
+      x = "separation (internal minus external similarity)",
+      y = "mean per-SNP pleiotropy",
+      size = "SNPs in module",
+      color = "annotated"
+    ) +
+    ggplot2::theme_minimal())
 }
 ```

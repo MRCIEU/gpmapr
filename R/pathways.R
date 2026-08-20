@@ -74,12 +74,15 @@ pathway_enrichment <- function(genes,
 #'   `traits(..., include_associations = TRUE)`.
 #' @param snp_key Column used to match `snp_ids`: `"variant_id"`, `"display_snp"`,
 #'   or `"coloc_group_id"`. Defaults to `"variant_id"`.
+#' @param include_situated_gene Include `situated_gene_id`/`situated_gene` links
+#'   in addition to `gene_id`/`gene`. Defaults to `FALSE`.
 #' @return A dataframe with `snp_id`, `coloc_group_id`, `gene_id`, and `gene`
 #'   (one row per SNP-gene link).
 #' @export
 genes_at_snps <- function(snp_ids,
                           coloc_groups,
-                          snp_key = c("variant_id", "display_snp", "coloc_group_id")) {
+                          snp_key = c("variant_id", "display_snp", "coloc_group_id"),
+                          include_situated_gene = FALSE) {
   snp_key <- match.arg(snp_key)
   if (is.null(snp_ids) || length(snp_ids) == 0) {
     return(data.frame(
@@ -99,6 +102,10 @@ genes_at_snps <- function(snp_ids,
   if (!all(c("gene_id", "gene", "coloc_group_id") %in% names(coloc_groups))) {
     stop("coloc_groups must include gene_id, gene, and coloc_group_id")
   }
+  if (!is.logical(include_situated_gene) || length(include_situated_gene) != 1L ||
+      is.na(include_situated_gene)) {
+    stop("include_situated_gene must be TRUE or FALSE")
+  }
 
   snp_ids <- unique(as.character(snp_ids))
   snp_col <- as.character(coloc_groups[[snp_key]])
@@ -108,6 +115,21 @@ genes_at_snps <- function(snp_ids,
     dplyr::filter(snp_id %in% snp_ids, !is.na(gene_id)) |>
     dplyr::distinct(snp_id, coloc_group_id, gene_id, gene) |>
     dplyr::arrange(snp_id, gene)
+
+  if (include_situated_gene && all(c("situated_gene_id", "situated_gene") %in% names(coloc_groups))) {
+    situated <- coloc_groups |>
+      dplyr::mutate(snp_id = snp_col) |>
+      dplyr::filter(snp_id %in% snp_ids, !is.na(situated_gene_id)) |>
+      dplyr::transmute(
+        snp_id, coloc_group_id,
+        gene_id = situated_gene_id,
+        gene = situated_gene
+      ) |>
+      dplyr::distinct()
+    out <- dplyr::bind_rows(out, situated) |>
+      dplyr::distinct(snp_id, coloc_group_id, gene_id, gene) |>
+      dplyr::arrange(snp_id, gene)
+  }
 
   return(out)
 }
@@ -216,14 +238,21 @@ enrich_trait_pathways <- function(trait_id,
 #' @param min_group_size Only enrich groups with at least this many SNPs.
 #'   Defaults to 5.
 #' @param snp_key Column used to match SNP ids in `coloc_groups`.
-#' @param sources Pathway sources; see `enrich_trait_pathways()`.
+#' @param include_situated_gene Include situated-gene links in addition to
+#'   ordinary gene links. Defaults to `FALSE`.
+#' @param sources Pathway sources; see `enrich_trait_pathways()`. Non-HP sources
+#'   (e.g. KEGG, Reactome) are summarised as pathways; HP (Human Phenotype
+#'   Ontology) hits are summarised separately as phenotypes.
 #' @param p_value_threshold FDR threshold passed to `pathway_enrichment()`.
 #' @param minimum_count_in_network Minimum overlap passed to `pathway_enrichment()`.
 #' @return A list with:
 #'   \itemize{
 #'     \item by_group: list of per-group results (`group`, `n_snps`, `genes`,
 #'       `snp_genes`, `pathways`)
-#'     \item summary: one row per enriched group
+#'     \item summary: one row per enriched group. `n_enriched_pathways` /
+#'       `top_enriched_pathway` refer to non-HP sources only;
+#'       `n_enriched_phenotypes` / `top_enriched_phenotype` refer to HP terms
+#'       only (NA / 0 when `sources` has no HP).
 #'   }
 #' @export
 enrich_snp_group_pathways <- function(groups,
@@ -232,7 +261,8 @@ enrich_snp_group_pathways <- function(groups,
                                       snp_key = c("variant_id", "display_snp", "coloc_group_id"),
                                       sources = c("KEGG", "Reactome"),
                                       p_value_threshold = 0.05,
-                                      minimum_count_in_network = 2L) {
+                                      minimum_count_in_network = 2L,
+                                      include_situated_gene = FALSE) {
   snp_key <- match.arg(snp_key)
   if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {
     stop("coloc_groups is required")
@@ -251,6 +281,8 @@ enrich_snp_group_pathways <- function(groups,
     n_genes = integer(0),
     n_enriched_pathways = integer(0),
     top_enriched_pathway = character(0),
+    n_enriched_phenotypes = integer(0),
+    top_enriched_phenotype = character(0),
     stringsAsFactors = FALSE
   )
 
@@ -267,7 +299,8 @@ enrich_snp_group_pathways <- function(groups,
     snp_genes <- genes_at_snps(
       snp_ids = snp_ids,
       coloc_groups = coloc_groups,
-      snp_key = snp_key
+      snp_key = snp_key,
+      include_situated_gene = include_situated_gene
     )
     genes <- snp_genes |>
       dplyr::distinct(gene_id, gene) |>
@@ -288,12 +321,15 @@ enrich_snp_group_pathways <- function(groups,
   })
 
   summary_df <- dplyr::bind_rows(lapply(by_group, function(x) {
+    subsets <- .pathway_source_subsets(x$pathways)
     data.frame(
       group = x$group,
       n_snps = x$n_snps,
       n_genes = nrow(x$genes),
-      n_enriched_pathways = nrow(x$pathways),
-      top_enriched_pathway = .top_pathway_label(x$pathways),
+      n_enriched_pathways = nrow(subsets$mechanism),
+      top_enriched_pathway = .top_pathway_label(subsets$mechanism),
+      n_enriched_phenotypes = nrow(subsets$phenotype),
+      top_enriched_phenotype = .top_pathway_label(subsets$phenotype),
       stringsAsFactors = FALSE
     )
   }))
@@ -529,6 +565,18 @@ compare_group_pathways <- function(trait_enrichment, group_enrichment) {
     input_genes = character(0),
     stringsAsFactors = FALSE
   ))
+}
+
+
+.pathway_source_subsets <- function(pathways) {
+  if (is.null(pathways) || nrow(pathways) == 0) {
+    empty <- .empty_pathway_results()
+    return(list(mechanism = empty, phenotype = empty))
+  }
+  list(
+    mechanism = pathways[pathways$source != "HP", , drop = FALSE],
+    phenotype = pathways[pathways$source == "HP", , drop = FALSE]
+  )
 }
 
 

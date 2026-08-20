@@ -444,8 +444,20 @@ summarise_baseline_tissues <- function(snp_ids,
 #'   large groups, including the tested group).
 #' @param baseline_snp_ids SNP ids defining the trait baseline when
 #'   `background = "trait"`. Defaults to all SNPs in `groups` when `NULL`.
+#' @param bootstrap Compute bootstrap 95% confidence intervals for the fold
+#'   enrichment (`fe_ci_lower`/`fe_ci_upper`). Defaults to `TRUE`.
+#' @param permutations Number of link-label permutations for the empirical
+#'   p-values (`p_perm`). Set to `0` to skip. Defaults to `1000L`.
+#' @param seed RNG seed for the bootstrap FE confidence intervals and the
+#'   permutation p-values. Defaults to `1L`.
 #' @return A list with `by_group` (each with `tissues`, `comparison`,
-#'   `enriched`), `summary`, and `background` (baseline tissue counts).
+#'   `enriched`, `enriched_any`), `summary`, and `background` (baseline tissue
+#'   counts). `comparison` adds three alternative significance summaries
+#'   alongside the hypergeometric `fdr`: `fe_ci_lower`/`fe_ci_upper` (bootstrap
+#'   95% CI for `fold_enrichment`), `p_perm`/`fdr_perm` (permutation p and BH
+#'   FDR), and `p_modules`/`fdr_modules` (one-sided Fisher against the pooled
+#'   other modules). `sig_any` marks rows significant by any method; `enriched`
+#'   is the FDR-only subset and `enriched_any` the any-method subset.
 #' @export
 enrich_snp_group_tissues <- function(groups,
                                      coloc_groups,
@@ -457,12 +469,16 @@ enrich_snp_group_tissues <- function(groups,
                                      min_group_size = 5L,
                                      p_value_threshold = 0.05,
                                      background = c("trait", "rest", "pooled"),
-                                     baseline_snp_ids = NULL) {
+                                     baseline_snp_ids = NULL,
+                                     bootstrap = TRUE,
+                                     permutations = 1000L,
+                                     seed = 1L) {
   snp_key <- match.arg(snp_key)
   background <- match.arg(background)
   group_df <- .normalize_snp_groups(groups)
   group_sizes <- table(group_df$group)
   large_groups <- names(group_sizes)[group_sizes >= min_group_size]
+  all_module_snps <- unique(group_df$snp_id[group_df$group %in% large_groups])
 
   empty_summary <- data.frame(
     group = character(0),
@@ -471,6 +487,10 @@ enrich_snp_group_tissues <- function(groups,
     n_enriched_tissues = integer(0),
     top_tissue = character(0),
     top_enriched_tissue = character(0),
+    n_enriched_tissues_any = integer(0),
+    top_enriched_tissue_any = character(0),
+    n_enriched_tissues_perm = integer(0),
+    n_enriched_tissues_modules = integer(0),
     stringsAsFactors = FALSE
   )
 
@@ -503,7 +523,8 @@ enrich_snp_group_tissues <- function(groups,
   }
   universe_counts <- .summarise_tissue_counts(universe_links)
 
-  by_group <- lapply(large_groups, function(grp) {
+  by_group <- lapply(seq_along(large_groups), function(ii) {
+    grp <- large_groups[ii]
     snp_ids <- unique(group_df$snp_id[group_df$group == grp])
     links <- .snp_tissue_links(snp_ids, coloc_groups, snp_key)
     counts <- .summarise_tissue_counts(links)
@@ -524,12 +545,39 @@ enrich_snp_group_tissues <- function(groups,
     comparison <- .hypergeometric_link_enrichment(
       group_values = links$tissue,
       universe_values = bg_links$tissue,
-      p_value_threshold = NULL
+      p_value_threshold = NULL,
+      bootstrap = bootstrap,
+      permutations = permutations,
+      seed = seed + ii
     )
     names(comparison)[names(comparison) == "value"] <- "tissue"
+
+    other_module_snps <- setdiff(all_module_snps, snp_ids)
+    other_links <- .snp_tissue_links(other_module_snps, coloc_groups, snp_key)
+    p_modules <- .fisher_vs_pool(
+      group_values = links$tissue,
+      other_values = other_links$tissue,
+      values = comparison$tissue
+    )
+    comparison$p_modules <- p_modules[comparison$tissue]
+    comparison$fdr_modules <- stats::p.adjust(comparison$p_modules, method = "BH")
+
+    comparison$sig_any <-
+      (!is.na(comparison$fdr) & comparison$fdr <= p_value_threshold) |
+      (!is.na(comparison$fdr_perm) & comparison$fdr_perm <= p_value_threshold) |
+      (!is.na(comparison$fdr_modules) & comparison$fdr_modules <= p_value_threshold)
+
     enriched <- comparison
     if (!is.null(p_value_threshold) && nrow(enriched) > 0) {
-      enriched <- enriched[enriched$fdr <= p_value_threshold, , drop = FALSE]
+      enriched <- enriched[!is.na(enriched$fdr) & enriched$fdr <= p_value_threshold, , drop = FALSE]
+    }
+    enriched_any <- comparison
+    if (nrow(enriched_any) > 0) {
+      enriched_any <- enriched_any[
+        enriched_any$sig_any & enriched_any$fold_enrichment >= 1,
+        ,
+        drop = FALSE
+      ]
     }
 
     list(
@@ -539,7 +587,8 @@ enrich_snp_group_tissues <- function(groups,
       n_tissue_links = nrow(links),
       tissues = counts,
       comparison = comparison,
-      enriched = enriched
+      enriched = enriched,
+      enriched_any = enriched_any
     )
   })
 
@@ -554,6 +603,20 @@ enrich_snp_group_tissues <- function(groups,
     } else {
       NA_character_
     }
+    any_x <- if (nrow(x$enriched_any) > 0) {
+      best <- x$enriched_any[which.min(x$enriched_any$fdr), , drop = FALSE]
+      tag <- .method_tag(
+        best$fdr, best$fdr_perm, best$fdr_modules, p_value_threshold
+      )
+      paste0(
+        best$tissue[1],
+        " (FE=", signif(best$fold_enrichment[1], 2),
+        if (nzchar(tag)) paste0(", ", tag) else "",
+        ")"
+      )
+    } else {
+      NA_character_
+    }
     data.frame(
       group = x$group,
       n_snps = x$n_snps,
@@ -561,6 +624,17 @@ enrich_snp_group_tissues <- function(groups,
       n_enriched_tissues = nrow(x$enriched),
       top_tissue = top_tissue,
       top_enriched_tissue = top_enriched,
+      n_enriched_tissues_any = nrow(x$enriched_any),
+      top_enriched_tissue_any = any_x,
+      n_enriched_tissues_perm = sum(
+        !is.na(x$comparison$fdr_perm) & x$comparison$fdr_perm <= p_value_threshold,
+        na.rm = TRUE
+      ),
+      n_enriched_tissues_modules = sum(
+        !is.na(x$comparison$fdr_modules) &
+          x$comparison$fdr_modules <= p_value_threshold,
+        na.rm = TRUE
+      ),
       stringsAsFactors = FALSE
     )
   }))
@@ -585,7 +659,9 @@ enrich_snp_group_tissues <- function(groups,
 #' @param baseline_snp_ids SNP ids defining the trait baseline. Defaults to all
 #'   SNPs in `groups` when `NULL`.
 #' @return A list with `by_group` (each with `categories`, `comparison`,
-#'   `enriched`), `summary`, and `background` category counts.
+#'   `enriched`, `enriched_any`), `summary`, and `background` category counts.
+#'   `comparison` and `summary` add the alternative significance summaries
+#'   described in `enrich_snp_group_tissues()`.
 #' @export
 enrich_snp_group_trait_categories <- function(groups,
                                               coloc_groups,
@@ -596,11 +672,15 @@ enrich_snp_group_trait_categories <- function(groups,
                                               ),
                                               min_group_size = 5L,
                                               p_value_threshold = 0.05,
-                                              baseline_snp_ids = NULL) {
+                                              baseline_snp_ids = NULL,
+                                              bootstrap = TRUE,
+                                              permutations = 1000L,
+                                              seed = 1L) {
   snp_key <- match.arg(snp_key)
   group_df <- .normalize_snp_groups(groups)
   group_sizes <- table(group_df$group)
   large_groups <- names(group_sizes)[group_sizes >= min_group_size]
+  all_module_snps <- unique(group_df$snp_id[group_df$group %in% large_groups])
 
   empty_summary <- data.frame(
     group = character(0),
@@ -609,6 +689,10 @@ enrich_snp_group_trait_categories <- function(groups,
     n_enriched_categories = integer(0),
     top_category = character(0),
     top_enriched_category = character(0),
+    n_enriched_categories_any = integer(0),
+    top_enriched_category_any = character(0),
+    n_enriched_categories_perm = integer(0),
+    n_enriched_categories_modules = integer(0),
     stringsAsFactors = FALSE
   )
 
@@ -637,7 +721,8 @@ enrich_snp_group_trait_categories <- function(groups,
   )
   universe_counts <- .summarise_category_counts(universe_links)
 
-  by_group <- lapply(large_groups, function(grp) {
+  by_group <- lapply(seq_along(large_groups), function(ii) {
+    grp <- large_groups[ii]
     snp_ids <- unique(group_df$snp_id[group_df$group == grp])
     links <- .snp_category_links(snp_ids, coloc_groups, snp_key)
     counts <- .summarise_category_counts(links)
@@ -646,12 +731,39 @@ enrich_snp_group_trait_categories <- function(groups,
     comparison <- .hypergeometric_link_enrichment(
       group_values = links$trait_category,
       universe_values = bg_links$trait_category,
-      p_value_threshold = NULL
+      p_value_threshold = NULL,
+      bootstrap = bootstrap,
+      permutations = permutations,
+      seed = seed + ii
     )
     names(comparison)[names(comparison) == "value"] <- "trait_category"
+
+    other_module_snps <- setdiff(all_module_snps, snp_ids)
+    other_links <- .snp_category_links(other_module_snps, coloc_groups, snp_key)
+    p_modules <- .fisher_vs_pool(
+      group_values = links$trait_category,
+      other_values = other_links$trait_category,
+      values = comparison$trait_category
+    )
+    comparison$p_modules <- p_modules[comparison$trait_category]
+    comparison$fdr_modules <- stats::p.adjust(comparison$p_modules, method = "BH")
+
+    comparison$sig_any <-
+      (!is.na(comparison$fdr) & comparison$fdr <= p_value_threshold) |
+      (!is.na(comparison$fdr_perm) & comparison$fdr_perm <= p_value_threshold) |
+      (!is.na(comparison$fdr_modules) & comparison$fdr_modules <= p_value_threshold)
+
     enriched <- comparison
     if (!is.null(p_value_threshold) && nrow(enriched) > 0) {
-      enriched <- enriched[enriched$fdr <= p_value_threshold, , drop = FALSE]
+      enriched <- enriched[!is.na(enriched$fdr) & enriched$fdr <= p_value_threshold, , drop = FALSE]
+    }
+    enriched_any <- comparison
+    if (nrow(enriched_any) > 0) {
+      enriched_any <- enriched_any[
+        enriched_any$sig_any & enriched_any$fold_enrichment >= 1,
+        ,
+        drop = FALSE
+      ]
     }
 
     list(
@@ -661,7 +773,8 @@ enrich_snp_group_trait_categories <- function(groups,
       n_category_links = nrow(links),
       categories = counts,
       comparison = comparison,
-      enriched = enriched
+      enriched = enriched,
+      enriched_any = enriched_any
     )
   })
 
@@ -680,6 +793,20 @@ enrich_snp_group_trait_categories <- function(groups,
     } else {
       NA_character_
     }
+    any_x <- if (nrow(x$enriched_any) > 0) {
+      best <- x$enriched_any[which.min(x$enriched_any$fdr), , drop = FALSE]
+      tag <- .method_tag(
+        best$fdr, best$fdr_perm, best$fdr_modules, p_value_threshold
+      )
+      paste0(
+        best$trait_category[1],
+        " (FE=", signif(best$fold_enrichment[1], 2),
+        if (nzchar(tag)) paste0(", ", tag) else "",
+        ")"
+      )
+    } else {
+      NA_character_
+    }
     data.frame(
       group = x$group,
       n_snps = x$n_snps,
@@ -687,6 +814,17 @@ enrich_snp_group_trait_categories <- function(groups,
       n_enriched_categories = nrow(x$enriched),
       top_category = top_category,
       top_enriched_category = top_enriched,
+      n_enriched_categories_any = nrow(x$enriched_any),
+      top_enriched_category_any = any_x,
+      n_enriched_categories_perm = sum(
+        !is.na(x$comparison$fdr_perm) & x$comparison$fdr_perm <= p_value_threshold,
+        na.rm = TRUE
+      ),
+      n_enriched_categories_modules = sum(
+        !is.na(x$comparison$fdr_modules) &
+          x$comparison$fdr_modules <= p_value_threshold,
+        na.rm = TRUE
+      ),
       stringsAsFactors = FALSE
     )
   }))
@@ -1047,7 +1185,10 @@ enrich_snp_group_trait_categories <- function(groups,
 
 .hypergeometric_link_enrichment <- function(group_values,
                                             universe_values,
-                                            p_value_threshold = NULL) {
+                                            p_value_threshold = NULL,
+                                            bootstrap = TRUE,
+                                            permutations = 1000L,
+                                            seed = 1L) {
   empty <- data.frame(
     value = character(0),
     n_group = integer(0),
@@ -1059,6 +1200,10 @@ enrich_snp_group_trait_categories <- function(groups,
     fold_enrichment = numeric(0),
     p_value = numeric(0),
     fdr = numeric(0),
+    fe_ci_lower = numeric(0),
+    fe_ci_upper = numeric(0),
+    p_perm = numeric(0),
+    fdr_perm = numeric(0),
     stringsAsFactors = FALSE
   )
   group_values <- as.character(group_values)
@@ -1088,13 +1233,17 @@ enrich_snp_group_trait_categories <- function(groups,
     frac_group <- k / n_group_total
     frac_u <- k_u / n_universe_total
     fold_enrichment <- if (frac_u > 0) frac_group / frac_u else Inf
-    p_value <- stats::phyper(
-      q = k - 1L,
-      m = k_u,
-      n = n_universe_total - k_u,
-      k = n_group_total,
-      lower.tail = FALSE
-    )
+    p_value <- if (n_group_total > n_universe_total) {
+      NA_real_
+    } else {
+      stats::phyper(
+        q = k - 1L,
+        m = k_u,
+        n = n_universe_total - k_u,
+        k = n_group_total,
+        lower.tail = FALSE
+      )
+    }
     data.frame(
       value = val,
       n_group = k,
@@ -1114,6 +1263,38 @@ enrich_snp_group_trait_categories <- function(groups,
     return(empty)
   }
   out$fdr <- stats::p.adjust(out$p_value, method = "BH")
+
+  if (bootstrap || permutations > 0) {
+    set.seed(seed)
+  }
+  if (bootstrap) {
+    ci <- .fe_bootstrap_ci(
+      n_group = out$n_group,
+      n_universe = out$n_universe,
+      n_group_total = out$n_group_total,
+      n_universe_total = out$n_universe_total,
+      B = 1000L
+    )
+    out$fe_ci_lower <- ci$lower
+    out$fe_ci_upper <- ci$upper
+  } else {
+    out$fe_ci_lower <- NA_real_
+    out$fe_ci_upper <- NA_real_
+  }
+  if (permutations > 0) {
+    p_perm <- .permutation_link_pvalues(
+      group_values = group_values,
+      universe_values = universe_values,
+      values = values,
+      B = permutations
+    )
+    out$p_perm <- p_perm[out$value]
+    out$fdr_perm <- stats::p.adjust(out$p_perm, method = "BH")
+  } else {
+    out$p_perm <- NA_real_
+    out$fdr_perm <- NA_real_
+  }
+
   if (!is.null(p_value_threshold)) {
     out <- out[out$fdr <= p_value_threshold, , drop = FALSE]
   }
@@ -1125,6 +1306,121 @@ enrich_snp_group_trait_categories <- function(groups,
   ), , drop = FALSE]
   rownames(out) <- NULL
   return(out)
+}
+
+
+# Percentile-bootstrap CI for fold enrichment. The group and universe link
+# counts are drawn as binomials (parametric bootstrap) from the observed
+# proportions, so the CI reflects the small-count uncertainty of the ratio.
+.fe_bootstrap_ci <- function(n_group,
+                             n_universe,
+                             n_group_total,
+                             n_universe_total,
+                             B = 1000L) {
+  n <- length(n_group)
+  lower <- upper <- rep(NA_real_, n)
+  for (i in seq_len(n)) {
+    k <- n_group[i]
+    k_u <- n_universe[i]
+    ng <- n_group_total[i]
+    nu <- n_universe_total[i]
+    if (is.na(k) || is.na(k_u) || ng <= 0 || nu <= 0) next
+    if (k_u <= 0) next
+    if (k == 0) {
+      lower[i] <- 0
+      upper[i] <- 0
+      next
+    }
+    kg <- stats::rbinom(B, size = ng, prob = k / ng)
+    ku_draw <- stats::rbinom(B, size = nu, prob = k_u / nu)
+    fe <- (kg / ng) / (ku_draw / nu)
+    fe <- fe[is.finite(fe)]
+    if (length(fe) == 0) next
+    lower[i] <- unname(stats::quantile(fe, 0.025, na.rm = TRUE))
+    upper[i] <- unname(stats::quantile(fe, 0.975, na.rm = TRUE))
+  }
+  return(list(lower = lower, upper = upper))
+}
+
+
+# Permutation p-values for module-vs-rest enrichment. Link labels are shuffled
+# (draw `n_group_total` links from the pooled baseline links, without
+# replacement), so the null distribution matches the hypergeometric test but is
+# empirical rather than asymptotic.
+.permutation_link_pvalues <- function(group_values,
+                                      universe_values,
+                                      values,
+                                      B = 1000L) {
+  p <- stats::setNames(rep(NA_real_, length(values)), values)
+  n_group_total <- length(group_values)
+  pool <- c(group_values, universe_values)
+  n_pool <- length(pool)
+  group_counts <- table(group_values)
+  if (n_group_total == 0 || n_pool == 0 || n_group_total >= n_pool) {
+    return(p)
+  }
+  for (v in values) {
+    k_obs <- if (v %in% names(group_counts)) {
+      as.integer(group_counts[[v]])
+    } else {
+      0L
+    }
+    if (k_obs == 0) {
+      p[[v]] <- 1
+      next
+    }
+    cnt <- 0L
+    for (b in seq_len(B)) {
+      idx <- sample.int(n_pool, n_group_total, replace = FALSE)
+      if (sum(pool[idx] == v) >= k_obs) {
+        cnt <- cnt + 1L
+      }
+    }
+    p[[v]] <- (cnt + 1) / (B + 1)
+  }
+  return(p)
+}
+
+
+# One-sided Fisher test of the group against a pooled comparison set (used for
+# module-vs-other-modules): is the group enriched for `value` relative to the
+# pooled links of the other modules?
+.fisher_vs_pool <- function(group_values, other_values, values) {
+  n_g <- length(group_values)
+  n_o <- length(other_values)
+  p <- stats::setNames(rep(NA_real_, length(values)), values)
+  if (n_g == 0 || n_o == 0) {
+    return(p)
+  }
+  gc <- table(group_values)
+  oc <- table(other_values)
+  for (v in values) {
+    k <- if (v %in% names(gc)) as.integer(gc[[v]]) else 0L
+    k_o <- if (v %in% names(oc)) as.integer(oc[[v]]) else 0L
+    if (k == 0) {
+      p[[v]] <- 1
+      next
+    }
+    tab <- matrix(c(k, n_g - k, k_o, n_o - k_o), nrow = 2, byrow = TRUE)
+    p[[v]] <- stats::fisher.test(tab, alternative = "greater")$p.value
+  }
+  return(p)
+}
+
+
+# Compact labels of which significance methods pass the threshold for a row.
+.method_tag <- function(fdr, fdr_perm, fdr_modules, threshold = 0.05) {
+  tags <- character(0)
+  if (!is.na(fdr) && fdr <= threshold) {
+    tags <- c(tags, paste0("FDR=", signif(fdr, 3)))
+  }
+  if (!is.na(fdr_perm) && fdr_perm <= threshold) {
+    tags <- c(tags, paste0("perm=", signif(fdr_perm, 3)))
+  }
+  if (!is.na(fdr_modules) && fdr_modules <= threshold) {
+    tags <- c(tags, paste0("vsmod=", signif(fdr_modules, 3)))
+  }
+  return(paste(tags, collapse = ", "))
 }
 
 
@@ -1141,4 +1437,187 @@ enrich_snp_group_trait_categories <- function(groups,
   names(out)[names(out) == "n_universe"] <- "n_background"
   names(out)[names(out) == "n_universe_total"] <- "n_background_total"
   return(out)
+}
+
+
+#' @title Pairwise Module-vs-Module Enrichment
+#' @description For each trait-category (or tissue) value, compare every pair of
+#' SNP modules with a two-sided Fisher exact test on link counts, then apply a
+#' global Benjamini-Hochberg correction across all module-pair x value tests.
+#' This complements the module-vs-rest hypergeometric enrichment: instead of
+#' asking whether a module differs from the trait background, it asks which
+#' modules differ from *each other*.
+#' @param groups Named vector (`names` = SNP ids) or dataframe of module
+#'   assignments, as used by `enrich_snp_group_trait_categories()`.
+#' @param coloc_groups A coloc_groups dataframe (from
+#'   `trait(..., include_associations = TRUE)`).
+#' @param value_col Which annotation to compare: `"trait_category"` or
+#'   `"tissue"`.
+#' @param snp_key SNP id column in `coloc_groups`: `"variant_id"`,
+#'   `"display_snp"`, or `"coloc_group_id"`.
+#' @param min_group_size Only compare modules with at least this many SNPs.
+#' @param p_value_threshold FDR threshold for flagging a pairwise difference.
+#'   Defaults to 0.05.
+#' @return A list with:
+#'   \itemize{
+#'     \item summary: one row per module with the number of significant pairwise
+#'       differences, the top differing value, its FDR, and the top differing
+#'       partner module
+#'     \item pairwise: long dataframe of all module-pair x value tests with
+#'       link counts, rates, `p_value`, and the global `fdr`
+#'     \item by_value: per-value counts of significant module pairs
+#'   }
+#' @export
+compare_snp_group_modules <- function(groups,
+                                      coloc_groups,
+                                      value_col = c("trait_category", "tissue"),
+                                      snp_key = c(
+                                        "variant_id",
+                                        "display_snp",
+                                        "coloc_group_id"
+                                      ),
+                                      min_group_size = 5L,
+                                      p_value_threshold = 0.05) {
+  value_col <- match.arg(value_col)
+  snp_key <- match.arg(snp_key)
+  group_df <- .normalize_snp_groups(groups)
+  group_sizes <- table(group_df$group)
+  large_groups <- names(group_sizes)[group_sizes >= min_group_size]
+
+  empty <- list(
+    summary = data.frame(
+      module = character(0),
+      n_pairwise_sig = integer(0),
+      top_pairwise_value = character(0),
+      top_pairwise_fdr = numeric(0),
+      top_pairwise_partner = character(0),
+      stringsAsFactors = FALSE
+    ),
+    pairwise = data.frame(
+      value = character(0),
+      module_a = character(0),
+      module_b = character(0),
+      n_a = integer(0),
+      k_a = integer(0),
+      n_b = integer(0),
+      k_b = integer(0),
+      rate_a = numeric(0),
+      rate_b = numeric(0),
+      p_value = numeric(0),
+      fdr = numeric(0),
+      stringsAsFactors = FALSE
+    ),
+    by_value = data.frame(
+      value = character(0),
+      n_sig_pairs = integer(0),
+      stringsAsFactors = FALSE
+    )
+  )
+  if (length(large_groups) < 2) {
+    return(empty)
+  }
+
+  links_fun <- if (identical(value_col, "tissue")) {
+    .snp_tissue_links
+  } else {
+    .snp_category_links
+  }
+  link_col <- if (identical(value_col, "tissue")) "tissue" else "trait_category"
+
+  links_by_module <- lapply(large_groups, function(grp) {
+    snp_ids <- unique(group_df$snp_id[group_df$group == grp])
+    return(links_fun(snp_ids, coloc_groups, snp_key)[[link_col]])
+  })
+  names(links_by_module) <- large_groups
+
+  all_values <- sort(unique(unlist(links_by_module, use.names = FALSE)))
+  if (length(all_values) == 0) {
+    return(empty)
+  }
+
+  pair_idx <- combn(seq_along(large_groups), 2L, simplify = FALSE)
+  pair_rows <- lapply(pair_idx, function(ij) {
+    i <- ij[1]
+    j <- ij[2]
+    vi <- links_by_module[[i]]
+    vj <- links_by_module[[j]]
+    ni <- length(vi)
+    nj <- length(vj)
+    if (ni == 0 || nj == 0) {
+      return(NULL)
+    }
+    rows <- lapply(all_values, function(v) {
+      ki <- sum(vi == v)
+      kj <- sum(vj == v)
+      tab <- matrix(c(ki, ni - ki, kj, nj - kj), nrow = 2, byrow = TRUE)
+      p_value <- tryCatch(
+        stats::fisher.test(tab, alternative = "two.sided")$p.value,
+        error = function(e) NA_real_
+      )
+      return(data.frame(
+        value = v,
+        module_a = large_groups[i],
+        module_b = large_groups[j],
+        n_a = ni,
+        k_a = ki,
+        n_b = nj,
+        k_b = kj,
+        rate_a = ki / ni,
+        rate_b = kj / nj,
+        p_value = p_value,
+        stringsAsFactors = FALSE
+      ))
+    })
+    return(dplyr::bind_rows(rows))
+  })
+  pairwise <- dplyr::bind_rows(pair_rows)
+  if (nrow(pairwise) == 0) {
+    return(empty)
+  }
+  pairwise$fdr <- stats::p.adjust(pairwise$p_value, method = "BH")
+  sig <- pairwise[
+    !is.na(pairwise$fdr) & pairwise$fdr <= p_value_threshold,
+    ,
+    drop = FALSE
+  ]
+
+  by_value <- if (nrow(sig) > 0) {
+    sig |>
+      dplyr::count(value, name = "n_sig_pairs") |>
+      dplyr::arrange(dplyr::desc(n_sig_pairs), value)
+  } else {
+    empty$by_value
+  }
+
+  summary_df <- if (nrow(sig) > 0) {
+    lapply(large_groups, function(m) {
+      rows <- sig[sig$module_a == m | sig$module_b == m, , drop = FALSE]
+      if (nrow(rows) == 0) {
+        return(NULL)
+      }
+      best <- rows[which.min(rows$fdr), , drop = FALSE]
+      partner <- if (best$module_a == m) best$module_b else best$module_a
+      return(data.frame(
+        module = m,
+        n_pairwise_sig = nrow(rows),
+        top_pairwise_value = best$value,
+        top_pairwise_fdr = best$fdr,
+        top_pairwise_partner = partner,
+        stringsAsFactors = FALSE
+      ))
+    }) |>
+      dplyr::bind_rows() |>
+      dplyr::arrange(dplyr::desc(n_pairwise_sig), top_pairwise_fdr)
+  } else {
+    empty$summary
+  }
+
+  return(list(
+    summary = summary_df,
+    pairwise = pairwise,
+    by_value = by_value,
+    value_col = value_col,
+    min_group_size = as.integer(min_group_size),
+    p_value_threshold = p_value_threshold
+  ))
 }

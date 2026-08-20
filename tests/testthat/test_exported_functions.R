@@ -78,6 +78,10 @@ test_that("compress_effect_matrix() soft-compresses extremes without hard clip",
   expect_lt(max(abs(y)), max(abs(x)))
   expect_gt(abs(y[1, 2]), abs(y[1, 1]))
   expect_identical(compress_effect_matrix(x, method = "none"), x)
+
+  y_gentle <- compress_effect_matrix(x, method = "asinh", asinh_scale = 2)
+  expect_equal(y_gentle, 2 * asinh(x / 2))
+  expect_gt(abs(y_gentle[1, 2]), abs(y[1, 2]))
 })
 
 test_that("variant() returns expected output", {
@@ -553,6 +557,29 @@ test_that("build_pleiotropy_matrix filters to target trait SNPs from shared colo
   expect_true("feature_type" %in% names(p1$trait_info))
 })
 
+test_that("univariate input can exclude trans markers", {
+  coloc_groups <- data.frame(
+    trait_id = c(1L, 1L, 2L, 2L),
+    trait_name = c("target", "target", "other", "other"),
+    variant_id = c(101L, 102L, 101L, 102L),
+    min_p = c(1e-10, 1e-10, 1e-10, 1e-10),
+    beta = c(1, 1, 1, 1),
+    se = c(1, 1, 1, 1),
+    cis_trans = c("cis", "trans", "cis", "trans"),
+    coloc_group_id = c(11L, 12L, 11L, 12L),
+    display_snp = c("101", "102", "101", "102"),
+    chr = c(1L, 1L, 1L, 1L),
+    bp = c(101L, 102L, 101L, 102L),
+    stringsAsFactors = FALSE
+  )
+
+  cis_only <- coloc_groups |>
+    dplyr::filter(is.na(cis_trans) | tolower(cis_trans) != "trans")
+  out <- build_pleiotropy_matrix(1L, coloc_groups = cis_only)
+
+  expect_identical(colnames(out$x_matrix), "101")
+})
+
 test_that("snp_similarity_matrix supports pairwise-complete overlap shrinkage", {
   x_matrix <- matrix(
     c(
@@ -710,4 +737,176 @@ test_that("summarise_snp_module_quality() does not gate on silhouette", {
   )
   expect_true(all(out$reliable))
   expect_true(all(out$mean_silhouette < 0))
+})
+
+test_that("enrichment reports bootstrap CI, permutation FDR, and module-vs-modules Fisher", {
+  coloc_groups <- data.frame(
+    variant_id = c("s1", "s1", "s1", "s2", "s2", "s3", "s3", "s4", "s4", "s5", "s6"),
+    gene_id = 1:11,
+    tissue = c(
+      "Adipose", "Adipose", "Brain", "Adipose", "Blood",
+      "Blood", "Blood", "Blood", "Brain", "Brain", "Brain"
+    ),
+    trait_category = c(
+      "Metabolic", "Metabolic", "Neuro", "Metabolic", "Blood",
+      "Blood", "Blood", "Blood", "Neuro", "Neuro", "Neuro"
+    ),
+    stringsAsFactors = FALSE
+  )
+  groups <- c(s1 = 1, s2 = 1, s3 = 1, s4 = 2, s5 = 2, s6 = 2)
+
+  out <- enrich_snp_group_trait_categories(
+    groups = groups,
+    coloc_groups = coloc_groups,
+    min_group_size = 1,
+    baseline_snp_ids = names(groups),
+    permutations = 50L,
+    seed = 1L
+  )
+  cmp <- out$by_group[[1]]$comparison
+  expect_true(all(
+    c(
+      "fe_ci_lower", "fe_ci_upper", "p_perm", "fdr_perm",
+      "p_modules", "fdr_modules", "sig_any"
+    ) %in% names(cmp)
+  ))
+  expect_true("enriched_any" %in% names(out$by_group[[1]]))
+  expect_true("n_enriched_categories_any" %in% names(out$summary))
+  expect_true("top_enriched_category_any" %in% names(out$summary))
+
+  out_tis <- enrich_snp_group_tissues(
+    groups = groups,
+    coloc_groups = coloc_groups,
+    min_group_size = 1,
+    background = "rest",
+    permutations = 50L,
+    seed = 1L
+  )
+  expect_true("fdr_perm" %in% names(out_tis$by_group[[1]]$comparison))
+})
+
+test_that("genes_at_snps can include situated genes", {
+  coloc_groups <- data.frame(
+    variant_id = "s1",
+    coloc_group_id = 1L,
+    gene_id = NA_integer_,
+    gene = NA_character_,
+    situated_gene_id = 42L,
+    situated_gene = "GENE42",
+    stringsAsFactors = FALSE
+  )
+
+  ordinary <- genes_at_snps("s1", coloc_groups)
+  situated <- genes_at_snps("s1", coloc_groups, include_situated_gene = TRUE)
+
+  expect_equal(nrow(ordinary), 0L)
+  expect_equal(situated$gene_id, 42L)
+  expect_equal(situated$gene, "GENE42")
+})
+
+test_that("compare_snp_group_modules() returns pairwise tests with global FDR", {
+  coloc_groups <- data.frame(
+    variant_id = c("s1", "s1", "s1", "s2", "s2", "s3", "s3", "s4", "s4", "s5", "s6"),
+    gene_id = 1:11,
+    tissue = c(
+      "Adipose", "Adipose", "Brain", "Adipose", "Blood",
+      "Blood", "Blood", "Blood", "Brain", "Brain", "Brain"
+    ),
+    trait_category = c(
+      "Metabolic", "Metabolic", "Neuro", "Metabolic", "Blood",
+      "Blood", "Blood", "Blood", "Neuro", "Neuro", "Neuro"
+    ),
+    stringsAsFactors = FALSE
+  )
+  groups <- c(s1 = 1, s2 = 1, s3 = 1, s4 = 2, s5 = 2, s6 = 2)
+
+  out <- compare_snp_group_modules(
+    groups = groups,
+    coloc_groups = coloc_groups,
+    value_col = "trait_category",
+    min_group_size = 1
+  )
+  expect_true(all(c("summary", "pairwise", "by_value") %in% names(out)))
+  expect_true(all(c("value", "module_a", "module_b", "p_value", "fdr") %in% names(out$pairwise)))
+  expect_true(all(c("module", "n_pairwise_sig", "top_pairwise_partner") %in% names(out$summary)))
+
+  # no reliable modules to compare -> empty summaries
+  out_empty <- compare_snp_group_modules(
+    groups = c(s1 = 1, s2 = 1, s3 = 1),
+    coloc_groups = coloc_groups,
+    value_col = "tissue",
+    min_group_size = 2
+  )
+  expect_equal(nrow(out_empty$pairwise), 0L)
+})
+
+test_that("enrich_snp_group_pathways() separates pathway and HP phenotype hits", {
+  genes <- all_genes()
+  gene_ids <- genes[genes$gene %in% c("TREM2", "APOE", "FTO", "MC4R", "LPL"), c("id", "gene")]
+  coloc_groups <- data.frame(
+    variant_id = c("s1", "s1", "s2", "s2", "s3", "s3", "s4", "s4", "s5", "s5"),
+    coloc_group_id = 1:10,
+    gene_id = rep(gene_ids$id, 2),
+    gene = rep(gene_ids$gene, 2),
+    stringsAsFactors = FALSE
+  )
+  groups <- c(s1 = 1, s2 = 1, s3 = 1, s4 = 2, s5 = 2)
+
+  out <- enrich_snp_group_pathways(
+    groups = groups,
+    coloc_groups = coloc_groups,
+    min_group_size = 1,
+    sources = c("KEGG", "Reactome", "HP"),
+    minimum_count_in_network = 1
+  )
+  s <- out$summary
+  expect_true(all(
+    c(
+      "n_enriched_pathways", "top_enriched_pathway",
+      "n_enriched_phenotypes", "top_enriched_phenotype"
+    ) %in% names(s)
+  ))
+  expect_type(s$n_enriched_phenotypes, "integer")
+  expect_true(all(s$n_enriched_phenotypes >= 0))
+  expect_true(all(is.na(s$top_enriched_phenotype) | grepl("^HP:", s$top_enriched_phenotype)))
+  expect_true(all(is.na(s$top_enriched_pathway) | !grepl("^HP:", s$top_enriched_pathway)))
+
+  out2 <- enrich_snp_group_pathways(
+    groups = groups,
+    coloc_groups = coloc_groups,
+    min_group_size = 1,
+    sources = c("KEGG", "Reactome"),
+    minimum_count_in_network = 1
+  )
+  expect_true(all(out2$summary$n_enriched_phenotypes == 0L))
+  expect_true(all(is.na(out2$summary$top_enriched_phenotype)))
+})
+
+test_that("summarise_snp_group_pleiotropy() computes per-group pleiotropy", {
+  vp <- data.frame(
+    variant_id = c("s1", "s2", "s3", "s4", "s5"),
+    distinct_trait_categories = c(1, 3, 2, 5, 1),
+    distinct_protein_coding_genes = c(0, 2, 1, 4, 0),
+    stringsAsFactors = FALSE
+  )
+  groups <- c(s1 = 1, s2 = 1, s3 = 1, s4 = 2, s5 = 2)
+
+  out <- summarise_snp_group_pleiotropy(groups, vp)
+  expect_equal(out$group, c("1", "2"))
+  expect_equal(out$n_snps, c(3L, 2L))
+  expect_equal(out$n_snps_with_pleiotropy, c(3L, 2L))
+  expect_equal(out$mean_trait_category_pleiotropy[1], mean(c(1, 3, 2)))
+  expect_equal(out$median_trait_category_pleiotropy[1], stats::median(c(1, 3, 2)))
+  expect_equal(out$mean_gene_pleiotropy[2], mean(c(4, 0)))
+  expect_equal(out$median_gene_pleiotropy[2], stats::median(c(4, 0)))
+
+  out_min <- summarise_snp_group_pleiotropy(groups, vp, min_group_size = 3)
+  expect_equal(out_min$group, "1")
+
+  # unmatched SNPs are carried but counted via n_snps_with_pleiotropy
+  groups2 <- c(s1 = 1, s2 = 1, s9 = 1)
+  out2 <- summarise_snp_group_pleiotropy(groups2, vp)
+  expect_equal(out2$n_snps, 3L)
+  expect_equal(out2$n_snps_with_pleiotropy, 2L)
+  expect_equal(out2$mean_trait_category_pleiotropy, mean(c(1, 3)))
 })

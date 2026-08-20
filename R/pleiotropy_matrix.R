@@ -1,7 +1,7 @@
 #' @title Build Pleiotropy Matrix
-#' @description Construct a traits x SNPs matrix of signed z-scores (beta / se) from
-#' colocalisation data. Each column is a target-trait SNP; each row is a background
-#' trait with a colocalisation signal at that SNP's locus.
+#' @description Construct a traits x SNPs matrix of signed z-scores (beta / se). Each
+#' column is a target-trait SNP; each row is a background trait with an effect at that
+#' SNP's locus.
 #'
 #' @param trait_id Numeric ID of the target trait whose associated SNPs define the columns.
 #' @param coloc_groups A dataframe of coloc_groups with `beta` and `se` columns
@@ -10,10 +10,14 @@
 #' @param p_threshold P-value threshold for including a target-trait SNP. Defaults to 5e-8.
 #' @param snp_key Column used to name SNP columns: `"variant_id"`, `"display_snp"`, or
 #'   `"coloc_group_id"`. Defaults to `"variant_id"`.
+#' @param associations Which association set to use for the matrix entries:
+#'   `"coloc"` (default) uses colocalisation rows only (each trait-SNP pair keeps its
+#'   smallest `min_p`), while `"full"` uses all full associations
+#'   (`/associations-full`), keeping every observed effect per study-SNP pair.
 #' @return A list with:
 #'   \itemize{
 #'     \item x_matrix: numeric matrix (traits x SNPs) of z-scores; `NA` where a trait
-#'       has no colocalisation signal at that SNP's locus
+#'       has no effect at that SNP's locus
 #'     \item trait_info: dataframe mapping row indices to `trait_id` and `trait_name`
 #'       (plus `feature_type`, and `gene`/`tissue` when available)
 #'     \item snp_info: dataframe mapping column names to `coloc_group_id`, `variant_id`,
@@ -24,24 +28,37 @@
 build_pleiotropy_matrix <- function(trait_id,
                                     coloc_groups = NULL,
                                     p_threshold = NULL,
-                                    snp_key = c("variant_id", "display_snp", "coloc_group_id")) {
+                                    snp_key = c("variant_id", "display_snp", "coloc_group_id"),
+                                    associations = c("coloc", "full")) {
   if (missing(trait_id) || is.null(trait_id)) {
     stop("trait_id is required")
   }
 
   snp_key <- match.arg(snp_key)
+  associations <- match.arg(associations)
   target_id <- trait_id
 
   if (is.null(coloc_groups)) {
     coloc_groups <- trait(target_id, include_associations = TRUE)$coloc_groups
   }
 
-  locus_data <- .prepare_pleiotropy_locus_data(
-    trait_id = target_id,
-    coloc_groups = coloc_groups,
-    p_threshold = p_threshold,
-    snp_key = snp_key
-  )
+  if (associations == "full") {
+    full_associations <- trait(target_id, include_full_associations = TRUE)$full_associations
+    locus_data <- .prepare_dense_locus_data(
+      trait_id = target_id,
+      coloc_groups = coloc_groups,
+      full_associations = full_associations,
+      p_threshold = p_threshold,
+      snp_key = snp_key
+    )
+  } else {
+    locus_data <- .prepare_pleiotropy_locus_data(
+      trait_id = target_id,
+      coloc_groups = coloc_groups,
+      p_threshold = p_threshold,
+      snp_key = snp_key
+    )
+  }
 
   return(.finalize_pleiotropy_from_locus(locus_data, target_id))
 }
