@@ -11,7 +11,8 @@ enrich_snp_group_pathways(
   snp_key = c("variant_id", "display_snp", "coloc_group_id"),
   sources = c("KEGG", "Reactome"),
   p_value_threshold = 0.05,
-  minimum_count_in_network = 2L
+  minimum_count_in_network = 2L,
+  include_situated_gene = FALSE
 )
 }
 \arguments{
@@ -33,6 +34,9 @@ Ontology) hits are summarised separately as phenotypes.}
 \item{p_value_threshold}{FDR threshold passed to \code{pathway_enrichment()}.}
 
 \item{minimum_count_in_network}{Minimum overlap passed to \code{pathway_enrichment()}.}
+
+\item{include_situated_gene}{Include situated-gene links in addition to
+ordinary gene links. Defaults to \code{FALSE}.}
 }
 \value{
 A list with:

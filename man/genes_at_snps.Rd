@@ -7,7 +7,8 @@
 genes_at_snps(
   snp_ids,
   coloc_groups,
-  snp_key = c("variant_id", "display_snp", "coloc_group_id")
+  snp_key = c("variant_id", "display_snp", "coloc_group_id"),
+  include_situated_gene = FALSE
 )
 }
 \arguments{
@@ -18,6 +19,9 @@ genes_at_snps(
 
 \item{snp_key}{Column used to match \code{snp_ids}: \code{"variant_id"}, \code{"display_snp"},
 or \code{"coloc_group_id"}. Defaults to \code{"variant_id"}.}
+
+\item{include_situated_gene}{Include \code{situated_gene_id}/\code{situated_gene} links
+in addition to \code{gene_id}/\code{gene}. Defaults to \code{FALSE}.}
 }
 \value{
 A dataframe with \code{snp_id}, \code{coloc_group_id}, \code{gene_id}, and \code{gene}

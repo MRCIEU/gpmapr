@@ -4,12 +4,16 @@
 \alias{compress_effect_matrix}
 \title{Compress Heavy-Tailed Effect Scores}
 \usage{
-compress_effect_matrix(x_matrix, method = c("asinh", "none"))
+compress_effect_matrix(x_matrix, method = c("asinh", "none"), asinh_scale = 1)
 }
 \arguments{
 \item{x_matrix}{Numeric matrix of signed effects / z-scores.}
 
 \item{method}{Compression method. \code{"asinh"} (default) or \code{"none"}.}
+
+\item{asinh_scale}{Positive scale for the \code{asinh} transformation. The
+transformation is \code{asinh_scale * asinh(x / asinh_scale)}; larger
+values apply gentler compression. Ignored when \code{method = "none"}.}
 }
 \value{
 Matrix of the same dimensions / dimnames with finite entries

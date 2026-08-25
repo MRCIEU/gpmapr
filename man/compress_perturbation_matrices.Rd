@@ -7,7 +7,8 @@
 compress_perturbation_matrices(
   trait_matrix,
   gene_matrix,
-  method = c("asinh", "none")
+  method = c("asinh", "none"),
+  asinh_scale = 1
 )
 }
 \arguments{
@@ -16,6 +17,10 @@ compress_perturbation_matrices(
 \item{gene_matrix}{SNPs x genes matrix.}
 
 \item{method}{Compression method. \code{"asinh"} (default) or \code{"none"}.}
+
+\item{asinh_scale}{Positive scale for the \code{asinh} transformation. The
+transformation is \code{asinh_scale * asinh(x / asinh_scale)}; larger
+values apply gentler compression. Ignored when \code{method = "none"}.}
 }
 \value{
 A list with compressed \code{trait_matrix}, \code{gene_matrix}, and

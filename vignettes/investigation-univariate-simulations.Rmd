@@ -1,0 +1,353 @@
+---
+title: "Simulation study of univariate clustering"
+output:
+  rmarkdown::html_vignette:
+    includes:
+      in_header: investigation-wide.html
+params:
+  louvain_gamma: 1.5
+  similarity_threshold: 0.2
+  min_module_size: 5
+vignette: >
+  %\VignetteIndexEntry{Simulation study of univariate clustering}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+```{r libraries}
+pkg_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("devtools", quietly = TRUE)) {
+  devtools::load_all(pkg_root, quiet = TRUE)
+} else {
+  library(gpmapr)
+}
+library(dplyr)
+library(ggplot2)
+
+n_reps <- 5
+set.seed(1)
+
+clustering_settings <- list(
+  louvain_gamma = params$louvain_gamma,
+  similarity_threshold = params$similarity_threshold,
+  min_module_size = params$min_module_size
+)
+```
+
+This vignette stress-tests the univariate SNP clustering pipeline
+(`run_univariate_clustering()`) against synthetic data with known ground truth.
+`simulate_trait()` plants latent module structure over SNPs (or none at all),
+and `evaluate_univariate_simulation()` scores recovery via adjusted Rand index
+(ARI), module-count error (`|K_hat - K|`), and how many unstructured background
+SNPs get absorbed into modules ("hallucinated" structure).
+
+Scenario coverage:
+
+1. **Null** — no planted structure; does the method hallucinate modules?
+2. **Dataset size** — 10 / 50 / 200 / 500 / 900 coloc groups.
+3. **Signed effects** — coherent vs flipped vs random driver signs.
+4. **Module overlap** — disjoint vs moderate vs strong.
+5. **Sparsity** — structural-zero rate inside true module support.
+
+```{r helpers}
+run_one <- function(...) {
+  sim <- simulate_trait(..., seed = sample.int(.Machine$integer.max, 1))
+  res <- do.call(
+    run_univariate_clustering,
+    c(list(trait_object = sim$trait_object), clustering_settings)
+  )
+  ev <- evaluate_univariate_simulation(sim, res)
+  quality <- res$module_quality
+  passes_size <- quality$n_snps >= params$min_module_size
+  passes_internal <- is.finite(quality$mean_internal_similarity) &
+    quality$mean_internal_similarity >= 0.3
+  passes_connectedness <- is.finite(quality$connectedness) &
+    quality$connectedness >= 0.5
+  data.frame(
+    k_planted = ev$k_planted,
+    k_hat = ev$k_hat,
+    k_error = ev$k_error,
+    ari_all = ev$ari_all,
+    ari_structured = ev$ari_structured,
+    background_absorbed = ev$background_absorbed,
+    coverage = ev$coverage,
+    n_louvain_modules = nrow(quality),
+    n_dropped_size = sum(!passes_size),
+    n_dropped_internal = sum(passes_size & !passes_internal),
+    n_dropped_connectedness = sum(
+      passes_size & passes_internal & !passes_connectedness
+    ),
+    n_unassigned = sum(!names(res$clusters) %in% names(res$clusters_reliable))
+  )
+}
+run_grid <- function(n_reps, label, ...) {
+  dplyr::bind_rows(lapply(seq_len(n_reps), function(i) run_one(...))) |>
+    dplyr::mutate(scenario = label)
+}
+```
+
+## Worked example
+
+```{r example}
+sim <- simulate_trait(
+  n_coloc_groups = 120,
+  K = 3,
+  overlap = "moderate",
+  n_background_snps = 30,
+  module_annotations = list(
+    list(tissues = "Liver", trait_categories = "Metabolic"),
+    NULL,
+    NULL
+  ),
+  seed = 42
+)
+res <- do.call(
+  run_univariate_clustering,
+  c(list(trait_object = sim$trait_object), clustering_settings)
+)
+ev <- evaluate_univariate_simulation(sim, res)
+
+knitr::kable(
+  data.frame(
+    parameter = c("Louvain gamma", "similarity threshold", "minimum module size"),
+    value = c(
+      params$louvain_gamma,
+      params$similarity_threshold,
+      params$min_module_size
+    )
+  ),
+  caption = "Clustering settings for this rendered vignette"
+)
+
+knitr::kable(
+  data.frame(
+    metric = c("planted K", "detected K-hat", "K error", "ARI (all SNPs)",
+               "ARI (structured only)", "background absorbed", "coverage"),
+    value = c(ev$k_planted, ev$k_hat, ev$k_error,
+              round(ev$ari_all, 3), round(ev$ari_structured, 3),
+              round(ev$background_absorbed, 2), round(ev$coverage, 2))
+  ),
+  caption = "Single-run evaluation (3 planted modules with moderate overlap, 30 background SNPs)"
+)
+```
+
+```{r example-confusion}
+knitr::kable(ev$confusion, caption = "Truth vs predicted partition")
+```
+
+```{r example-quality}
+quality_display <- res$module_quality |>
+  dplyr::mutate(
+    passes_size = n_snps >= params$min_module_size,
+    passes_internal = is.finite(mean_internal_similarity) &
+      mean_internal_similarity >= 0.3,
+    passes_connectedness = is.finite(connectedness) & connectedness >= 0.5,
+    failure_reason = dplyr::case_when(
+      reliable ~ "kept",
+      !passes_size & !passes_internal & !passes_connectedness ~
+        "size; internal; connectedness",
+      !passes_size & !passes_internal ~ "size; internal",
+      !passes_size & !passes_connectedness ~ "size; connectedness",
+      !passes_internal & !passes_connectedness ~ "internal; connectedness",
+      !passes_size ~ "size",
+      !passes_internal ~ "internal similarity",
+      !passes_connectedness ~ "connectedness",
+      TRUE ~ "other"
+    )
+  ) |>
+  dplyr::select(
+    cluster, n_snps, mean_internal_similarity, connectedness,
+    passes_size, passes_internal, passes_connectedness, reliable,
+    failure_reason
+  ) |>
+  dplyr::mutate(
+    dplyr::across(
+      c(mean_internal_similarity, connectedness),
+      ~ round(.x, 3)
+    )
+  )
+
+knitr::kable(
+  quality_display,
+  caption = "Worked-example modules before and after reliability filtering"
+)
+
+knitr::kable(
+  data.frame(
+    stage = c(
+      "Louvain output",
+      "Dropped by minimum size",
+      "Dropped by internal similarity after size",
+      "Dropped by connectedness after size and internal similarity",
+      "Reliable output"
+    ),
+    n_modules = c(
+      nrow(res$module_quality),
+      sum(!quality_display$passes_size),
+      sum(quality_display$passes_size & !quality_display$passes_internal),
+      sum(
+        quality_display$passes_size & quality_display$passes_internal &
+          !quality_display$passes_connectedness
+      ),
+      sum(quality_display$reliable)
+    )
+  ),
+  caption = "Where worked-example modules are dropped"
+)
+```
+
+## Scenario 1: false structure under the null
+
+Independent sparse profiles with no shared latent structure. A well-behaved
+method should return few reliable modules and leave most SNPs unassigned; a
+large `k_hat` or high `coverage` indicates hallucinated structure.
+
+```{r null-grid}
+null_results <- dplyr::bind_rows(
+  run_grid(n_reps, "n=50", n_coloc_groups = 50, K = 0, p_active_background = 0.05),
+  run_grid(n_reps, "n=200", n_coloc_groups = 200, K = 0, p_active_background = 0.05)
+)
+
+null_results |>
+  dplyr::group_by(scenario) |>
+  dplyr::summarise(
+    mean_k_hat = mean(k_hat),
+    sd_k_hat = sd(k_hat),
+    mean_coverage = mean(coverage),
+    mean_louvain_modules = mean(n_louvain_modules),
+    mean_dropped_size = mean(n_dropped_size),
+    mean_dropped_internal = mean(n_dropped_internal),
+    mean_dropped_connectedness = mean(n_dropped_connectedness),
+    .groups = "drop"
+  ) |>
+  knitr::kable(digits = 2, caption = "Null simulations: detected K and coverage")
+```
+
+## Scenario 2: dataset size
+
+Coloc-group counts of 10 / 50 / 200 / 500 / 900, crossed with planted K of 0
+and 3. Small datasets are watched for hallucinated multi-module output;
+large ones for degradation of recovery.
+
+```{r size-grid, fig.width=8, fig.height=4}
+sizes <- c(10, 50, 200, 500, 900)
+size_results <- dplyr::bind_rows(
+  lapply(sizes, function(n) {
+    dplyr::bind_rows(
+      run_grid(n_reps, sprintf("K=%d", 0), n_coloc_groups = n, K = 0,
+               p_active_background = 0.05),
+      run_grid(n_reps, sprintf("K=%d", 3), n_coloc_groups = n, K = 3,
+               p_active_background = 0.05)
+    ) |> dplyr::mutate(n_coloc_groups = n)
+  })
+)
+
+ggplot(size_results, aes(factor(n_coloc_groups), k_hat, fill = scenario)) +
+  geom_boxplot() +
+  geom_hline(data = dplyr::filter(size_results, scenario == "K=3"),
+             aes(yintercept = 3), linetype = "dashed") +
+  labs(x = "coloc groups", y = expression(hat(K)), fill = NULL,
+       title = "Detected number of modules vs dataset size") +
+  theme_minimal()
+
+ggplot(
+  dplyr::filter(size_results, scenario == "K=3"),
+  aes(factor(n_coloc_groups), ari_structured)
+) +
+  geom_boxplot(fill = "#c2571b", alpha = 0.7) +
+  labs(x = "coloc groups", y = "ARI (structured SNPs)",
+       title = "Module recovery vs dataset size (K = 3)") +
+  theme_minimal()
+```
+
+## Scenario 3: signed clustering
+
+Same effect magnitude, three sign regimes for drivers within each module:
+coherent (all positive), flipped (alternating signs — anti-correlated profiles
+share a module), random. If sign information is useful, coherent should beat
+flipped/random at recovering the planted partition.
+
+```{r sign-grid, fig.width=6, fig.height=4}
+sign_results <- dplyr::bind_rows(
+  run_grid(n_reps * 2, "coherent", n_coloc_groups = 150, K = 3,
+           sign_pattern = "coherent", noise_sd = 1),
+  run_grid(n_reps * 2, "flipped", n_coloc_groups = 150, K = 3,
+           sign_pattern = "flipped", noise_sd = 1),
+  run_grid(n_reps * 2, "random", n_coloc_groups = 150, K = 3,
+           sign_pattern = "random", noise_sd = 1)
+)
+
+ggplot(sign_results, aes(scenario, ari_structured, fill = scenario)) +
+  geom_boxplot(show.legend = FALSE) +
+  scale_x_discrete(limits = c("coherent", "flipped", "random")) +
+  labs(x = "driver sign regime", y = "ARI (structured SNPs)",
+       title = "Recovery under different driver-sign regimes") +
+  theme_minimal()
+```
+
+## Scenario 4: module overlap
+
+Disjoint, moderate (~50 shared SNPs between adjacent modules) and strong
+(~half the smaller module shared). Shared SNPs carry driver traits from both
+modules; their primary truth assignment is their earlier module.
+
+```{r overlap-grid, fig.width=6, fig.height=4}
+overlap_results <- dplyr::bind_rows(
+  run_grid(n_reps, "disjoint", n_coloc_groups = 300, K = 3, overlap = "disjoint"),
+  run_grid(n_reps, "moderate", n_coloc_groups = 300, K = 3, overlap = "moderate"),
+  run_grid(n_reps, "strong", n_coloc_groups = 300, K = 3, overlap = "strong")
+)
+
+ggplot(overlap_results, aes(scenario, ari_structured, fill = scenario)) +
+  geom_boxplot(show.legend = FALSE) +
+  scale_x_discrete(limits = c("disjoint", "moderate", "strong")) +
+  labs(x = "overlap regime", y = "ARI (structured SNPs)",
+       title = "Recovery as modules increasingly overlap") +
+  theme_minimal()
+```
+
+## Scenario 5: sparsity
+
+Structural zeros inside true module support (`p_structural_zero`) versus
+density elsewhere (`p_spurious`, `p_active_background`). Structural zeros are
+absent observations, not small effects.
+
+```{r sparsity-grid, fig.width=6, fig.height=4}
+sparsity_results <- dplyr::bind_rows(
+  run_grid(n_reps, "0.2", n_coloc_groups = 200, K = 3, p_structural_zero = 0.2),
+  run_grid(n_reps, "0.5", n_coloc_groups = 200, K = 3, p_structural_zero = 0.5),
+  run_grid(n_reps, "0.8", n_coloc_groups = 200, K = 3, p_structural_zero = 0.8)
+)
+
+sparsity_results |>
+  dplyr::mutate(p_zero = as.numeric(scenario)) |>
+  ggplot(aes(p_zero, ari_structured)) +
+  stat_summary(fun = mean, geom = "line") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.05) +
+  scale_x_continuous(breaks = c(0.2, 0.5, 0.8)) +
+  labs(x = "P(structural zero in module support)", y = "ARI (structured SNPs)",
+       title = "Recovery vs within-module sparsity") +
+  theme_minimal()
+```
+
+## Notes for interpreting runs
+
+- `ari_structured` measures whether planted module members co-cluster; it is
+  blind to background absorption. Read together with `background_absorbed`.
+- Under the null (`K = 0`), `k_hat > 0` and nonzero `coverage` quantify
+  hallucination; track both across replicates rather than single runs.
+- The Louvain resolution (`gamma`) and edge threshold are fixed here; rerun any
+  grid with different `run_univariate_clustering()` settings by editing
+  `run_one()`.
