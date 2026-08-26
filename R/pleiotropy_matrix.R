@@ -138,6 +138,8 @@ orient_pleiotropy_matrix <- function(x_matrix, target_trait_id, z_target = NULL)
 
   return(list(
     x_matrix = built$x_matrix,
+    beta_matrix = if (!is.null(built$beta_matrix)) built$beta_matrix else NULL,
+    se_matrix = if (!is.null(built$se_matrix)) built$se_matrix else NULL,
     trait_info = built$trait_info,
     snp_info = snp_info,
     target_trait_id = target_id
@@ -147,6 +149,7 @@ orient_pleiotropy_matrix <- function(x_matrix, target_trait_id, z_target = NULL)
 
 .build_study_level_pleiotropy_from_locus <- function(cg, snp_ids) {
   snp_ids <- as.character(snp_ids)
+  has_beta_se <- all(c("beta", "se") %in% names(cg))
   z_long <- cg |>
     dplyr::mutate(snp_id = as.character(snp_id)) |>
     dplyr::group_by(trait_id, snp_id) |>
@@ -196,17 +199,42 @@ orient_pleiotropy_matrix <- function(x_matrix, target_trait_id, z_target = NULL)
       feature_type = dplyr::coalesce(feature_type, "phenotypic")
     ) |>
     dplyr::select("trait_id", "trait_name", "feature_type", "gene", "tissue")
-
   snp_cols <- intersect(snp_ids, setdiff(names(z_wide), c("trait_id", "trait_name")))
   x_matrix <- matrix(numeric(0), nrow = 0, ncol = length(snp_ids))
   dimnames(x_matrix) <- list(character(0), snp_ids)
+
   if (length(snp_cols) > 0) {
     x_matrix <- as.matrix(z_wide[, snp_cols, drop = FALSE])
     rownames(x_matrix) <- as.character(z_wide$trait_id)
     x_matrix <- .ensure_matrix_columns(x_matrix, snp_ids)
   }
 
-  return(list(x_matrix = x_matrix, trait_info = trait_info))
+  out <- list(x_matrix = x_matrix, trait_info = trait_info)
+
+  if (has_beta_se && nrow(z_wide) > 0 && length(snp_cols) > 0) {
+    value_long <- cg |>
+      dplyr::mutate(snp_id = as.character(snp_id)) |>
+      dplyr::group_by(trait_id, snp_id) |>
+      dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
+      dplyr::ungroup() |>
+      dplyr::select("trait_id", "snp_id", "beta", "se") |>
+      dplyr::distinct()
+    beta_wide <- value_long |>
+      dplyr::select("trait_id", "snp_id", "beta") |>
+      tidyr::pivot_wider(names_from = "snp_id", values_from = "beta")
+    se_wide <- value_long |>
+      dplyr::select("trait_id", "snp_id", "se") |>
+      tidyr::pivot_wider(names_from = "snp_id", values_from = "se")
+    beta_cols <- intersect(snp_ids, setdiff(names(beta_wide), "trait_id"))
+    beta_matrix <- as.matrix(beta_wide[, beta_cols, drop = FALSE])
+    rownames(beta_matrix) <- as.character(beta_wide$trait_id)
+    se_matrix <- as.matrix(se_wide[, beta_cols, drop = FALSE])
+    rownames(se_matrix) <- as.character(se_wide$trait_id)
+    out$beta_matrix <- .ensure_matrix_columns(beta_matrix, snp_ids)
+    out$se_matrix <- .ensure_matrix_columns(se_matrix, snp_ids)
+  }
+
+  return(out)
 }
 
 

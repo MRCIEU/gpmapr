@@ -11,12 +11,17 @@ vignette: >
 params:
   api: "production"
   min_snp_signals: 5
-  louvain_gamma: 2
+  min_module_size: 5
+  cluster_type: "louvain"
+  louvain_gamma: 1.5
   compress_method: "none"
   compress_scale: 2
   include_trans: false
   include_situated_gene: false 
-  similarity_threshold: 0
+  similarity_threshold: 0.2
+  ebmf_se_mode: "unit"
+  ebmf_beta_scale: "trait"
+  ebmf_magnitude_threshold: 0.25
   associations: "coloc"
 ---
 
@@ -48,15 +53,16 @@ library(ggplot2)
 
 Single-trait SNP clustering: each column is a GWAS SNP for the target trait,
 each row is a background study (phenotypic or molecular; no collapsing).
-Profiles are oriented to the target, compressed, and clustered with **signed
-Louvain**. Modules are then filtered by graph reliability
+Profiles are oriented, compressed, and clustered with **`r params$cluster_type`**
+(Louvain: signed modularity on the SNP similarity graph; EBMF: empirical Bayes
+matrix factorization with overlapping programs, hard-assigned to their
+strongest factor). Modules/programs are then filtered by graph reliability
 (internal similarity and connectedness) before interpretation.
 
 We use **BMI** (trait id `1992`).
 
 ```{r params}
 target_trait_id <- 1992
-min_module_size <- 3
 min_group_size <- 5
 max_snp_fraction <- 0.8
 top_n_traits <- 10L
@@ -65,13 +71,22 @@ min_mean_internal <- 0.3
 min_connectedness <- 0.5
 
 api <- params$api
+min_module_size <- as.integer(params$min_module_size)
 min_snp_signals <- as.integer(params$min_snp_signals)
+cluster_type <- params$cluster_type
 louvain_gamma <- as.numeric(params$louvain_gamma)
 compress_method <- params$compress_method
 compress_scale <- as.numeric(params$compress_scale)
 include_trans <- isTRUE(params$include_trans)
 include_situated_gene <- isTRUE(params$include_situated_gene)
 similarity_threshold <- as.numeric(params$similarity_threshold)
+ebmf_se_mode <- params$ebmf_se_mode
+ebmf_beta_scale <- params$ebmf_beta_scale
+ebmf_magnitude_threshold <- if (is.na(params$ebmf_magnitude_threshold)) {
+  NA_real_
+} else {
+  as.numeric(params$ebmf_magnitude_threshold)
+}
 associations <- params$associations
 
 select_api(api)
@@ -81,6 +96,7 @@ knitr::kable(
     api = api,
     gpmap_url = getOption("gpmap_url"),
     min_snp_signals = min_snp_signals,
+    cluster_type = cluster_type,
     louvain_gamma = louvain_gamma,
     compress_method = compress_method,
     compress_scale = compress_scale,
@@ -88,6 +104,9 @@ knitr::kable(
     include_situated_gene = include_situated_gene,
     min_specificity = min_specificity,
     similarity_threshold = similarity_threshold,
+    ebmf_se_mode = if (cluster_type == "ebmf") ebmf_se_mode else NULL,
+    ebmf_beta_scale = if (cluster_type == "ebmf") ebmf_beta_scale else NULL,
+    ebmf_magnitude_threshold = if (cluster_type == "ebmf") ebmf_magnitude_threshold else NULL,
     associations = associations,
     stringsAsFactors = FALSE
   ),
@@ -220,19 +239,62 @@ knitr::kable(
 )
 ```
 
-## Step 4: Signed Louvain clustering
+## Step 4: Clustering
 
-Edges with `|S| < similarity_threshold` are zeroed before Louvain.
+Edges with `|S| < similarity_threshold` are zeroed before Louvain. For EBMF,
+the oriented compressed matrix `X_star` is factorised directly (features x
+SNPs), a global mega-factor is dropped if detected, and each SNP is assigned to
+the factor with the largest absolute posterior loading among the factors it
+significantly belongs to.
 
 ```{r step4-cluster}
-clusters_louvain <- cluster_snp_profiles_louvain(
-  S,
-  similarity_threshold = similarity_threshold,
-  gamma = louvain_gamma
+ebmf_se_input <- NULL
+ebmf_x_input <- X_star
+if (cluster_type == "ebmf" && ebmf_se_mode == "matrix") {
+  beta_matrix <- pleiotropy$beta_matrix
+  se_matrix <- pleiotropy$se_matrix
+  if (!is.null(beta_matrix)) {
+    shared_rows <- intersect(rownames(X_star), rownames(beta_matrix))
+    beta_oriented <- sweep(
+      beta_matrix[shared_rows, colnames(X_star), drop = FALSE],
+      2,
+      orient_pleiotropy_matrix(X, target_trait_id = target_trait_id)$target_signs[colnames(X_star)],
+      `*`
+    )
+    ebmf_x_input <- beta_oriented[rownames(X_star), , drop = FALSE]
+    ebmf_se_input <- se_matrix[
+      rownames(ebmf_x_input), colnames(X_star), drop = FALSE
+    ]
+    if (ebmf_beta_scale == "trait") {
+      row_scale <- sqrt(rowMeans(ebmf_x_input^2, na.rm = TRUE))
+      row_scale[!is.finite(row_scale) | row_scale <= 0] <- 1
+      ebmf_x_input <- sweep(ebmf_x_input, 1, row_scale, `/`)
+      ebmf_se_input <- sweep(ebmf_se_input, 1, row_scale, `/`)
+    }
+  } else {
+    warning("ebmf_se_mode = 'matrix' unavailable (no beta/se); falling back to unit z-scores")
+    ebmf_se_input <- NULL
+  }
+}
+
+clusters_fit <- switch(
+  cluster_type,
+  louvain = cluster_snp_profiles_louvain(
+    S,
+    similarity_threshold = similarity_threshold,
+    gamma = louvain_gamma
+  ),
+  ebmf = .cluster_snp_profiles_ebmf(
+    ebmf_x_input,
+    lfsr_threshold = 0.05,
+    magnitude_threshold = ebmf_magnitude_threshold,
+    observed_se_matrix = ebmf_se_input
+  ),
+  stop("Unknown cluster_type: ", cluster_type)
 )
 ```
 
-## Step 4.5: Signed Louvain clustering and Module reliability
+## Step 4.5: Module reliability
 
 `summarise_snp_module_quality()` scores each module on the similarity graph:
 
@@ -246,7 +308,7 @@ similarity `>= min_mean_internal`, and connectedness `>= min_connectedness`.
 ```{r step4-quality}
 module_quality <- summarise_snp_module_quality(
   S,
-  clusters_louvain$cluster,
+  clusters_fit$cluster,
   edge_threshold = similarity_threshold,
   min_module_size = min_module_size,
   min_mean_internal = min_mean_internal,
@@ -268,8 +330,8 @@ knitr::kable(
 )
 
 reliable_ids <- module_quality$cluster[module_quality$reliable]
-clusters_analysis <- clusters_louvain$cluster[
-  clusters_louvain$cluster %in% reliable_ids
+clusters_analysis <- clusters_fit$cluster[
+  clusters_fit$cluster %in% reliable_ids
 ]
 ```
 
@@ -281,7 +343,7 @@ if (length(clusters_analysis) >= 2) {
     Rowv = NA,
     Colv = NA,
     scale = "none",
-    main = "SNP similarity (reliable Louvain modules)",
+    main = sprintf("SNP similarity (reliable %s modules)", cluster_type),
     xlab = "SNPs",
     ylab = "SNPs"
   )
@@ -304,7 +366,9 @@ hits are reported as **pathways** and HP terms as **phenotypes**, so the two
 never compete for the same headline.
 
 Trait baseline = all SNPs attributed to this trait in the clustering analysis
-(`names(clusters_louvain$cluster)`), using coloc rows for those SNPs only—not
+(`colnames(S)`; for Louvain this equals `names(clusters$cluster)`, and for EBMF
+it is kept identical so both methods are annotated against the same baseline),
+using coloc rows for those SNPs only—not
 the whole GPMap universe. Each module is compared to the **rest of the trait**
 (leave-one-out): observed link share vs expected share, with fold enrichment.
 
@@ -328,7 +392,7 @@ a wide interval that includes 1 (the null), so read the CI together with the
 FDR rather than alone.
 
 ```{r step5-interpret}
-baseline_snp_ids <- names(clusters_louvain$cluster)
+baseline_snp_ids <- colnames(S)
 
 if (length(clusters_analysis) == 0) {
   cat("No reliable modules to interpret.\n")

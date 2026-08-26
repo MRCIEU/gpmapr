@@ -36,15 +36,26 @@
 #'   smaller adjacent module shared), or an explicit non-negative integer
 #'   applied to every adjacent pair. Overlap is capped at half the smaller
 #'   module minus one.
+#' @param driver_sharing Fraction (0–1) of each module's drivers whose support
+#'   extends into the previous module, so adjacent modules share some driver
+#'   traits. Zero (default) gives every module an exclusive driver set, which
+#'   makes same-signature modules statistically exchangeable in trait space
+#'   and lets factor models merge them without loss. Positive sharing creates
+#'   chain-like overlap structure that penalises merging.
 #' @param drivers_per_module Number of driver traits per module.
 #' @param n_background_traits Number of unstructured background traits.
-#' @param effect_size Mean absolute z-score of driver effects inside their module.
+#' @param effect_size Mean absolute z-score of driver effects inside their
+#'   module. Either a single number applied to every module, or a numeric
+#'   vector of length `K` giving one value per module. Varying effect sizes
+#'   across modules breaks the exchangeability of same-signature modules so
+#'   that methods which operate in trait space (e.g. EBMF) can separate them.
 #' @param noise_sd Standard deviation of noise effects added everywhere.
 #' @param sign_pattern Driver-sign regime: `"coherent"` (all drivers positive),
 #'   `"flipped"` (signs alternate across drivers within a module, so
 #'   anti-correlated profiles share a module), `"random"` (independent signs).
 #' @param p_structural_zero Probability that a cell inside a module's true
-#'   support is absent entirely (structural zero).
+#'   support is absent entirely (structural zero). Either a single number or a
+#'   numeric vector of length `K`.
 #' @param p_spurious Probability that a cell outside true support carries a
 #'   small noise effect rather than being absent.
 #' @param p_active_background Per-SNP activation probability for background
@@ -61,6 +72,14 @@
 #'   traits molecular (non-missing `gene_id`).
 #' @param annotation_noise Probability that any single planted annotation is
 #'   replaced by a random draw from the corresponding pool.
+#' @param log_se_sd Standard deviation (on the log scale) of per-cell standard
+#'   errors, drawn as `se = exp(N(0, log_se_sd))`. Zero (default) gives
+#'   `se = 1` everywhere, so beta equals the z-score. Positive values emulate
+#'   heterogeneous GWAS sample sizes: observed betas keep their raw scale,
+#'   z-scores become noisy rescalings of them, and methods given access to the
+#'   true SEs can down-weight imprecise cells. This is what makes it possible
+#'   to test whether SE-aware clustering (EBMF `ebmf_se_mode = "matrix"`)
+#'   recovers structure better than unit-z clustering.
 #' @param seed Optional RNG seed; a random one is drawn and recorded when `NULL`.
 #' @return A list with:
 #'   \itemize{
@@ -79,6 +98,7 @@ simulate_trait <- function(n_coloc_groups = 100,
                            n_background_snps = 0,
                            overlap = "disjoint",
                            drivers_per_module = 5L,
+                           driver_sharing = 0,
                            n_background_traits = 40L,
                            effect_size = 3,
                            noise_sd = 0.5,
@@ -89,8 +109,9 @@ simulate_trait <- function(n_coloc_groups = 100,
                            snps_per_trait = NULL,
                            traits_per_snp = NULL,
                            module_annotations = NULL,
-                           annotation_noise = 0.1,
-                           seed = NULL) {
+                            annotation_noise = 0.1,
+                            log_se_sd = 0,
+                            seed = NULL) {
   sign_pattern <- match.arg(sign_pattern)
 
   if (!is.numeric(n_coloc_groups) || length(n_coloc_groups) != 1 ||
@@ -102,6 +123,13 @@ simulate_trait <- function(n_coloc_groups = 100,
   }
   n_snps <- as.integer(n_coloc_groups)
   K <- as.integer(K)
+
+  effect_size <- .expand_per_module_parameter(
+    effect_size, K, "effect_size", allow_empty = TRUE
+  )
+  p_structural_zero <- .expand_per_module_parameter(
+    p_structural_zero, K, "p_structural_zero", allow_empty = TRUE
+  )
 
   overlap_n <- .resolve_overlap(overlap, K)
   if (!is.null(seed)) {
@@ -142,7 +170,7 @@ simulate_trait <- function(n_coloc_groups = 100,
 
   M[as.character(target_tid), ] <- ifelse(
     snp_module > 0,
-    effect_size * ifelse(snp_module %% 2 == 1, 1, -1),
+    effect_size[pmax(snp_module, 1)] * ifelse(snp_module %% 2 == 1, 1, -1),
     stats::rnorm(n_snps, 0, noise_sd)
   )
 
@@ -152,13 +180,19 @@ simulate_trait <- function(n_coloc_groups = 100,
     random = sample(c(-1, 1), n_drivers, replace = TRUE)
   )
   if (n_drivers > 0) {
+    n_shared_per_module <- floor(drivers_per_module * driver_sharing)
     for (d in seq_len(n_drivers)) {
       m <- driver_module[d]
       row <- as.character(driver_tids[d])
       in_module <- geometry$memberships[[m]]
+      slot <- (d - 1) %% drivers_per_module
+      if (m > 1 && slot < n_shared_per_module) {
+        in_module <- union(in_module, geometry$memberships[[m - 1]])
+      }
       M[row, in_module] <- ifelse(
-        stats::runif(length(in_module)) < (1 - p_structural_zero),
-        effect_size * driver_signs[d] + stats::rnorm(length(in_module), 0, noise_sd),
+        stats::runif(length(in_module)) < (1 - p_structural_zero[m]),
+        effect_size[m] * driver_signs[d] +
+          stats::rnorm(length(in_module), 0, noise_sd),
         NA_real_
       )
       off_module <- setdiff(seq_len(n_snps), in_module)
@@ -192,7 +226,14 @@ simulate_trait <- function(n_coloc_groups = 100,
     K = K
   )
 
-  cg <- .sim_coloc_groups_from_matrix(M, annotations)
+  se_matrix <- matrix(
+    exp(stats::rnorm(length(M), 0, log_se_sd)),
+    nrow = nrow(M),
+    ncol = ncol(M),
+    dimnames = dimnames(M)
+  )
+
+  cg <- .sim_coloc_groups_from_matrix(M, annotations, se_matrix)
   trait_object <- list(
     trait = list(
       id = target_tid,
@@ -227,6 +268,7 @@ simulate_trait <- function(n_coloc_groups = 100,
         n_background_snps_reserved = n_background_snps,
         n_background_snps_actual = sum(module_of == 0L),
         drivers_per_module = drivers_per_module,
+        driver_sharing = driver_sharing,
         n_background_traits = n_bg_traits,
         effect_size = effect_size,
         noise_sd = noise_sd,
@@ -234,10 +276,27 @@ simulate_trait <- function(n_coloc_groups = 100,
         p_structural_zero = p_structural_zero,
         p_spurious = p_spurious,
         p_active_background = p_active_background,
-        annotation_noise = annotation_noise
+        annotation_noise = annotation_noise,
+        log_se_sd = log_se_sd
       )
     )
   ))
+}
+
+
+.expand_per_module_parameter <- function(x, K, name, allow_empty = FALSE) {
+  if (!is.numeric(x) || length(x) == 0 || anyNA(x)) {
+    stop(name, " must be a non-NA numeric vector")
+  }
+  if (length(x) == 1L) {
+    x <- rep(x, max(K, 1L))
+  } else if (length(x) != K) {
+    stop(name, " must have length 1 or ", K)
+  }
+  if (any(x < 0)) {
+    stop(name, " must be non-negative")
+  }
+  return(x)
 }
 
 
@@ -493,19 +552,24 @@ simulate_trait <- function(n_coloc_groups = 100,
 }
 
 
-.sim_coloc_groups_from_matrix <- function(M, annotations) {
+.sim_coloc_groups_from_matrix <- function(M, annotations, se_matrix = NULL) {
   observed <- which(!is.na(M), arr.ind = TRUE)
   if (nrow(observed) == 0) {
     stop("simulated matrix has no observations")
   }
   trait_idx <- as.integer(rownames(M))[observed[, "row"]]
   snp_idx <- observed[, "col"]
-  z <- M[observed]
+  beta <- M[observed]
+
+  if (is.null(se_matrix)) {
+    se <- rep(1, length(beta))
+  } else {
+    se <- se_matrix[observed]
+  }
+  z <- beta / se
+  p <- pmax(2 * stats::pnorm(-abs(z)), 1e-300)
 
   anno <- annotations[match(trait_idx, annotations$trait_id), , drop = FALSE]
-  beta <- z
-  se <- 1
-  p <- pmax(2 * stats::pnorm(-abs(z)), 1e-300)
 
   cg <- data.frame(
     coloc_group_id = as.integer(snp_idx),

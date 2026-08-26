@@ -30,6 +30,42 @@
 #' @param compress_method Effect compression passed to `compress_effect_matrix()`.
 #' @param compress_scale Asinh scale passed to `compress_effect_matrix()`.
 #' @param similarity_threshold Edge threshold applied before Louvain clustering.
+#' @param cluster_type Clustering method: `"louvain"` (default, signed Louvain
+#'   on the SNP similarity graph), `"spectral"` (normalised Laplacian embedding
+#'   plus k-means), or `"ebmf"` (empirical Bayes matrix factorization via
+#'   flashier; soft factors are converted to hard clusters by assigning each
+#'   SNP to the factor with the largest absolute posterior loading).
+#' @param spectral_k Number of clusters for `cluster_type = "spectral"`.
+#' @param ebmf_greedy_Kmax Maximum number of EBMF factors for
+#'   `cluster_type = "ebmf"`.
+#' @param ebmf_lfsr_threshold lFSR threshold for EBMF program membership.
+#' @param ebmf_magnitude_threshold Minimum absolute posterior mean loading for
+#'   EBMF program membership.
+#' @param ebmf_drop_global If `TRUE` (default), drop at most one global
+#'   mega-factor (via `identify_ebmf_global_factors()`) before extracting EBMF
+#'   programs. This guards against the near-null "one giant cluster" failure
+#'   mode.
+#' @param ebmf_prior Prior family for EBMF loadings/factors:
+#'   `"point_normal"` (default) or `"point_laplace"` (heavier tails, often
+#'   better when true effects are large relative to noise).
+#' @param ebmf_backfit If `TRUE` (default), cyclically refit all factors after
+#'   the greedy phase. `FALSE` is faster but leaves greedy-order artifacts.
+#' @param ebmf_se_mode Noise model for EBMF. `"unit"` (default) treats every
+#'   observed z-score as having standard error 1. `"matrix"` passes the
+#'   observed per-cell standard errors to flashier, so imprecise estimates are
+#'   down-weighted and winner's-curse inflation of tiny-but-precise effects is
+#'   avoided. In `"matrix"` mode the EBMF input is the oriented *beta* matrix
+#'   (compression is skipped, as it would violate the noise model), so
+#'   `ebmf_magnitude_threshold` reads raw-beta-scale loadings — consider `NA`
+#'   to gate membership on lFSR alone. Caveat: betas from different traits are
+#'   on study-native scales, so factors can be dominated by large-unit traits;
+#'   z-scores (`"unit"`) harmonise units at the cost of discarding precision.
+#' @param ebmf_beta_scale Scale normalisation for `ebmf_se_mode = "matrix"`:
+#'   `"none"` uses study-native betas; `"trait"` (recommended) divides each
+#'   trait row's betas and SEs by that row's root-mean-square beta, which
+#'   harmonises units across traits while preserving within-trait precision
+#'   information (z-scores remain unchanged by this since beta/se is
+#'   scale-invariant).
 #' @param louvain_gamma Signed Louvain resolution parameter.
 #' @param seed RNG seed for Louvain node-order randomisation.
 #' @param min_module_size Minimum SNPs for a module to be reliable.
@@ -68,6 +104,16 @@ run_univariate_clustering <- function(trait_object,
                                       compress_method = c("none", "asinh"),
                                       compress_scale = 2,
                                       similarity_threshold = 0,
+                                      cluster_type = c("louvain", "spectral", "ebmf"),
+                                      spectral_k = 3L,
+                                      ebmf_greedy_Kmax = 50L,
+                                      ebmf_lfsr_threshold = 0.05,
+                                      ebmf_magnitude_threshold = 0.25,
+                                      ebmf_drop_global = TRUE,
+                                      ebmf_prior = c("point_normal", "point_laplace"),
+                                      ebmf_backfit = TRUE,
+                                      ebmf_se_mode = c("unit", "matrix"),
+                                      ebmf_beta_scale = c("none", "trait"),
                                       louvain_gamma = 2,
                                       seed = 1L,
                                       min_module_size = 3L,
@@ -79,6 +125,10 @@ run_univariate_clustering <- function(trait_object,
   associations <- match.arg(associations)
   snp_key <- match.arg(snp_key)
   compress_method <- match.arg(compress_method)
+  cluster_type <- match.arg(cluster_type)
+  ebmf_prior <- match.arg(ebmf_prior)
+  ebmf_se_mode <- match.arg(ebmf_se_mode)
+  ebmf_beta_scale <- match.arg(ebmf_beta_scale)
 
   if (is.null(trait_object)) {
     stop("trait_object is required")
@@ -142,6 +192,13 @@ run_univariate_clustering <- function(trait_object,
   )
   if (length(drop_trait_ids) > 0) {
     X <- X[!rownames(X) %in% drop_trait_ids, , drop = FALSE]
+    for (mat in c("beta_matrix", "se_matrix")) {
+      if (!is.null(pleiotropy[[mat]])) {
+        pleiotropy[[mat]] <- pleiotropy[[mat]][
+          !rownames(pleiotropy[[mat]]) %in% drop_trait_ids, , drop = FALSE
+        ]
+      }
+    }
     pleiotropy$trait_info <- pleiotropy$trait_info |>
       dplyr::filter(!as.character(trait_id) %in% drop_trait_ids)
   }
@@ -156,21 +213,69 @@ run_univariate_clustering <- function(trait_object,
 
   similarity <- snp_similarity_matrix(X_star)
 
-  clusters <- cluster_snp_profiles_louvain(
-    similarity$s_matrix,
-    similarity_threshold = similarity_threshold,
-    gamma = louvain_gamma,
-    seed = seed
+  ebmf_x_input <- X_star
+  ebmf_se_input <- NULL
+  if (cluster_type == "ebmf" && ebmf_se_mode == "matrix") {
+    if (is.null(pleiotropy$beta_matrix) || is.null(pleiotropy$se_matrix)) {
+      stop("ebmf_se_mode = 'matrix' requires beta and se columns in coloc_groups")
+    }
+    shared_rows <- intersect(
+      rownames(oriented$x_matrix),
+      rownames(pleiotropy$beta_matrix)
+    )
+    beta_oriented <- sweep(
+      pleiotropy$beta_matrix[shared_rows, colnames(X), drop = FALSE],
+      2, oriented$target_signs[colnames(X)], `*`
+    )
+    ebmf_x_input <- beta_oriented[rownames(X), , drop = FALSE]
+    ebmf_se_input <- pleiotropy$se_matrix[
+      rownames(ebmf_x_input), colnames(X), drop = FALSE
+    ]
+    if (ebmf_beta_scale == "trait") {
+      row_scale <- sqrt(rowMeans(ebmf_x_input^2, na.rm = TRUE))
+      row_scale[!is.finite(row_scale) | row_scale <= 0] <- 1
+      ebmf_x_input <- sweep(ebmf_x_input, 1, row_scale, `/`)
+      ebmf_se_input <- sweep(ebmf_se_input, 1, row_scale, `/`)
+    }
+  }
+
+  clusters <- switch(
+    cluster_type,
+    louvain = cluster_snp_profiles_louvain(
+      similarity$s_matrix,
+      similarity_threshold = similarity_threshold,
+      gamma = louvain_gamma,
+      seed = seed
+    ),
+    spectral = cluster_snp_profiles_spectral(
+      similarity$s_matrix,
+      k = spectral_k,
+      similarity_threshold = similarity_threshold
+    ),
+    ebmf = .cluster_snp_profiles_ebmf(
+      ebmf_x_input,
+      greedy_Kmax = ebmf_greedy_Kmax,
+      lfsr_threshold = ebmf_lfsr_threshold,
+      magnitude_threshold = ebmf_magnitude_threshold,
+      drop_global = ebmf_drop_global,
+      prior = ebmf_prior,
+      backfit = ebmf_backfit,
+      observed_se_matrix = ebmf_se_input
+    )
   )
 
-  module_quality <- summarise_snp_module_quality(
-    similarity$s_matrix,
-    clusters$cluster,
-    edge_threshold = similarity_threshold,
-    min_module_size = min_module_size,
-    min_mean_internal = min_mean_internal,
-    min_connectedness = min_connectedness
-  )
+  if (length(clusters$cluster) >= 2) {
+    module_quality <- summarise_snp_module_quality(
+      similarity$s_matrix,
+      clusters$cluster,
+      edge_threshold = similarity_threshold,
+      min_module_size = min_module_size,
+      min_mean_internal = min_mean_internal,
+      min_connectedness = min_connectedness
+    )
+  } else {
+    module_quality <- .empty_module_quality()
+  }
   reliable_ids <- module_quality$cluster[module_quality$reliable]
   clusters_reliable <- clusters$cluster[clusters$cluster %in% reliable_ids]
 
@@ -198,6 +303,12 @@ run_univariate_clustering <- function(trait_object,
     eligible_matrix = similarity$eligible_matrix,
     clusters = clusters$cluster,
     clusters_reliable = clusters_reliable,
+    cluster_membership = if (!is.null(clusters$details$membership)) {
+      clusters$details$membership
+    } else {
+      NULL
+    },
+    cluster_details = clusters$details,
     module_quality = module_quality,
     trait_info = pleiotropy$trait_info,
     snp_info = pleiotropy$snp_info,
@@ -215,11 +326,162 @@ run_univariate_clustering <- function(trait_object,
       compress_method = compress_method,
       compress_scale = compress_scale,
       similarity_threshold = similarity_threshold,
+      cluster_type = cluster_type,
+      spectral_k = spectral_k,
+      ebmf_greedy_Kmax = ebmf_greedy_Kmax,
+      ebmf_lfsr_threshold = ebmf_lfsr_threshold,
+      ebmf_magnitude_threshold = ebmf_magnitude_threshold,
+      ebmf_drop_global = ebmf_drop_global,
+      ebmf_prior = ebmf_prior,
+      ebmf_backfit = ebmf_backfit,
+      ebmf_se_mode = ebmf_se_mode,
+      ebmf_beta_scale = ebmf_beta_scale,
       louvain_gamma = louvain_gamma,
       seed = seed,
       min_module_size = min_module_size,
       min_mean_internal = min_mean_internal,
       min_connectedness = min_connectedness
+    )
+  ))
+}
+
+
+.empty_module_quality <- function() {
+  return(data.frame(
+    cluster = integer(0),
+    n_snps = integer(0),
+    mean_internal_similarity = numeric(0),
+    mean_external_similarity = numeric(0),
+    separation = numeric(0),
+    connectedness = numeric(0),
+    n_internal_edges = integer(0),
+    n_internal_pairs = integer(0),
+    n_components = integer(0),
+    largest_component_frac = numeric(0),
+    mean_silhouette = numeric(0),
+    reliable = logical(0),
+    stringsAsFactors = FALSE
+  ))
+}
+
+
+.cluster_snp_profiles_ebmf <- function(x_matrix,
+                                       greedy_Kmax = 50L,
+                                       lfsr_threshold = 0.05,
+                                       magnitude_threshold = 0.25,
+                                       drop_global = TRUE,
+                                       prior = "point_normal",
+                                       backfit = TRUE,
+                                       observed_se_matrix = NULL) {
+  beta_matrix <- x_matrix
+  se_matrix <- matrix(
+    1,
+    nrow = nrow(beta_matrix),
+    ncol = ncol(beta_matrix),
+    dimnames = dimnames(beta_matrix)
+  )
+  se_mode <- "unit"
+  if (!is.null(observed_se_matrix)) {
+    stopifnot(identical(dim(beta_matrix), dim(observed_se_matrix)))
+    se_matrix[!is.na(beta_matrix)] <- observed_se_matrix[!is.na(beta_matrix)]
+    se_matrix[is.na(beta_matrix)] <- NA_real_
+    se_mode <- "matrix"
+  } else {
+    se_matrix[is.na(beta_matrix)] <- NA_real_
+  }
+
+  fit_error <- NULL
+  flash_fit <- tryCatch(
+    run_ebmf(
+      beta_matrix = beta_matrix,
+      se_matrix = se_matrix,
+      se_mode = se_mode,
+      greedy_Kmax = greedy_Kmax,
+      backfit = backfit,
+      ebnm_fn = .resolve_ebnm_fn(prior),
+      verbose = 0L
+    ),
+    error = function(e) {
+      fit_error <<- conditionMessage(e)
+      NULL
+    }
+  )
+
+  if (is.null(flash_fit)) {
+    warning("EBMF fit failed: ", fit_error, call. = FALSE)
+    return(list(
+      cluster = stats::setNames(integer(0), character(0)),
+      method = "ebmf",
+      n_clusters = 0L,
+      similarity_threshold = NULL,
+      gamma = NA_real_,
+      details = list(
+        flash_fit = NULL,
+        membership = NULL,
+        n_programs = 0L,
+        n_multi_program = 0L,
+        dropped_global_factors = integer(0),
+        error = fit_error
+      )
+    ))
+  }
+
+  dropped_global <- integer(0)
+  if (drop_global && flash_fit$n_factors > 0) {
+    preliminary <- extract_ebmf_clusters(
+      flash_fit,
+      lfsr_threshold = lfsr_threshold,
+      magnitude_threshold = magnitude_threshold
+    )
+    dropped_global <- identify_ebmf_global_factors(
+      flash_fit,
+      membership = preliminary$membership
+    )
+    if (length(dropped_global) > 0) {
+      flash_fit <- remove_ebmf_factors(flash_fit, kset = dropped_global)
+    }
+  }
+
+  extracted <- extract_ebmf_clusters(
+    flash_fit,
+    lfsr_threshold = lfsr_threshold,
+    magnitude_threshold = magnitude_threshold
+  )
+
+  snp_ids <- colnames(x_matrix)
+  cluster <- setNames(rep(NA_integer_, length(snp_ids)), snp_ids)
+  membership <- extracted$membership
+  if (!is.null(membership) && ncol(membership) > 0 && nrow(membership) > 0) {
+    loadings <- abs(flash_fit$F_pm[rownames(membership), , drop = FALSE])
+    loadings[!membership] <- -Inf
+    best <- max.col(loadings, ties.method = "first")
+    has_program <- rowSums(membership) > 0
+    assigned <- rownames(membership)[has_program]
+    cluster[assigned] <- best[has_program]
+  }
+
+  cluster <- cluster[!is.na(cluster)]
+  cluster_ids <- sort(unique(cluster))
+  if (length(cluster_ids) > 0) {
+    reindex <- setNames(seq_along(cluster_ids), as.character(cluster_ids))
+    cluster <- stats::setNames(
+      as.integer(reindex[as.character(cluster)]),
+      names(cluster)
+    )
+  }
+
+  return(list(
+    cluster = cluster,
+    method = "ebmf",
+    n_clusters = length(unique(cluster)),
+    similarity_threshold = NULL,
+    gamma = NA_real_,
+    details = list(
+      flash_fit = flash_fit,
+      membership = membership,
+      n_programs = extracted$n_programs,
+      n_multi_program = extracted$n_multi_program,
+      dropped_global_factors = dropped_global
     )
   ))
 }

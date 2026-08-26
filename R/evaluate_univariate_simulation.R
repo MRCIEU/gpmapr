@@ -18,6 +18,12 @@
 #'     \item background_absorbed: fraction of background SNPs placed into
 #'       reliable modules (higher = more hallucinated structure)
 #'     \item coverage: fraction of all SNPs placed into reliable modules
+#'     \item module_recall: named numeric vector; for each planted module, the
+#'       largest fraction of its SNPs contained in any single reliable predicted
+#'       module. Unlike ARI this does not require a one-to-one partition match,
+#'       so it scores overlapping/merged programs (e.g. from matrix
+#'       factorisation) fairly.
+#'     \item mean_module_recall: mean of `module_recall` across planted modules
 #'     \item confusion: truth-by-predicted contingency table over all SNPs
 #'   }
 #' @export
@@ -40,6 +46,22 @@ evaluate_univariate_simulation <- function(simulation, clustering_result) {
 
   structured <- truth_lab != "background"
 
+  recall_sets <- split(
+    names(pred_lab[structured][pred_lab[structured] != "unassigned"]),
+    pred_lab[structured][pred_lab[structured] != "unassigned"]
+  )
+  module_ids <- sort(unique(truth[truth > 0]))
+  module_recall <- vapply(module_ids, function(m) {
+    members <- names(truth_lab)[truth_lab == paste0("mod", m)]
+    if (length(recall_sets) == 0) {
+      return(0)
+    }
+    max(vapply(recall_sets, function(p) {
+      length(intersect(members, p)) / length(members)
+    }, numeric(1)))
+  }, numeric(1))
+  module_recall <- stats::setNames(module_recall, sprintf("mod%d", module_ids))
+
   k_planted <- length(unique(truth[truth > 0]))
   reliable_ids <- clustering_result$module_quality$cluster[
     clustering_result$module_quality$reliable
@@ -61,6 +83,8 @@ evaluate_univariate_simulation <- function(simulation, clustering_result) {
       NA_real_
     },
     coverage = mean(pred_lab != "unassigned"),
+    module_recall = module_recall,
+    mean_module_recall = if (length(module_recall)) mean(module_recall) else NA_real_,
     confusion = table(truth = truth_lab, predicted = pred_lab)
   ))
 }

@@ -16,6 +16,16 @@ run_univariate_clustering(
   compress_method = c("none", "asinh"),
   compress_scale = 2,
   similarity_threshold = 0,
+  cluster_type = c("louvain", "spectral", "ebmf"),
+  spectral_k = 3L,
+  ebmf_greedy_Kmax = 50L,
+  ebmf_lfsr_threshold = 0.05,
+  ebmf_magnitude_threshold = 0.25,
+  ebmf_drop_global = TRUE,
+  ebmf_prior = c("point_normal", "point_laplace"),
+  ebmf_backfit = TRUE,
+  ebmf_se_mode = c("unit", "matrix"),
+  ebmf_beta_scale = c("none", "trait"),
   louvain_gamma = 2,
   seed = 1L,
   min_module_size = 3L,
@@ -53,6 +63,52 @@ ignored otherwise).}
 \item{compress_scale}{Asinh scale passed to \code{compress_effect_matrix()}.}
 
 \item{similarity_threshold}{Edge threshold applied before Louvain clustering.}
+
+\item{cluster_type}{Clustering method: \code{"louvain"} (default, signed Louvain
+on the SNP similarity graph), \code{"spectral"} (normalised Laplacian embedding
+plus k-means), or \code{"ebmf"} (empirical Bayes matrix factorization via
+flashier; soft factors are converted to hard clusters by assigning each
+SNP to the factor with the largest absolute posterior loading).}
+
+\item{spectral_k}{Number of clusters for \code{cluster_type = "spectral"}.}
+
+\item{ebmf_greedy_Kmax}{Maximum number of EBMF factors for
+\code{cluster_type = "ebmf"}.}
+
+\item{ebmf_lfsr_threshold}{lFSR threshold for EBMF program membership.}
+
+\item{ebmf_magnitude_threshold}{Minimum absolute posterior mean loading for
+EBMF program membership.}
+
+\item{ebmf_drop_global}{If \code{TRUE} (default), drop at most one global
+mega-factor (via \code{identify_ebmf_global_factors()}) before extracting EBMF
+programs. This guards against the near-null "one giant cluster" failure
+mode.}
+
+\item{ebmf_prior}{Prior family for EBMF loadings/factors:
+\code{"point_normal"} (default) or \code{"point_laplace"} (heavier tails, often
+better when true effects are large relative to noise).}
+
+\item{ebmf_backfit}{If \code{TRUE} (default), cyclically refit all factors after
+the greedy phase. \code{FALSE} is faster but leaves greedy-order artifacts.}
+
+\item{ebmf_se_mode}{Noise model for EBMF. \code{"unit"} (default) treats every
+observed z-score as having standard error 1. \code{"matrix"} passes the
+observed per-cell standard errors to flashier, so imprecise estimates are
+down-weighted and winner's-curse inflation of tiny-but-precise effects is
+avoided. In \code{"matrix"} mode the EBMF input is the oriented \emph{beta} matrix
+(compression is skipped, as it would violate the noise model), so
+\code{ebmf_magnitude_threshold} reads raw-beta-scale loadings — consider \code{NA}
+to gate membership on lFSR alone. Caveat: betas from different traits are
+on study-native scales, so factors can be dominated by large-unit traits;
+z-scores (\code{"unit"}) harmonise units at the cost of discarding precision.}
+
+\item{ebmf_beta_scale}{Scale normalisation for \code{ebmf_se_mode = "matrix"}:
+\code{"none"} uses study-native betas; \code{"trait"} (recommended) divides each
+trait row's betas and SEs by that row's root-mean-square beta, which
+harmonises units across traits while preserving within-trait precision
+information (z-scores remain unchanged by this since beta/se is
+scale-invariant).}
 
 \item{louvain_gamma}{Signed Louvain resolution parameter.}
 

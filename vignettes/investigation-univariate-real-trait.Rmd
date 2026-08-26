@@ -1,0 +1,269 @@
+---
+title: "Real-trait univariate clustering"
+output:
+  rmarkdown::html_vignette:
+    includes:
+      in_header: investigation-wide.html
+params:
+  target_trait_id: 1992
+  louvain_gamma: 1.5
+  similarity_threshold: 0.2
+  min_module_size: 5
+vignette: >
+  %\VignetteIndexEntry{Real-trait univariate clustering}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+```{r libraries}
+pkg_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("devtools", quietly = TRUE)) {
+  devtools::load_all(pkg_root, quiet = TRUE)
+} else {
+  library(gpmapr)
+}
+library(dplyr)
+```
+
+Runs the univariate SNP clustering pipeline on real GPMap data for one target
+trait, under two clustering methods: signed Louvain on the SNP similarity graph,
+and empirical Bayes matrix factorization (EBMF). Louvain produces a hard
+partition; EBMF produces overlapping programs. Results are descriptive
+candidates, not null-calibrated discoveries.
+
+```{r fetch}
+select_api("production")
+obj <- trait(params$target_trait_id, include_associations = TRUE)
+cg <- obj$coloc_groups
+
+knitr::kable(
+  data.frame(
+    item = c(
+      "target trait id",
+      "association rows",
+      "SNPs (coloc groups)",
+      "background traits"
+    ),
+    value = c(
+      params$target_trait_id,
+      nrow(cg),
+      length(unique(cg$variant_id)),
+      length(unique(cg$trait_id[cg$trait_id != params$target_trait_id]))
+    )
+  ),
+  caption = "Dataset summary"
+)
+```
+
+## Signed Louvain clustering
+
+```{r louvain-run}
+res_lv <- run_univariate_clustering(
+  obj,
+  louvain_gamma = params$louvain_gamma,
+  similarity_threshold = params$similarity_threshold,
+  min_module_size = params$min_module_size,
+  compute_specific_traits = TRUE
+)
+q_lv <- res_lv$module_quality
+
+knitr::kable(
+  data.frame(
+    parameter = c("Louvain gamma", "similarity threshold", "minimum module size"),
+    value = c(params$louvain_gamma, params$similarity_threshold, params$min_module_size)
+  ),
+  caption = "Clustering settings"
+)
+
+knitr::kable(
+  data.frame(
+    stage = c("Louvain communities", "Reliable modules"),
+    n_modules = c(nrow(q_lv), sum(q_lv$reliable))
+  ),
+  caption = "Module counts before and after reliability filtering"
+)
+```
+
+```{r louvain-quality}
+knitr::kable(
+  q_lv |>
+    dplyr::filter(reliable) |>
+    dplyr::select(
+      cluster, n_snps, mean_internal_similarity, mean_external_similarity,
+      separation, connectedness
+    ) |>
+    dplyr::mutate(dplyr::across(
+      where(is.numeric), ~ round(.x, 3)
+    )),
+  row.names = FALSE,
+  caption = "Reliable Louvain modules"
+)
+```
+
+```{r louvain-drivers}
+gt <- res_lv$group_traits$by_group
+driver_rows <- lapply(gt, function(g) {
+  if (!g$group[1] %in% as.character(q_lv$cluster[q_lv$reliable])) {
+    return(NULL)
+  }
+  tr <- g$traits[order(-g$traits$abs_mean_z), ]
+  tr <- tr[tr$trait_id != as.character(params$target_trait_id), ]
+  if (nrow(tr) == 0) {
+    return(NULL)
+  }
+  data.frame(
+    module = g$group[1],
+    n_snps = g$n_snps[1],
+    rank = seq_len(nrow(tr)),
+    trait = paste0(tr$trait_name, " [", tr$trait_category, "]"),
+    mean_z = round(tr$mean_z, 1),
+    stringsAsFactors = FALSE
+  )
+})
+driver_df <- dplyr::bind_rows(driver_rows)
+
+knitr::kable(
+  driver_df |>
+    dplyr::filter(rank <= 5) |>
+    tidyr::pivot_wider(
+      id_cols = c(module, n_snps),
+      names_from = rank,
+      values_from = c(trait, mean_z),
+      names_vary = "slowest"
+    ),
+  row.names = FALSE,
+  caption = "Top background-trait drivers per reliable Louvain module (ranked by |mean z|)"
+)
+```
+
+## EBMF programs
+
+```{r ebmf-run}
+res_eb <- run_univariate_clustering(
+  obj,
+  cluster_type = "ebmf",
+  min_module_size = params$min_module_size
+)
+q_eb <- res_eb$module_quality
+mem <- res_eb$cluster_membership
+fit <- res_eb$details$flash_fit
+n_factors <- if (!is.null(fit)) as.integer(fit$n_factors) else 0L
+
+knitr::kable(
+  data.frame(
+    item = c(
+      "EBMF factors",
+      "global mega-factors dropped",
+      "programs",
+      "SNPs hard-assigned",
+      "SNPs in >1 program (overlap)"
+    ),
+    value = c(
+      n_factors,
+      length(res_eb$details$dropped_global_factors),
+      ncol(mem),
+      length(res_eb$clusters_reliable),
+      sum(rowSums(mem) > 1)
+    )
+  ),
+  caption = "EBMF fit summary"
+)
+
+if (ncol(mem) > 0) {
+  knitr::kable(
+    data.frame(
+      program = seq_len(ncol(mem)),
+      n_snps_member = as.integer(colSums(mem))
+    )[order(-colSums(mem)), ],
+    row.names = FALSE,
+    caption = "Program sizes (SNPs passing lFSR / magnitude thresholds per factor)"
+  )
+}
+```
+
+```{r ebmf-quality}
+if (any(q_eb$reliable)) {
+  knitr::kable(
+    q_eb |>
+      dplyr::filter(reliable) |>
+      dplyr::select(cluster, n_snps, mean_internal_similarity, separation, connectedness) |>
+      dplyr::mutate(dplyr::across(where(is.numeric), ~ round(.x, 3))),
+    row.names = FALSE,
+    caption = "Reliable EBMF-derived programs"
+  )
+} else {
+  cat("No EBMF-derived program passed reliability filters.\n")
+}
+```
+
+```{r ebmf-drivers}
+X_eb <- res_eb$x_star[, names(res_eb$clusters), drop = FALSE]
+drv <- summarise_snp_modules(
+  X_eb,
+  res_eb$clusters,
+  exclude_trait_id = params$target_trait_id,
+  top_n = 4
+)
+info <- res_eb$trait_info
+drv$trait <- info$trait_name[match(drv$trait_id, as.character(info$trait_id))]
+drv$trait[is.na(drv$trait)] <- drv$trait_id[is.na(drv$trait)]
+drv$n_snps_total <- as.integer(table(drv$cluster)[as.character(drv$cluster)])
+drv$reliable <- drv$cluster %in%
+  q_eb$cluster[q_eb$reliable]
+
+knitr::kable(
+  drv |>
+    dplyr::select(cluster, n_snps_total, reliable, trait, mean_z) |>
+    dplyr::arrange(cluster, dplyr::desc(abs(mean_z))),
+  row.names = FALSE,
+  caption = "Top drivers per EBMF program (all programs shown; reliable flag marks programs passing filters)"
+)
+```
+
+## Method agreement
+
+Louvain clusters SNP *profiles* on the similarity graph; EBMF finds axes of
+trait covariance with overlapping membership. Their hard assignments need not
+correspond one-to-one. The table below matches each EBMF program to its best-
+overlapping reliable Louvain module (Jaccard index).
+
+```{r agreement}
+rel_lv <- res_lv$clusters_reliable
+lv_sets <- split(names(rel_lv), rel_lv)
+agree_rows <- lapply(sort(unique(res_eb$clusters_reliable)), function(pg) {
+  snps_pg <- names(res_eb$clusters_reliable)[res_eb$clusters_reliable == pg]
+  jac <- vapply(lv_sets, function(ml) {
+    length(intersect(snps_pg, ml)) / length(union(snps_pg, ml))
+  }, numeric(1))
+  data.frame(
+    program = pg,
+    n_snps = length(snps_pg),
+    best_louvain_module = names(which.max(jac)),
+    jaccard = round(max(jac), 3)
+  )
+})
+agree_df <- dplyr::bind_rows(agree_rows)
+
+if (nrow(agree_df) > 0) {
+  knitr::kable(agree_df, row.names = FALSE,
+               caption = "Best Louvain-module match per EBMF program")
+} else {
+  cat("No EBMF programs available for comparison.\n")
+}
+```
+
+Low Jaccard is expected when EBMF programs cut across graph modules; interpret
+it jointly with the driver tables rather than as error. For overlap-aware
+comparison, use `res$cluster_membership` instead of hard assignments.

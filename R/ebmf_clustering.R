@@ -227,7 +227,7 @@ run_ebmf <- function(beta_matrix,
     ebnm_fn <- ebnm::ebnm_point_normal
   }
   if (missing(var_type)) {
-    var_type <- if (se_mode == "unit") NULL else 1L
+    var_type <- NULL
   }
 
   prepared <- .prepare_ebmf_flash_inputs(
@@ -856,17 +856,22 @@ remove_ebmf_factors <- function(flash_fit, kset = integer(0)) {
     se_matrix = se_matrix
   )
 
-  if (se_mode == "matrix") {
-    return(list(
-      data = filtered$beta_matrix,
-      S = filtered$se_matrix
-    ))
+  # Restore NA missingness; flashier skips NA cells natively. In "matrix"
+  # mode the observed per-cell SEs are passed as flashier's S (with NAs at
+  # unobserved cells), replacing the legacy Y = 0 / S = 1e6 fill which
+  # degraded fits.
+  data <- filtered$beta_matrix
+  S <- if (se_mode == "matrix") filtered$se_matrix else 1
+  missing <- is.na(data) |
+    (!is.matrix(S) && FALSE) | (is.matrix(S) & is.na(S)) |
+    (is.matrix(S) & S >= 1e6)
+  data[missing] <- NA_real_
+  if (is.matrix(S)) {
+    S[is.na(S)] <- NA_real_
+    S[S >= 1e6] <- NA_real_
   }
 
-  # unit S: restore NA missingness and let flashier use S = 1
-  data <- filtered$beta_matrix
-  data[filtered$se_matrix >= 1e6] <- NA_real_
-  return(list(data = data, S = 1))
+  return(list(data = data, S = S))
 }
 
 

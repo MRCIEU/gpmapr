@@ -11,6 +11,7 @@ simulate_trait(
   n_background_snps = 0,
   overlap = "disjoint",
   drivers_per_module = 5L,
+  driver_sharing = 0,
   n_background_traits = 40L,
   effect_size = 3,
   noise_sd = 0.5,
@@ -22,6 +23,7 @@ simulate_trait(
   traits_per_snp = NULL,
   module_annotations = NULL,
   annotation_noise = 0.1,
+  log_se_sd = 0,
   seed = NULL
 )
 }
@@ -46,9 +48,20 @@ module minus one.}
 
 \item{drivers_per_module}{Number of driver traits per module.}
 
+\item{driver_sharing}{Fraction (0–1) of each module's drivers whose support
+extends into the previous module, so adjacent modules share some driver
+traits. Zero (default) gives every module an exclusive driver set, which
+makes same-signature modules statistically exchangeable in trait space
+and lets factor models merge them without loss. Positive sharing creates
+chain-like overlap structure that penalises merging.}
+
 \item{n_background_traits}{Number of unstructured background traits.}
 
-\item{effect_size}{Mean absolute z-score of driver effects inside their module.}
+\item{effect_size}{Mean absolute z-score of driver effects inside their
+module. Either a single number applied to every module, or a numeric
+vector of length \code{K} giving one value per module. Varying effect sizes
+across modules breaks the exchangeability of same-signature modules so
+that methods which operate in trait space (e.g. EBMF) can separate them.}
 
 \item{noise_sd}{Standard deviation of noise effects added everywhere.}
 
@@ -57,7 +70,8 @@ module minus one.}
 anti-correlated profiles share a module), \code{"random"} (independent signs).}
 
 \item{p_structural_zero}{Probability that a cell inside a module's true
-support is absent entirely (structural zero).}
+support is absent entirely (structural zero). Either a single number or a
+numeric vector of length \code{K}.}
 
 \item{p_spurious}{Probability that a cell outside true support carries a
 small noise effect rather than being absent.}
@@ -80,6 +94,15 @@ traits molecular (non-missing \code{gene_id}).}
 
 \item{annotation_noise}{Probability that any single planted annotation is
 replaced by a random draw from the corresponding pool.}
+
+\item{log_se_sd}{Standard deviation (on the log scale) of per-cell standard
+errors, drawn as \code{se = exp(N(0, log_se_sd))}. Zero (default) gives
+\code{se = 1} everywhere, so beta equals the z-score. Positive values emulate
+heterogeneous GWAS sample sizes: observed betas keep their raw scale,
+z-scores become noisy rescalings of them, and methods given access to the
+true SEs can down-weight imprecise cells. This is what makes it possible
+to test whether SE-aware clustering (EBMF \code{ebmf_se_mode = "matrix"})
+recovers structure better than unit-z clustering.}
 
 \item{seed}{Optional RNG seed; a random one is drawn and recorded when \code{NULL}.}
 }

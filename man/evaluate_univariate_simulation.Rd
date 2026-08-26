@@ -25,6 +25,12 @@ unassigned SNPs as their own predicted class
 \item background_absorbed: fraction of background SNPs placed into
 reliable modules (higher = more hallucinated structure)
 \item coverage: fraction of all SNPs placed into reliable modules
+\item module_recall: named numeric vector; for each planted module, the
+largest fraction of its SNPs contained in any single reliable predicted
+module. Unlike ARI this does not require a one-to-one partition match,
+so it scores overlapping/merged programs (e.g. from matrix
+factorisation) fairly.
+\item mean_module_recall: mean of \code{module_recall} across planted modules
 \item confusion: truth-by-predicted contingency table over all SNPs
 }
 }

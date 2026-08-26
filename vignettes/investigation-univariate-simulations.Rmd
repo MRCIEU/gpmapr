@@ -5,9 +5,12 @@ output:
     includes:
       in_header: investigation-wide.html
 params:
+  cluster_type: louvain
   louvain_gamma: 1.5
   similarity_threshold: 0.2
   min_module_size: 5
+  drivers_per_module: 12
+  p_structural_zero: 0.3
 vignette: >
   %\VignetteIndexEntry{Simulation study of univariate clustering}
   %\VignetteEngine{knitr::rmarkdown}
@@ -40,6 +43,7 @@ n_reps <- 5
 set.seed(1)
 
 clustering_settings <- list(
+  cluster_type = params$cluster_type,
   louvain_gamma = params$louvain_gamma,
   similarity_threshold = params$similarity_threshold,
   min_module_size = params$min_module_size
@@ -63,7 +67,17 @@ Scenario coverage:
 
 ```{r helpers}
 run_one <- function(...) {
-  sim <- simulate_trait(..., seed = sample.int(.Machine$integer.max, 1))
+  dots <- list(...)
+  if (is.null(dots$drivers_per_module)) {
+    dots$drivers_per_module <- params$drivers_per_module
+  }
+  if (is.null(dots$p_structural_zero)) {
+    dots$p_structural_zero <- params$p_structural_zero
+  }
+  sim <- do.call(
+    simulate_trait,
+    c(dots, list(seed = sample.int(.Machine$integer.max, 1)))
+  )
   res <- do.call(
     run_univariate_clustering,
     c(list(trait_object = sim$trait_object), clustering_settings)
@@ -81,6 +95,7 @@ run_one <- function(...) {
     k_error = ev$k_error,
     ari_all = ev$ari_all,
     ari_structured = ev$ari_structured,
+    module_recall = ev$mean_module_recall,
     background_absorbed = ev$background_absorbed,
     coverage = ev$coverage,
     n_louvain_modules = nrow(quality),
@@ -106,6 +121,8 @@ sim <- simulate_trait(
   K = 3,
   overlap = "moderate",
   n_background_snps = 30,
+  drivers_per_module = params$drivers_per_module,
+  p_structural_zero = params$p_structural_zero,
   module_annotations = list(
     list(tissues = "Liver", trait_categories = "Metabolic"),
     NULL,
@@ -121,11 +138,21 @@ ev <- evaluate_univariate_simulation(sim, res)
 
 knitr::kable(
   data.frame(
-    parameter = c("Louvain gamma", "similarity threshold", "minimum module size"),
+    parameter = c(
+      "cluster type",
+      "Louvain gamma",
+      "similarity threshold",
+      "minimum module size",
+      "drivers per module",
+      "P(structural zero)"
+    ),
     value = c(
+      params$cluster_type,
       params$louvain_gamma,
       params$similarity_threshold,
-      params$min_module_size
+      params$min_module_size,
+      params$drivers_per_module,
+      params$p_structural_zero
     )
   ),
   caption = "Clustering settings for this rendered vignette"
@@ -134,12 +161,19 @@ knitr::kable(
 knitr::kable(
   data.frame(
     metric = c("planted K", "detected K-hat", "K error", "ARI (all SNPs)",
-               "ARI (structured only)", "background absorbed", "coverage"),
+               "ARI (structured only)", "mean module recall",
+               "background absorbed", "coverage"),
     value = c(ev$k_planted, ev$k_hat, ev$k_error,
               round(ev$ari_all, 3), round(ev$ari_structured, 3),
+              round(ev$mean_module_recall, 3),
               round(ev$background_absorbed, 2), round(ev$coverage, 2))
   ),
-  caption = "Single-run evaluation (3 planted modules with moderate overlap, 30 background SNPs)"
+  caption = paste(
+    "Single-run evaluation (3 planted modules with moderate overlap,",
+    "30 background SNPs). Module recall asks whether each planted module is",
+    "contained in some predicted program, so it scores merged/overlapping",
+    "programs (e.g. EBMF) fairly."
+  )
 )
 ```
 
