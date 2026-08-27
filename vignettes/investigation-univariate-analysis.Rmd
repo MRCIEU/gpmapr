@@ -10,18 +10,26 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 params:
   api: "production"
-  min_snp_signals: 5
-  min_module_size: 5
-  cluster_type: "louvain"
+  min_snp_signals: 2
+  min_module_size: 3
+  cluster_type: "ebmf"
   louvain_gamma: 1.5
-  compress_method: "none"
-  compress_scale: 2
+  compress_method: "asinh"
+  compress_scale: 5
   include_trans: false
   include_situated_gene: false 
   similarity_threshold: 0.2
   ebmf_se_mode: "unit"
   ebmf_beta_scale: "trait"
-  ebmf_magnitude_threshold: 0.25
+  ebmf_magnitude_threshold: 0.5
+  ebmf_lfsr_threshold: 0.05
+  ebmf_prior: "point_normal"
+  ebmf_backfit: true
+  n_null: 10
+  n_stability: 10
+  alpha_membership: 0.05
+  n_candidate_tier: 25
+  stability_threshold: 0.7
   associations: "coloc"
 ---
 
@@ -82,12 +90,20 @@ include_situated_gene <- isTRUE(params$include_situated_gene)
 similarity_threshold <- as.numeric(params$similarity_threshold)
 ebmf_se_mode <- params$ebmf_se_mode
 ebmf_beta_scale <- params$ebmf_beta_scale
+ebmf_lfsr_threshold <- as.numeric(params$ebmf_lfsr_threshold)
+ebmf_prior <- params$ebmf_prior
+ebmf_backfit <- isTRUE(params$ebmf_backfit)
 ebmf_magnitude_threshold <- if (is.na(params$ebmf_magnitude_threshold)) {
   NA_real_
 } else {
   as.numeric(params$ebmf_magnitude_threshold)
 }
 associations <- params$associations
+n_null <- as.integer(params$n_null)
+n_stability <- as.integer(params$n_stability)
+alpha_membership <- as.numeric(params$alpha_membership)
+n_candidate_tier <- as.integer(params$n_candidate_tier)
+stability_threshold <- as.numeric(params$stability_threshold)
 
 select_api(api)
 
@@ -106,7 +122,14 @@ knitr::kable(
     similarity_threshold = similarity_threshold,
     ebmf_se_mode = if (cluster_type == "ebmf") ebmf_se_mode else NULL,
     ebmf_beta_scale = if (cluster_type == "ebmf") ebmf_beta_scale else NULL,
+    ebmf_lfsr_threshold = if (cluster_type == "ebmf") ebmf_lfsr_threshold else NULL,
+    ebmf_prior = if (cluster_type == "ebmf") ebmf_prior else NULL,
+    ebmf_backfit = if (cluster_type == "ebmf") ebmf_backfit else NULL,
     ebmf_magnitude_threshold = if (cluster_type == "ebmf") ebmf_magnitude_threshold else NULL,
+    n_null = if (cluster_type == "ebmf") n_null else NULL,
+    n_stability = if (cluster_type == "ebmf") n_stability else NULL,
+    alpha_membership = if (cluster_type == "ebmf") alpha_membership else NULL,
+    stability_threshold = if (cluster_type == "ebmf") stability_threshold else NULL,
     associations = associations,
     stringsAsFactors = FALSE
   ),
@@ -248,50 +271,45 @@ the factor with the largest absolute posterior loading among the factors it
 significantly belongs to.
 
 ```{r step4-cluster}
-ebmf_se_input <- NULL
-ebmf_x_input <- X_star
-if (cluster_type == "ebmf" && ebmf_se_mode == "matrix") {
-  beta_matrix <- pleiotropy$beta_matrix
-  se_matrix <- pleiotropy$se_matrix
-  if (!is.null(beta_matrix)) {
-    shared_rows <- intersect(rownames(X_star), rownames(beta_matrix))
-    beta_oriented <- sweep(
-      beta_matrix[shared_rows, colnames(X_star), drop = FALSE],
-      2,
-      orient_pleiotropy_matrix(X, target_trait_id = target_trait_id)$target_signs[colnames(X_star)],
-      `*`
-    )
-    ebmf_x_input <- beta_oriented[rownames(X_star), , drop = FALSE]
-    ebmf_se_input <- se_matrix[
-      rownames(ebmf_x_input), colnames(X_star), drop = FALSE
-    ]
-    if (ebmf_beta_scale == "trait") {
-      row_scale <- sqrt(rowMeans(ebmf_x_input^2, na.rm = TRUE))
-      row_scale[!is.finite(row_scale) | row_scale <= 0] <- 1
-      ebmf_x_input <- sweep(ebmf_x_input, 1, row_scale, `/`)
-      ebmf_se_input <- sweep(ebmf_se_input, 1, row_scale, `/`)
-    }
-  } else {
-    warning("ebmf_se_mode = 'matrix' unavailable (no beta/se); falling back to unit z-scores")
-    ebmf_se_input <- NULL
-  }
-}
-
-clusters_fit <- switch(
-  cluster_type,
-  louvain = cluster_snp_profiles_louvain(
+ebmf_result <- NULL
+if (cluster_type == "louvain") {
+  clusters_fit <- cluster_snp_profiles_louvain(
     S,
     similarity_threshold = similarity_threshold,
     gamma = louvain_gamma
-  ),
-  ebmf = .cluster_snp_profiles_ebmf(
-    ebmf_x_input,
-    lfsr_threshold = 0.05,
-    magnitude_threshold = ebmf_magnitude_threshold,
-    observed_se_matrix = ebmf_se_input
-  ),
+  )
+} else if (cluster_type == "ebmf") {
+  ebmf_result <- run_univariate_clustering(
+    list(
+      trait = list(id = target_trait_id),
+      coloc_groups = cg
+    ),
+    target_trait_id = target_trait_id,
+    associations = associations,
+    include_trans = include_trans,
+    min_snp_signals = min_snp_signals,
+    max_snp_fraction = max_snp_fraction,
+    compress_method = compress_method,
+    compress_scale = compress_scale,
+    similarity_threshold = similarity_threshold,
+    cluster_type = "ebmf",
+    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
+    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
+    ebmf_prior = ebmf_prior,
+    ebmf_backfit = ebmf_backfit,
+    ebmf_se_mode = ebmf_se_mode,
+    ebmf_beta_scale = ebmf_beta_scale,
+    min_module_size = min_module_size,
+    min_mean_internal = min_mean_internal,
+    min_connectedness = min_connectedness
+  )
+  clusters_fit <- list(
+    cluster = ebmf_result$clusters,
+    details = ebmf_result$cluster_details
+  )
+} else {
   stop("Unknown cluster_type: ", cluster_type)
-)
+}
 ```
 
 ## Step 4.5: Module reliability
@@ -306,14 +324,18 @@ A module is `reliable` if it has at least `min_module_size` SNPs, internal
 similarity `>= min_mean_internal`, and connectedness `>= min_connectedness`.
 
 ```{r step4-quality}
-module_quality <- summarise_snp_module_quality(
-  S,
-  clusters_fit$cluster,
-  edge_threshold = similarity_threshold,
-  min_module_size = min_module_size,
-  min_mean_internal = min_mean_internal,
-  min_connectedness = min_connectedness
-)
+if (cluster_type == "louvain") {
+  module_quality <- summarise_snp_module_quality(
+    S,
+    clusters_fit$cluster,
+    edge_threshold = similarity_threshold,
+    min_module_size = min_module_size,
+    min_mean_internal = min_mean_internal,
+    min_connectedness = min_connectedness
+  )
+} else {
+  module_quality <- ebmf_result$module_quality
+}
 
 knitr::kable(
   module_quality |>
@@ -335,18 +357,101 @@ clusters_analysis <- clusters_fit$cluster[
 ]
 ```
 
+```{r step4-ebmf-reporting, results='asis'}
+if (cluster_type == "ebmf") {
+  cal <- calibrate_ebmf_programs(
+    ebmf_result,
+    n_null = n_null,
+    alpha_membership = alpha_membership,
+    n_candidate_tier = n_candidate_tier,
+    verbose = FALSE
+  )
+  stability <- stability_ebmf_programs(
+    ebmf_result,
+    n_rep = n_stability,
+    frac_traits = 0.8,
+    top_n = n_candidate_tier,
+    verbose = FALSE
+  )
+
+  ebmf_program_report <- cal$programs |>
+    dplyr::left_join(stability, by = "program") |>
+    dplyr::mutate(
+      replication = tidyr::replace_na(replication, 0),
+      raw_reliable = program %in% as.character(reliable_ids),
+      report_status = dplyr::case_when(
+        detected ~ "certified",
+        replication >= stability_threshold ~ "stable candidate",
+        TRUE ~ "candidate only"
+      )
+    ) |>
+    dplyr::arrange(
+      dplyr::desc(report_status == "certified"),
+      dplyr::desc(report_status == "stable candidate"),
+      dplyr::desc(replication),
+      dplyr::desc(n_core)
+    )
+
+  print(knitr::kable(
+    ebmf_program_report |>
+      dplyr::select(
+        program, loading_mass, n_candidate, replication,
+        sd_replication, detected, report_status
+      ) |>
+      dplyr::mutate(dplyr::across(
+        c(loading_mass, replication, sd_replication), ~ round(.x, 3)
+      )),
+    row.names = FALSE,
+    caption = "EBMF programs: calibrated core members and stability-based reporting status"
+  ))
+
+  soft_memberships <- cal$memberships |>
+    dplyr::filter(
+      !is.na(lfsr), lfsr < ebmf_lfsr_threshold,
+      is.na(ebmf_magnitude_threshold) |
+        abs_loading > ebmf_magnitude_threshold
+    )
+  overlap_ids <- soft_memberships |>
+    dplyr::count(snp_id) |>
+    dplyr::filter(n > 1) |>
+    dplyr::pull(snp_id)
+  overlap_memberships <- soft_memberships |>
+    dplyr::filter(snp_id %in% overlap_ids) |>
+    dplyr::select(snp_id, program, loading, abs_loading, lfsr, emp_p, q, tier)
+
+  clusters_analysis <- overlap_memberships |>
+    dplyr::transmute(
+      snp_id = snp_id,
+      group = as.character(program)
+    )
+}
+```
+
 ```{r step4-heatmap, fig.height = 7, fig.width = 7}
 if (length(clusters_analysis) >= 2) {
-  snp_order <- names(clusters_analysis)[order(clusters_analysis)]
-  heatmap(
-    S[snp_order, snp_order, drop = FALSE],
-    Rowv = NA,
-    Colv = NA,
-    scale = "none",
-    main = sprintf("SNP similarity (reliable %s modules)", cluster_type),
-    xlab = "SNPs",
-    ylab = "SNPs"
-  )
+  if (is.data.frame(clusters_analysis)) {
+    heatmap_groups <- stats::setNames(
+      clusters_analysis$group[!duplicated(clusters_analysis$snp_id)],
+      clusters_analysis$snp_id[!duplicated(clusters_analysis$snp_id)]
+    )
+  } else {
+    heatmap_groups <- clusters_analysis
+  }
+  snp_order <- names(heatmap_groups)[order(heatmap_groups)]
+  snp_order <- intersect(snp_order, rownames(S))
+  if (length(snp_order) < 2) {
+    cat("Fewer than 2 reported SNPs are present in the similarity matrix; skipping heatmap.\n")
+  } else {
+    heatmap(
+      S[snp_order, snp_order, drop = FALSE],
+      Rowv = NA,
+      Colv = NA,
+      scale = "none",
+      main = sprintf("SNP similarity (reliable %s modules)", cluster_type),
+      xlab = "SNPs",
+      ylab = "SNPs"
+    )
+  }
 } else {
   cat("Fewer than 2 SNPs in reliable modules; skipping heatmap.\n")
 }
@@ -394,7 +499,13 @@ FDR rather than alone.
 ```{r step5-interpret}
 baseline_snp_ids <- colnames(S)
 
-if (length(clusters_analysis) == 0) {
+has_analysis_groups <- if (is.data.frame(clusters_analysis)) {
+  nrow(clusters_analysis) > 0
+} else {
+  length(clusters_analysis) > 0
+}
+
+if (!has_analysis_groups) {
   cat("No reliable modules to interpret.\n")
   group_traits <- NULL
   group_categories <- NULL

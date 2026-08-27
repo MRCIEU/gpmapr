@@ -80,6 +80,14 @@
 #'   true SEs can down-weight imprecise cells. This is what makes it possible
 #'   to test whether SE-aware clustering (EBMF `ebmf_se_mode = "matrix"`)
 #'   recovers structure better than unit-z clustering.
+#' @param snp_driver_groups Number of sub-groups (`>= 1`) into which each
+#'   module's SNPs are partitioned. Group g responds only to driver-subset g
+#'   of the module, so with `snp_driver_groups > 1` SNPs within a module no
+#'   longer share one uniform driver pattern: each module becomes several
+#'   distinct sub-patterns instead of a single rank-1 axis. This breaks the
+#'   exchangeability that lets factor models merge otherwise identical modules
+#'   at no cost, and is closer to real biology where variants in a pathway tap
+#'   different subsets of it.
 #' @param seed Optional RNG seed; a random one is drawn and recorded when `NULL`.
 #' @return A list with:
 #'   \itemize{
@@ -111,6 +119,7 @@ simulate_trait <- function(n_coloc_groups = 100,
                            module_annotations = NULL,
                             annotation_noise = 0.1,
                             log_se_sd = 0,
+                            snp_driver_groups = 1,
                             seed = NULL) {
   sign_pattern <- match.arg(sign_pattern)
 
@@ -181,6 +190,16 @@ simulate_trait <- function(n_coloc_groups = 100,
   )
   if (n_drivers > 0) {
     n_shared_per_module <- floor(drivers_per_module * driver_sharing)
+    n_groups <- max(1L, as.integer(snp_driver_groups))
+    snp_groups <- vector("list", K)
+    if (n_groups > 1) {
+      for (m in seq_len(K)) {
+        idx <- geometry$memberships[[m]]
+        g <- cut(seq_along(idx), breaks = n_groups, labels = FALSE)
+        snp_groups[[m]] <- stats::setNames(g, colnames(M)[idx])
+      }
+    }
+    drivers_per_group <- drivers_per_module / n_groups
     for (d in seq_len(n_drivers)) {
       m <- driver_module[d]
       row <- as.character(driver_tids[d])
@@ -188,6 +207,15 @@ simulate_trait <- function(n_coloc_groups = 100,
       slot <- (d - 1) %% drivers_per_module
       if (m > 1 && slot < n_shared_per_module) {
         in_module <- union(in_module, geometry$memberships[[m - 1]])
+      }
+      if (n_groups > 1) {
+        driver_group <- min(n_groups, floor(slot / drivers_per_group) + 1)
+        grp <- snp_groups[[m]][as.character(colnames(M)[in_module])]
+        keep <- !is.na(grp) & grp == driver_group
+        in_module <- in_module[keep]
+        if (length(in_module) == 0) {
+          in_module <- geometry$memberships[[m]][1]
+        }
       }
       M[row, in_module] <- ifelse(
         stats::runif(length(in_module)) < (1 - p_structural_zero[m]),
@@ -277,7 +305,8 @@ simulate_trait <- function(n_coloc_groups = 100,
         p_spurious = p_spurious,
         p_active_background = p_active_background,
         annotation_noise = annotation_noise,
-        log_se_sd = log_se_sd
+        log_se_sd = log_se_sd,
+        snp_driver_groups = snp_driver_groups
       )
     )
   ))

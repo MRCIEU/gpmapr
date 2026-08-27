@@ -24,6 +24,7 @@ simulate_trait(
   module_annotations = NULL,
   annotation_noise = 0.1,
   log_se_sd = 0,
+  snp_driver_groups = 1,
   seed = NULL
 )
 }
@@ -103,6 +104,15 @@ z-scores become noisy rescalings of them, and methods given access to the
 true SEs can down-weight imprecise cells. This is what makes it possible
 to test whether SE-aware clustering (EBMF \code{ebmf_se_mode = "matrix"})
 recovers structure better than unit-z clustering.}
+
+\item{snp_driver_groups}{Number of sub-groups (\verb{>= 1}) into which each
+module's SNPs are partitioned. Group g responds only to driver-subset g
+of the module, so with \code{snp_driver_groups > 1} SNPs within a module no
+longer share one uniform driver pattern: each module becomes several
+distinct sub-patterns instead of a single rank-1 axis. This breaks the
+exchangeability that lets factor models merge otherwise identical modules
+at no cost, and is closer to real biology where variants in a pathway tap
+different subsets of it.}
 
 \item{seed}{Optional RNG seed; a random one is drawn and recorded when \code{NULL}.}
 }

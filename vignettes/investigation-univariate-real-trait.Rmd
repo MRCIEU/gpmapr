@@ -9,6 +9,11 @@ params:
   louvain_gamma: 1.5
   similarity_threshold: 0.2
   min_module_size: 5
+  n_null: 10
+  alpha_membership: 0.05
+  ebmf_se_mode: "unit"
+  ebmf_beta_scale: "trait"
+  ebmf_magnitude_threshold: 0.25
 vignette: >
   %\VignetteIndexEntry{Real-trait univariate clustering}
   %\VignetteEngine{knitr::rmarkdown}
@@ -154,11 +159,14 @@ knitr::kable(
 res_eb <- run_univariate_clustering(
   obj,
   cluster_type = "ebmf",
-  min_module_size = params$min_module_size
+  min_module_size = params$min_module_size,
+  ebmf_se_mode = params$ebmf_se_mode,
+  ebmf_beta_scale = params$ebmf_beta_scale,
+  ebmf_magnitude_threshold = params$ebmf_magnitude_threshold
 )
 q_eb <- res_eb$module_quality
 mem <- res_eb$cluster_membership
-fit <- res_eb$details$flash_fit
+fit <- res_eb$cluster_details$flash_fit
 n_factors <- if (!is.null(fit)) as.integer(fit$n_factors) else 0L
 
 knitr::kable(
@@ -230,6 +238,56 @@ knitr::kable(
   row.names = FALSE,
   caption = "Top drivers per EBMF program (all programs shown; reliable flag marks programs passing filters)"
 )
+```
+
+## Permutation-calibrated EBMF reporting
+
+The pipeline's hard gates are bypassed: the EBMF posterior is calibrated
+against permutation nulls of the observed matrix (each trait's values shuffled
+across SNPs, preserving sparsity and noise), and programs are reported only if
+they retain at least `min_module_size` FDR-controlled core members.
+
+```{r ebmf-calibration}
+cal <- calibrate_ebmf_programs(
+  res_eb,
+  n_null = params$n_null,
+  verbose = FALSE
+)
+
+knitr::kable(
+  cal$programs[cal$programs$n_core > 0, ],
+  row.names = FALSE,
+  caption = sprintf(
+    "EBMF programs after permutation calibration (%d nulls; detected = >= %d FDR-controlled members)",
+    params$n_null, params$min_module_size
+  )
+)
+
+core <- cal$memberships[cal$memberships$core & cal$memberships$q <= params$alpha_membership, ]
+if (nrow(core) > 0) {
+  cls <- setNames(core$program, core$snp_id)
+  Xc <- res_eb$x_star[, names(cls), drop = FALSE]
+  drv_core <- summarise_snp_modules(
+    Xc, cls,
+    exclude_trait_id = params$target_trait_id,
+    top_n = 5
+  )
+  info <- res_eb$trait_info
+  drv_core$trait <- info$trait_name[
+    match(drv_core$trait_id, as.character(info$trait_id))
+  ]
+  drv_core$trait[is.na(drv_core$trait)] <-
+    drv_core$trait_id[is.na(drv_core$trait)]
+  knitr::kable(
+    drv_core |>
+      dplyr::select(cluster, trait, mean_z) |>
+      dplyr::arrange(cluster, dplyr::desc(abs(mean_z))),
+    row.names = FALSE,
+    caption = "Top traits driving each program's FDR-controlled core SNPs"
+  )
+} else {
+  cat("No FDR-controlled core members at alpha =", params$alpha_membership, "\n")
+}
 ```
 
 ## Method agreement

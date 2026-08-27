@@ -50,6 +50,9 @@
 #'   better when true effects are large relative to noise).
 #' @param ebmf_backfit If `TRUE` (default), cyclically refit all factors after
 #'   the greedy phase. `FALSE` is faster but leaves greedy-order artifacts.
+#' @param ebmf_hard_assignment If `TRUE`, additionally create a legacy hard
+#'   SNP-to-program assignment by selecting the strongest surviving factor.
+#'   Defaults to `FALSE`: EBMF results remain soft and overlapping.
 #' @param ebmf_se_mode Noise model for EBMF. `"unit"` (default) treats every
 #'   observed z-score as having standard error 1. `"matrix"` passes the
 #'   observed per-cell standard errors to flashier, so imprecise estimates are
@@ -114,6 +117,7 @@ run_univariate_clustering <- function(trait_object,
                                       ebmf_backfit = TRUE,
                                       ebmf_se_mode = c("unit", "matrix"),
                                       ebmf_beta_scale = c("none", "trait"),
+                                      ebmf_hard_assignment = FALSE,
                                       louvain_gamma = 2,
                                       seed = 1L,
                                       min_module_size = 3L,
@@ -129,6 +133,10 @@ run_univariate_clustering <- function(trait_object,
   ebmf_prior <- match.arg(ebmf_prior)
   ebmf_se_mode <- match.arg(ebmf_se_mode)
   ebmf_beta_scale <- match.arg(ebmf_beta_scale)
+  if (!is.logical(ebmf_hard_assignment) || length(ebmf_hard_assignment) != 1L ||
+      is.na(ebmf_hard_assignment)) {
+    stop("ebmf_hard_assignment must be TRUE or FALSE")
+  }
 
   if (is.null(trait_object)) {
     stop("trait_object is required")
@@ -260,6 +268,7 @@ run_univariate_clustering <- function(trait_object,
       drop_global = ebmf_drop_global,
       prior = ebmf_prior,
       backfit = ebmf_backfit,
+      hard_assignment = ebmf_hard_assignment,
       observed_se_matrix = ebmf_se_input
     )
   )
@@ -309,6 +318,16 @@ run_univariate_clustering <- function(trait_object,
       NULL
     },
     cluster_details = clusters$details,
+    beta_matrix = if (!is.null(pleiotropy$beta_matrix)) {
+      pleiotropy$beta_matrix[rownames(X), , drop = FALSE]
+    } else {
+      NULL
+    },
+    se_matrix = if (!is.null(pleiotropy$se_matrix)) {
+      pleiotropy$se_matrix[rownames(X), , drop = FALSE]
+    } else {
+      NULL
+    },
     module_quality = module_quality,
     trait_info = pleiotropy$trait_info,
     snp_info = pleiotropy$snp_info,
@@ -336,6 +355,7 @@ run_univariate_clustering <- function(trait_object,
       ebmf_backfit = ebmf_backfit,
       ebmf_se_mode = ebmf_se_mode,
       ebmf_beta_scale = ebmf_beta_scale,
+      ebmf_hard_assignment = ebmf_hard_assignment,
       louvain_gamma = louvain_gamma,
       seed = seed,
       min_module_size = min_module_size,
@@ -372,6 +392,7 @@ run_univariate_clustering <- function(trait_object,
                                        drop_global = TRUE,
                                        prior = "point_normal",
                                        backfit = TRUE,
+                                       hard_assignment = TRUE,
                                        observed_se_matrix = NULL) {
   beta_matrix <- x_matrix
   se_matrix <- matrix(
@@ -451,7 +472,8 @@ run_univariate_clustering <- function(trait_object,
   snp_ids <- colnames(x_matrix)
   cluster <- setNames(rep(NA_integer_, length(snp_ids)), snp_ids)
   membership <- extracted$membership
-  if (!is.null(membership) && ncol(membership) > 0 && nrow(membership) > 0) {
+  if (hard_assignment && !is.null(membership) && ncol(membership) > 0 &&
+      nrow(membership) > 0) {
     loadings <- abs(flash_fit$F_pm[rownames(membership), , drop = FALSE])
     loadings[!membership] <- -Inf
     best <- max.col(loadings, ties.method = "first")
@@ -462,8 +484,18 @@ run_univariate_clustering <- function(trait_object,
 
   cluster <- cluster[!is.na(cluster)]
   cluster_ids <- sort(unique(cluster))
+  cluster_program_map <- data.frame(
+    cluster = integer(0),
+    program = integer(0),
+    stringsAsFactors = FALSE
+  )
   if (length(cluster_ids) > 0) {
     reindex <- setNames(seq_along(cluster_ids), as.character(cluster_ids))
+    cluster_program_map <- data.frame(
+      cluster = seq_along(cluster_ids),
+      program = as.integer(cluster_ids),
+      stringsAsFactors = FALSE
+    )
     cluster <- stats::setNames(
       as.integer(reindex[as.character(cluster)]),
       names(cluster)
@@ -481,6 +513,8 @@ run_univariate_clustering <- function(trait_object,
       membership = membership,
       n_programs = extracted$n_programs,
       n_multi_program = extracted$n_multi_program,
+      hard_assignment = hard_assignment,
+      cluster_program_map = cluster_program_map,
       dropped_global_factors = dropped_global
     )
   ))

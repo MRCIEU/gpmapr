@@ -1411,13 +1411,13 @@ enrich_snp_group_trait_categories <- function(groups,
 # Compact labels of which significance methods pass the threshold for a row.
 .method_tag <- function(fdr, fdr_perm, fdr_modules, threshold = 0.05) {
   tags <- character(0)
-  if (!is.na(fdr) && fdr <= threshold) {
+  if (length(fdr) == 1L && is.finite(fdr) && fdr <= threshold) {
     tags <- c(tags, paste0("FDR=", signif(fdr, 3)))
   }
-  if (!is.na(fdr_perm) && fdr_perm <= threshold) {
+  if (length(fdr_perm) == 1L && is.finite(fdr_perm) && fdr_perm <= threshold) {
     tags <- c(tags, paste0("perm=", signif(fdr_perm, 3)))
   }
-  if (!is.na(fdr_modules) && fdr_modules <= threshold) {
+  if (length(fdr_modules) == 1L && is.finite(fdr_modules) && fdr_modules <= threshold) {
     tags <- c(tags, paste0("vsmod=", signif(fdr_modules, 3)))
   }
   return(paste(tags, collapse = ", "))

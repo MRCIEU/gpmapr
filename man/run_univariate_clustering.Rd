@@ -26,6 +26,7 @@ run_univariate_clustering(
   ebmf_backfit = TRUE,
   ebmf_se_mode = c("unit", "matrix"),
   ebmf_beta_scale = c("none", "trait"),
+  ebmf_hard_assignment = FALSE,
   louvain_gamma = 2,
   seed = 1L,
   min_module_size = 3L,
@@ -109,6 +110,10 @@ trait row's betas and SEs by that row's root-mean-square beta, which
 harmonises units across traits while preserving within-trait precision
 information (z-scores remain unchanged by this since beta/se is
 scale-invariant).}
+
+\item{ebmf_hard_assignment}{If \code{TRUE}, additionally create a legacy hard
+SNP-to-program assignment by selecting the strongest surviving factor.
+Defaults to \code{FALSE}: EBMF results remain soft and overlapping.}
 
 \item{louvain_gamma}{Signed Louvain resolution parameter.}
 

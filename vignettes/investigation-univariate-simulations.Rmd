@@ -11,6 +11,7 @@ params:
   min_module_size: 5
   drivers_per_module: 12
   p_structural_zero: 0.3
+  n_null: 10
 vignette: >
   %\VignetteIndexEntry{Simulation study of univariate clustering}
   %\VignetteEngine{knitr::rmarkdown}
@@ -240,6 +241,61 @@ knitr::kable(
   ),
   caption = "Where worked-example modules are dropped"
 )
+```
+
+## Calibrated EBMF reporting layer
+
+The pipeline's hard gates (lFSR + magnitude) are bypassed here: the EBMF
+posterior is calibrated against permutation nulls of the worked-example matrix,
+and programs are reported only if they retain at least `min_module_size`
+FDR-controlled core members. Core composition is scored against planted truth
+*including* the shared-boundary SNPs, whose drivers legitimately belong to two
+modules.
+
+```{r example-calibration}
+res_ebmf <- run_univariate_clustering(
+  sim$trait_object,
+  cluster_type = "ebmf",
+  min_module_size = params$min_module_size
+)
+cal <- calibrate_ebmf_programs(
+  res_ebmf,
+  n_null = params$n_null,
+  verbose = FALSE
+)
+
+knitr::kable(
+  cal$programs[cal$programs$n_core > 0, ],
+  row.names = FALSE,
+  caption = sprintf(
+    "EBMF programs after permutation calibration (%d nulls; detected = >= %d FDR-controlled members)",
+    params$n_null, params$min_module_size
+  )
+)
+
+core <- cal$memberships[cal$memberships$core, ]
+shared <- sim$ground_truth$multi_module_snps
+truth <- sim$ground_truth$module_of_snp
+if (nrow(core) > 0) {
+  comp <- do.call(rbind, lapply(sort(unique(core$program)), function(pg) {
+    ids <- core$snp_id[core$program == pg]
+    tv <- truth[ids]
+    lab <- ifelse(tv == 0, "background", paste0("mod", tv))
+    tab <- table(lab)
+    data.frame(
+      program = pg,
+      n_core = length(ids),
+      n_shared_boundary = sum(ids %in% shared),
+      truth_mix = paste(names(tab), tab, collapse = ", "),
+      stringsAsFactors = FALSE
+    )
+  }))
+  knitr::kable(
+    comp,
+    row.names = FALSE,
+    caption = "Core-member composition per program (primary-label counts; shared-boundary SNPs are legitimate dual members)"
+  )
+}
 ```
 
 ## Scenario 1: false structure under the null
