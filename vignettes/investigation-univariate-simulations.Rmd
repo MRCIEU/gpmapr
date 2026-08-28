@@ -1,20 +1,51 @@
 ---
-title: "Simulation study of univariate clustering"
+title: "Simulation study of EBMF programs"
 output:
   rmarkdown::html_vignette:
     includes:
       in_header: investigation-wide.html
 params:
-  cluster_type: louvain
-  louvain_gamma: 1.5
+  cluster_type: ebmf
+  K: 3
+  module_sizes: [5, 20, 50]
+  min_snp_signals: 5
+  min_module_size: 3
+  compress_method: asinh
+  compress_scale: 2
   similarity_threshold: 0.2
-  min_module_size: 5
-  drivers_per_module: 12
-  p_structural_zero: 0.3
+  ebmf_se_mode: unit
+  ebmf_beta_scale: trait
+  ebmf_lfsr_threshold: 0.05
+  ebmf_magnitude_threshold: 0.5
+  ebmf_drop_global: true
+  ebmf_prior: point_normal
+  ebmf_backfit: true
+  ebmf_hard_assignment: false
+  min_mean_internal: 0.3
+  min_connectedness: 0.25
   n_null: 10
+  alpha_membership: 0.05
+  n_candidate_tier: 25
+  n_rep: 5
+  frac_traits: 0.8
+  stability_top_n: 20
+  stability_threshold: 0.5
+  posterior_stat: median
+  posterior_evidence_cap: 50
+  redundancy_threshold: 0.9
   cores: 5
+  drivers_per_module: 12
+  n_background_traits: 40
+  effect_size: 3
+  noise_sd: 0.5
+  p_structural_zero: 0.3
+  p_spurious: 0.05
+  p_active_background: 0.08
+  driver_sharing: 0
+  snp_driver_groups: 1
+  n_reps: 5
 vignette: >
-  %\VignetteIndexEntry{Simulation study of univariate clustering}
+  %\VignetteIndexEntry{Simulation study of EBMF programs}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -41,56 +72,120 @@ if (requireNamespace("devtools", quietly = TRUE)) {
 library(dplyr)
 library(ggplot2)
 
-n_reps <- 5
+n_reps <- as.integer(params$n_reps)
 set.seed(1)
+
+if (!identical(params$cluster_type, "ebmf")) {
+  stop("This vignette is configured for cluster_type = 'ebmf'")
+}
+if (params$K != length(params$module_sizes)) {
+  stop("K must equal length(module_sizes)")
+}
 
 clustering_settings <- list(
   cluster_type = params$cluster_type,
-  louvain_gamma = params$louvain_gamma,
+  min_snp_signals = params$min_snp_signals,
+  compress_method = params$compress_method,
+  compress_scale = params$compress_scale,
   similarity_threshold = params$similarity_threshold,
-  min_module_size = params$min_module_size
+  ebmf_se_mode = params$ebmf_se_mode,
+  ebmf_beta_scale = params$ebmf_beta_scale,
+  ebmf_lfsr_threshold = params$ebmf_lfsr_threshold,
+  ebmf_magnitude_threshold = params$ebmf_magnitude_threshold,
+  ebmf_drop_global = params$ebmf_drop_global,
+  ebmf_prior = params$ebmf_prior,
+  ebmf_backfit = params$ebmf_backfit,
+  ebmf_hard_assignment = params$ebmf_hard_assignment,
+  min_module_size = params$min_module_size,
+  min_mean_internal = params$min_mean_internal,
+  min_connectedness = params$min_connectedness
+)
+
+validation_settings <- list(
+  edge_threshold = params$similarity_threshold,
+  min_module_size = params$min_module_size,
+  min_mean_internal = params$min_mean_internal,
+  min_connectedness = params$min_connectedness,
+  n_null = params$n_null,
+  alpha_membership = params$alpha_membership,
+  n_candidate_tier = params$n_candidate_tier,
+  n_rep = params$n_rep,
+  frac_traits = params$frac_traits,
+  top_n = params$stability_top_n,
+  stability_threshold = params$stability_threshold,
+  posterior_stat = params$posterior_stat,
+  posterior_evidence_cap = params$posterior_evidence_cap,
+  redundancy_threshold = params$redundancy_threshold,
+  cores = params$cores,
+  verbose = FALSE
+)
+
+simulation_defaults <- list(
+  module_sizes = params$module_sizes,
+  drivers_per_module = params$drivers_per_module,
+  n_background_traits = params$n_background_traits,
+  effect_size = params$effect_size,
+  noise_sd = params$noise_sd,
+  p_structural_zero = params$p_structural_zero,
+  p_spurious = params$p_spurious,
+  p_active_background = params$p_active_background,
+  driver_sharing = params$driver_sharing,
+  snp_driver_groups = params$snp_driver_groups
 )
 ```
 
-This vignette stress-tests the univariate SNP clustering pipeline
-(`run_univariate_clustering()`) against synthetic data with known ground truth.
-`simulate_trait()` plants latent module structure over SNPs (or none at all),
-and `evaluate_univariate_simulation()` scores recovery via adjusted Rand index
-(ARI), module-count error (`|K_hat - K|`), and how many unstructured background
-SNPs get absorbed into modules ("hallucinated" structure).
+This vignette evaluates empirical Bayes matrix factorisation (EBMF) programs
+against synthetic data with known ground truth. `simulate_trait()` generates
+latent SNP modules, overlapping module support, heterogeneous effects, and
+unstructured background. The EBMF analysis keeps overlapping soft programs;
+program membership is filtered by lFSR and loading magnitude in
+`summarise_ebmf_programs()`, and replication is checked only after internal
+coherence passes.
 
-Scenario coverage:
+The important analysis parameters are kept separate from the generative
+parameters:
 
-1. **Null** — no planted structure; does the method hallucinate modules?
-2. **Dataset size** — 10 / 50 / 200 / 500 / 900 coloc groups.
-3. **Signed effects** — coherent vs flipped vs random driver signs.
-4. **Module overlap** — disjoint vs moderate vs strong.
-5. **Sparsity** — structural-zero rate inside true module support.
+- **Analysis** — lFSR threshold, magnitude threshold, minimum coherence,
+  stability threshold, trait subsampling, and EBMF noise/prior settings.
+- **Generation** — module size, effect size, driver sharing, driver subgroups,
+  structural zeros, spurious effects, and background activation.
 
 ```{r helpers}
 run_one <- function(...) {
   dots <- list(...)
-  if (is.null(dots$drivers_per_module)) {
-    dots$drivers_per_module <- params$drivers_per_module
+  for (nm in names(simulation_defaults)) {
+    if (nm != "module_sizes" && is.null(dots[[nm]])) {
+      dots[[nm]] <- simulation_defaults[[nm]]
+    }
   }
-  if (is.null(dots$p_structural_zero)) {
-    dots$p_structural_zero <- params$p_structural_zero
+  if (is.null(dots$K)) {
+    dots$K <- length(simulation_defaults$module_sizes)
   }
-  sim <- do.call(
-    simulate_trait,
-    c(dots, list(seed = sample.int(.Machine$integer.max, 1)))
-  )
+  if (dots$K == 0) {
+    dots$module_sizes <- NULL
+  } else if (is.null(dots$module_sizes)) {
+    dots$module_sizes <- simulation_defaults$module_sizes
+  }
+  dots$seed <- sample.int(.Machine$integer.max, 1)
+
+  sim <- do.call(simulate_trait, dots)
   res <- do.call(
     run_univariate_clustering,
     c(list(trait_object = sim$trait_object), clustering_settings)
   )
-  ev <- evaluate_univariate_simulation(sim, res)
-  quality <- res$module_quality
-  passes_size <- quality$n_snps >= params$min_module_size
-  passes_internal <- is.finite(quality$mean_internal_similarity) &
-    quality$mean_internal_similarity >= 0.3
-  passes_connectedness <- is.finite(quality$connectedness) &
-    quality$connectedness >= 0.5
+  summary <- do.call(
+    summarise_ebmf_programs,
+    c(list(clustering_result = res, s_matrix = res$s_matrix), validation_settings)
+  )
+  valid_ids <- summary$programs$program[summary$programs$status == "valid"]
+  valid_assigned <- summary$assigned |>
+    dplyr::filter(program %in% valid_ids)
+  ev <- evaluate_univariate_simulation(
+    sim,
+    res,
+    predicted_memberships = valid_assigned
+  )
+  programs <- summary$programs
   data.frame(
     k_planted = ev$k_planted,
     k_hat = ev$k_hat,
@@ -100,15 +195,22 @@ run_one <- function(...) {
     module_recall = ev$mean_module_recall,
     background_absorbed = ev$background_absorbed,
     coverage = ev$coverage,
-    n_louvain_modules = nrow(quality),
-    n_dropped_size = sum(!passes_size),
-    n_dropped_internal = sum(passes_size & !passes_internal),
-    n_dropped_connectedness = sum(
-      passes_size & passes_internal & !passes_connectedness
+    n_programs = nrow(programs),
+    n_valid_programs = length(valid_ids),
+    n_dropped_size = sum(!programs$size_pass),
+    n_dropped_internal = sum(!programs$internal_pass),
+    n_dropped_stability = sum(
+      programs$stability_checked & !programs$stability_pass
     ),
-    n_unassigned = sum(!names(res$clusters) %in% names(res$clusters_reliable))
+    n_unassigned = length(sim$ground_truth$module_of_snp) -
+      dplyr::n_distinct(valid_assigned$snp_id),
+    mean_factor_strength = mean(programs$factor_strength, na.rm = TRUE),
+    mean_factor_strength_per_snp = mean(
+      programs$factor_strength_per_snp, na.rm = TRUE
+    )
   )
 }
+
 run_grid <- function(n_reps, label, ...) {
   dplyr::bind_rows(lapply(seq_len(n_reps), function(i) run_one(...))) |>
     dplyr::mutate(scenario = label)
@@ -118,185 +220,110 @@ run_grid <- function(n_reps, label, ...) {
 ## Worked example
 
 ```{r example}
-sim <- simulate_trait(
-  n_coloc_groups = 120,
-  K = 3,
-  overlap = "moderate",
-  n_background_snps = 30,
-  drivers_per_module = params$drivers_per_module,
-  p_structural_zero = params$p_structural_zero,
-  module_annotations = list(
-    list(tissues = "Liver", trait_categories = "Metabolic"),
-    NULL,
-    NULL
-  ),
-  seed = 42
+sim <- do.call(
+  simulate_trait,
+  c(
+    list(
+      n_coloc_groups = 120,
+      K = params$K,
+      overlap = "moderate",
+      n_background_snps = 30,
+      module_annotations = list(
+        list(tissues = "Liver", trait_categories = "Metabolic"),
+        NULL,
+        NULL
+      ),
+      seed = 42
+    ),
+    simulation_defaults
+  )
 )
 res <- do.call(
   run_univariate_clustering,
   c(list(trait_object = sim$trait_object), clustering_settings)
 )
-ev <- evaluate_univariate_simulation(sim, res)
+program_summary <- do.call(
+  summarise_ebmf_programs,
+  c(list(clustering_result = res, s_matrix = res$s_matrix), validation_settings)
+)
+valid_ids <- program_summary$programs$program[
+  program_summary$programs$status == "valid"
+]
+valid_assigned <- program_summary$assigned |>
+  dplyr::filter(program %in% valid_ids)
+ev <- evaluate_univariate_simulation(
+  sim,
+  res,
+  predicted_memberships = valid_assigned
+)
+
+settings_to_show <- c(
+  "cluster_type", "min_snp_signals", "min_module_size", "module_sizes",
+  "ebmf_lfsr_threshold", "ebmf_magnitude_threshold",
+  "min_mean_internal", "min_connectedness", "n_rep",
+  "frac_traits", "stability_top_n", "stability_threshold"
+)
+settings_values <- c(clustering_settings, validation_settings)
+settings_values$module_sizes <- params$module_sizes
+settings_values$stability_top_n <- validation_settings$top_n
+knitr::kable(
+  data.frame(
+    parameter = settings_to_show,
+    value = vapply(settings_to_show, function(nm) {
+      if (nm == "module_sizes") {
+        return(paste(settings_values[[nm]], collapse = ", "))
+      }
+      as.character(settings_values[[nm]])
+    }, character(1))
+  ),
+  caption = "EBMF analysis and validation settings"
+)
 
 knitr::kable(
   data.frame(
-    parameter = c(
-      "cluster type",
-      "Louvain gamma",
-      "similarity threshold",
-      "minimum module size",
-      "drivers per module",
-      "P(structural zero)"
+    metric = c(
+      "planted K", "valid programs", "K error", "ARI (all SNPs)",
+      "ARI (structured only)", "mean module recall", "background absorbed",
+      "coverage"
     ),
     value = c(
-      params$cluster_type,
-      params$louvain_gamma,
-      params$similarity_threshold,
-      params$min_module_size,
-      params$drivers_per_module,
-      params$p_structural_zero
+      ev$k_planted, ev$k_hat, ev$k_error, round(ev$ari_all, 3),
+      round(ev$ari_structured, 3), round(ev$mean_module_recall, 3),
+      round(ev$background_absorbed, 3), round(ev$coverage, 3)
     )
   ),
-  caption = "Clustering settings for this rendered vignette"
-)
-
-knitr::kable(
-  data.frame(
-    metric = c("planted K", "detected K-hat", "K error", "ARI (all SNPs)",
-               "ARI (structured only)", "mean module recall",
-               "background absorbed", "coverage"),
-    value = c(ev$k_planted, ev$k_hat, ev$k_error,
-              round(ev$ari_all, 3), round(ev$ari_structured, 3),
-              round(ev$mean_module_recall, 3),
-              round(ev$background_absorbed, 2), round(ev$coverage, 2))
-  ),
-  caption = paste(
-    "Single-run evaluation (3 planted modules with moderate overlap,",
-    "30 background SNPs). Module recall asks whether each planted module is",
-    "contained in some predicted program, so it scores merged/overlapping",
-    "programs (e.g. EBMF) fairly."
-  )
+  caption = "Single-run EBMF evaluation"
 )
 ```
 
-```{r example-confusion}
-knitr::kable(ev$confusion, caption = "Truth vs predicted partition")
-```
-
-```{r example-quality}
-quality_display <- res$module_quality |>
-  dplyr::mutate(
-    passes_size = n_snps >= params$min_module_size,
-    passes_internal = is.finite(mean_internal_similarity) &
-      mean_internal_similarity >= 0.3,
-    passes_connectedness = is.finite(connectedness) & connectedness >= 0.5,
-    failure_reason = dplyr::case_when(
-      reliable ~ "kept",
-      !passes_size & !passes_internal & !passes_connectedness ~
-        "size; internal; connectedness",
-      !passes_size & !passes_internal ~ "size; internal",
-      !passes_size & !passes_connectedness ~ "size; connectedness",
-      !passes_internal & !passes_connectedness ~ "internal; connectedness",
-      !passes_size ~ "size",
-      !passes_internal ~ "internal similarity",
-      !passes_connectedness ~ "connectedness",
-      TRUE ~ "other"
-    )
-  ) |>
-  dplyr::select(
-    cluster, n_snps, mean_internal_similarity, connectedness,
-    passes_size, passes_internal, passes_connectedness, reliable,
-    failure_reason
-  ) |>
-  dplyr::mutate(
-    dplyr::across(
-      c(mean_internal_similarity, connectedness),
-      ~ round(.x, 3)
-    )
-  )
-
-knitr::kable(
-  quality_display,
-  caption = "Worked-example modules before and after reliability filtering"
-)
-
-knitr::kable(
-  data.frame(
-    stage = c(
-      "Louvain output",
-      "Dropped by minimum size",
-      "Dropped by internal similarity after size",
-      "Dropped by connectedness after size and internal similarity",
-      "Reliable output"
-    ),
-    n_modules = c(
-      nrow(res$module_quality),
-      sum(!quality_display$passes_size),
-      sum(quality_display$passes_size & !quality_display$passes_internal),
-      sum(
-        quality_display$passes_size & quality_display$passes_internal &
-          !quality_display$passes_connectedness
-      ),
-      sum(quality_display$reliable)
-    )
-  ),
-  caption = "Where worked-example modules are dropped"
-)
-```
-
-## Validated EBMF reporting layer
-
-The pipeline's hard gates (lFSR + magnitude) are bypassed here: each EBMF
-program is validated with `summarise_ebmf_programs()`, which folds internal
-coherence, permutation-calibrated factor strength, and trait-subsampling
-stability into one per-program table. Valid programs' assigned SNPs are scored
-against planted truth *including* the shared-boundary SNPs, whose drivers
-legitimately belong to two modules.
-
-```{r example-calibration}
-res_ebmf <- run_univariate_clustering(
-  sim$trait_object,
-  cluster_type = "ebmf",
-  min_module_size = params$min_module_size
-)
-program_summary <- summarise_ebmf_programs(
-  res_ebmf,
-  s_matrix = res_ebmf$s_matrix,
-  edge_threshold = params$similarity_threshold,
-  min_module_size = params$min_module_size,
-  n_null = params$n_null,
-  cores = params$cores,
-  verbose = FALSE
-)
-
+```{r example-programs}
 knitr::kable(
   program_summary$programs |>
     dplyr::select(
       program, n_snps, mean_internal_similarity, connectedness,
-      factor_strength, replication, posterior_evidence, status
+      factor_strength, factor_strength_per_snp, replication,
+      stability_checked, stability_pass, status
     ) |>
     dplyr::mutate(dplyr::across(
       c(mean_internal_similarity, connectedness, factor_strength,
-        replication, posterior_evidence),
+        factor_strength_per_snp, replication),
       ~ round(.x, 3)
     )),
   row.names = FALSE,
-  caption = "EBMF programs after validation (replication only checked for programs failing internal coherence)"
+  caption = "EBMF programs; factor-strength scores are reported but do not gate status"
 )
+```
 
-assigned <- program_summary$assigned
-shared <- sim$ground_truth$multi_module_snps
-truth <- sim$ground_truth$module_of_snp
-if (nrow(assigned) > 0) {
-  comp <- do.call(rbind, lapply(sort(unique(assigned$program)), function(pg) {
-    ids <- assigned$snp_id[assigned$program == pg]
-    tv <- truth[ids]
-    lab <- ifelse(tv == 0, "background", paste0("mod", tv))
-    tab <- table(lab)
+```{r example-composition}
+if (nrow(valid_assigned) > 0) {
+  comp <- do.call(rbind, lapply(sort(unique(valid_assigned$program)), function(pg) {
+    ids <- valid_assigned$snp_id[valid_assigned$program == pg]
+    tv <- sim$ground_truth$module_of_snp[ids]
+    tab <- table(ifelse(tv == 0, "background", paste0("mod", tv)))
     data.frame(
       program = pg,
-      n_assigned = length(ids),
-      n_shared_boundary = sum(ids %in% shared),
+      n_snps = length(ids),
+      n_shared_boundary = sum(ids %in% sim$ground_truth$multi_module_snps),
       truth_mix = paste(names(tab), tab, collapse = ", "),
       stringsAsFactors = FALSE
     )
@@ -304,151 +331,151 @@ if (nrow(assigned) > 0) {
   knitr::kable(
     comp,
     row.names = FALSE,
-    caption = "Assigned-SNP composition per program (primary-label counts; shared-boundary SNPs are legitimate dual members)"
+    caption = "Filtered SNP composition of valid EBMF programs"
   )
 }
 ```
 
 ## Scenario 1: false structure under the null
 
-Independent sparse profiles with no shared latent structure. A well-behaved
-method should return few reliable modules and leave most SNPs unassigned; a
-large `k_hat` or high `coverage` indicates hallucinated structure.
+Null simulations test whether EBMF creates valid programs from independent
+sparse profiles with no planted structure.
 
 ```{r null-grid}
 null_results <- dplyr::bind_rows(
-  run_grid(n_reps, "n=50", n_coloc_groups = 50, K = 0, p_active_background = 0.05),
-  run_grid(n_reps, "n=200", n_coloc_groups = 200, K = 0, p_active_background = 0.05)
+  run_grid(n_reps, "n=15", n_coloc_groups = 20, K = 0),
+  run_grid(n_reps, "n=150", n_coloc_groups = 200, K = 0),
+  run_grid(n_reps, "n=1500", n_coloc_groups = 1500, K = 0)
 )
-
 null_results |>
   dplyr::group_by(scenario) |>
   dplyr::summarise(
     mean_k_hat = mean(k_hat),
-    sd_k_hat = sd(k_hat),
+    mean_valid_programs = mean(n_valid_programs),
     mean_coverage = mean(coverage),
-    mean_louvain_modules = mean(n_louvain_modules),
-    mean_dropped_size = mean(n_dropped_size),
-    mean_dropped_internal = mean(n_dropped_internal),
-    mean_dropped_connectedness = mean(n_dropped_connectedness),
+    mean_background_absorbed = mean(background_absorbed),
     .groups = "drop"
   ) |>
-  knitr::kable(digits = 2, caption = "Null simulations: detected K and coverage")
+  knitr::kable(digits = 2, caption = "Null simulations")
 ```
 
 ## Scenario 2: dataset size
 
-Coloc-group counts of 10 / 50 / 200 / 500 / 900, crossed with planted K of 0
-and 3. Small datasets are watched for hallucinated multi-module output;
-large ones for degradation of recovery.
+The dataset-size grid tests recovery as the number of SNPs increases. The
+smallest case is kept above the module-size and sparse-row requirements used
+by the EBMF analysis.
 
 ```{r size-grid, fig.width=8, fig.height=4}
-sizes <- c(10, 50, 200, 500, 900)
-size_results <- dplyr::bind_rows(
-  lapply(sizes, function(n) {
-    dplyr::bind_rows(
-      run_grid(n_reps, sprintf("K=%d", 0), n_coloc_groups = n, K = 0,
-               p_active_background = 0.05),
-      run_grid(n_reps, sprintf("K=%d", 3), n_coloc_groups = n, K = 3,
-               p_active_background = 0.05)
-    ) |> dplyr::mutate(n_coloc_groups = n)
-  })
-)
-
+sizes <- c(100, 200, 500, 900)
+size_results <- dplyr::bind_rows(lapply(sizes, function(n) {
+  dplyr::bind_rows(
+    run_grid(n_reps, "K=0", n_coloc_groups = n, K = 0),
+    run_grid(n_reps, "K=", n_coloc_groups = n, K = params$K)
+  ) |>
+    dplyr::mutate(n_coloc_groups = n)
+}))
 ggplot(size_results, aes(factor(n_coloc_groups), k_hat, fill = scenario)) +
   geom_boxplot() +
-  geom_hline(data = dplyr::filter(size_results, scenario == "K=3"),
-             aes(yintercept = 3), linetype = "dashed") +
-  labs(x = "coloc groups", y = expression(hat(K)), fill = NULL,
-       title = "Detected number of modules vs dataset size") +
-  theme_minimal()
-
-ggplot(
-  dplyr::filter(size_results, scenario == "K=3"),
-  aes(factor(n_coloc_groups), ari_structured)
-) +
-  geom_boxplot(fill = "#c2571b", alpha = 0.7) +
-  labs(x = "coloc groups", y = "ARI (structured SNPs)",
-       title = "Module recovery vs dataset size (K = 3)") +
+  labs(x = "coloc groups", y = "valid EBMF programs", fill = NULL,
+       title = "Valid EBMF programs versus dataset size") +
   theme_minimal()
 ```
 
-## Scenario 3: signed clustering
+## Scenario 3: signed effects
 
-Same effect magnitude, three sign regimes for drivers within each module:
-coherent (all positive), flipped (alternating signs — anti-correlated profiles
-share a module), random. If sign information is useful, coherent should beat
-flipped/random at recovering the planted partition.
+The signed-effects grid compares coherent, flipped, and random driver signs.
+The generated sign pattern is evaluated using the same EBMF thresholds and
+stability settings as the worked example.
 
 ```{r sign-grid, fig.width=6, fig.height=4}
 sign_results <- dplyr::bind_rows(
-  run_grid(n_reps * 2, "coherent", n_coloc_groups = 150, K = 3,
-           sign_pattern = "coherent", noise_sd = 1),
-  run_grid(n_reps * 2, "flipped", n_coloc_groups = 150, K = 3,
-           sign_pattern = "flipped", noise_sd = 1),
-  run_grid(n_reps * 2, "random", n_coloc_groups = 150, K = 3,
-           sign_pattern = "random", noise_sd = 1)
+  run_grid(n_reps, "coherent", n_coloc_groups = 150, K = params$K,
+           sign_pattern = "coherent"),
+  run_grid(n_reps, "flipped", n_coloc_groups = 150, K = params$K,
+           sign_pattern = "flipped"),
+  run_grid(n_reps, "random", n_coloc_groups = 150, K = params$K,
+           sign_pattern = "random")
 )
-
-ggplot(sign_results, aes(scenario, ari_structured, fill = scenario)) +
+ggplot(sign_results, aes(scenario, module_recall, fill = scenario)) +
   geom_boxplot(show.legend = FALSE) +
-  scale_x_discrete(limits = c("coherent", "flipped", "random")) +
-  labs(x = "driver sign regime", y = "ARI (structured SNPs)",
-       title = "Recovery under different driver-sign regimes") +
+  labs(x = "driver sign regime", y = "mean module recall",
+       title = "EBMF recovery under different driver-sign regimes") +
   theme_minimal()
 ```
 
 ## Scenario 4: module overlap
 
-Disjoint, moderate (~50 shared SNPs between adjacent modules) and strong
-(~half the smaller module shared). Shared SNPs carry driver traits from both
-modules; their primary truth assignment is their earlier module.
+Shared SNPs can belong to multiple EBMF programs. The evaluator preserves this
+overlap for coverage and module recall rather than forcing a one-to-one
+partition.
 
 ```{r overlap-grid, fig.width=6, fig.height=4}
 overlap_results <- dplyr::bind_rows(
-  run_grid(n_reps, "disjoint", n_coloc_groups = 300, K = 3, overlap = "disjoint"),
-  run_grid(n_reps, "moderate", n_coloc_groups = 300, K = 3, overlap = "moderate"),
-  run_grid(n_reps, "strong", n_coloc_groups = 300, K = 3, overlap = "strong")
+  run_grid(n_reps, "disjoint", n_coloc_groups = 300, K = params$K, overlap = "disjoint"),
+  run_grid(n_reps, "moderate", n_coloc_groups = 300, K = params$K, overlap = "moderate"),
+  run_grid(n_reps, "strong", n_coloc_groups = 300, K = params$K, overlap = "strong")
 )
-
-ggplot(overlap_results, aes(scenario, ari_structured, fill = scenario)) +
+ggplot(overlap_results, aes(scenario, module_recall, fill = scenario)) +
   geom_boxplot(show.legend = FALSE) +
-  scale_x_discrete(limits = c("disjoint", "moderate", "strong")) +
-  labs(x = "overlap regime", y = "ARI (structured SNPs)",
-       title = "Recovery as modules increasingly overlap") +
+  labs(x = "overlap regime", y = "mean module recall",
+       title = "EBMF recovery as modules increasingly overlap") +
   theme_minimal()
 ```
 
 ## Scenario 5: sparsity
 
-Structural zeros inside true module support (`p_structural_zero`) versus
-density elsewhere (`p_spurious`, `p_active_background`). Structural zeros are
-absent observations, not small effects.
+Structural zeros remove true driver observations entirely. This tests whether
+filtered EBMF programs retain their planted module signal as support becomes
+sparser.
 
 ```{r sparsity-grid, fig.width=6, fig.height=4}
 sparsity_results <- dplyr::bind_rows(
-  run_grid(n_reps, "0.2", n_coloc_groups = 200, K = 3, p_structural_zero = 0.2),
-  run_grid(n_reps, "0.5", n_coloc_groups = 200, K = 3, p_structural_zero = 0.5),
-  run_grid(n_reps, "0.8", n_coloc_groups = 200, K = 3, p_structural_zero = 0.8)
+  run_grid(n_reps, "0.2", n_coloc_groups = 200, K = params$K, p_structural_zero = 0.2),
+  run_grid(n_reps, "0.5", n_coloc_groups = 200, K = params$K, p_structural_zero = 0.5),
+  run_grid(n_reps, "0.8", n_coloc_groups = 200, K = params$K, p_structural_zero = 0.8)
 )
-
 sparsity_results |>
   dplyr::mutate(p_zero = as.numeric(scenario)) |>
-  ggplot(aes(p_zero, ari_structured)) +
+  ggplot(aes(p_zero, module_recall)) +
   stat_summary(fun = mean, geom = "line") +
   stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.05) +
   scale_x_continuous(breaks = c(0.2, 0.5, 0.8)) +
-  labs(x = "P(structural zero in module support)", y = "ARI (structured SNPs)",
-       title = "Recovery vs within-module sparsity") +
+  labs(x = "P(structural zero in module support)", y = "mean module recall",
+       title = "EBMF recovery versus within-module sparsity") +
+  theme_minimal()
+```
+
+## Scenario 6: observation noise
+
+`noise_sd` controls the random effect noise added to simulated trait-SNP
+observations. This grid tests how recovery changes as the latent module signal
+becomes less distinct from noise.
+
+```{r noise-grid, fig.width=6, fig.height=4}
+noise_results <- dplyr::bind_rows(
+  run_grid(n_reps, "0.1", n_coloc_groups = 200, K = params$K, noise_sd = 0.1),
+  run_grid(n_reps, "0.5", n_coloc_groups = 200, K = params$K, noise_sd = 0.5),
+  run_grid(n_reps, "1.0", n_coloc_groups = 200, K = params$K, noise_sd = 1),
+  run_grid(n_reps, "2.0", n_coloc_groups = 200, K = params$K, noise_sd = 2)
+)
+noise_results |>
+  dplyr::mutate(noise = as.numeric(scenario)) |>
+  ggplot(aes(noise, module_recall)) +
+  stat_summary(fun = mean, geom = "line") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.05) +
+  scale_x_continuous(breaks = c(0.1, 0.5, 1, 2)) +
+  labs(x = "noise_sd", y = "mean module recall",
+       title = "EBMF recovery versus simulated observation noise") +
   theme_minimal()
 ```
 
 ## Notes for interpreting runs
 
-- `ari_structured` measures whether planted module members co-cluster; it is
-  blind to background absorption. Read together with `background_absorbed`.
-- Under the null (`K = 0`), `k_hat > 0` and nonzero `coverage` quantify
-  hallucination; track both across replicates rather than single runs.
-- The Louvain resolution (`gamma`) and edge threshold are fixed here; rerun any
-  grid with different `run_univariate_clustering()` settings by editing
-  `run_one()`.
+- `module_recall` and `coverage` preserve overlapping valid EBMF memberships.
+- `ari_all` and `ari_structured` use each SNP's strongest assigned program as a
+  hard projection, so they remain conventional partition metrics.
+- `factor_strength` and `factor_strength_per_snp` are reported scores only;
+  they do not currently filter programs.
+- lFSR and magnitude thresholds determine `assigned` SNPs before coherence,
+  factor-strength, and posterior-evidence calculations.
+- Replication is run only for programs that pass internal coherence.

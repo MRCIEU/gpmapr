@@ -4,7 +4,11 @@
 \alias{evaluate_univariate_simulation}
 \title{Evaluate Clustering Against Simulated Ground Truth}
 \usage{
-evaluate_univariate_simulation(simulation, clustering_result)
+evaluate_univariate_simulation(
+  simulation,
+  clustering_result,
+  predicted_memberships = NULL
+)
 }
 \arguments{
 \item{simulation}{Result of \code{simulate_trait()}.}
@@ -12,6 +16,12 @@ evaluate_univariate_simulation(simulation, clustering_result)
 \item{clustering_result}{Result of \code{run_univariate_clustering()}. Reliable
 modules (\code{clusters_reliable}) are treated as the inferred partition; SNPs
 outside them are labelled \code{"unassigned"}.}
+
+\item{predicted_memberships}{Optional dataframe of predicted SNP-program
+memberships, typically \code{summarise_ebmf_programs()$assigned} restricted to
+valid programs. This preserves overlapping EBMF memberships for coverage,
+background absorption, and module recall. ARI uses each SNP's strongest
+assigned program as a hard projection.}
 }
 \value{
 A list with:

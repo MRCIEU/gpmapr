@@ -7,6 +7,11 @@
 #' @param clustering_result Result of `run_univariate_clustering()`. Reliable
 #'   modules (`clusters_reliable`) are treated as the inferred partition; SNPs
 #'   outside them are labelled `"unassigned"`.
+#' @param predicted_memberships Optional dataframe of predicted SNP-program
+#'   memberships, typically `summarise_ebmf_programs()$assigned` restricted to
+#'   valid programs. This preserves overlapping EBMF memberships for coverage,
+#'   background absorption, and module recall. ARI uses each SNP's strongest
+#'   assigned program as a hard projection.
 #' @return A list with:
 #'   \itemize{
 #'     \item k_planted: number of modules in the simulation (0 for null)
@@ -27,32 +32,80 @@
 #'     \item confusion: truth-by-predicted contingency table over all SNPs
 #'   }
 #' @export
-evaluate_univariate_simulation <- function(simulation, clustering_result) {
+evaluate_univariate_simulation <- function(simulation, clustering_result,
+                                           predicted_memberships = NULL) {
   if (is.null(simulation$ground_truth$module_of_snp)) {
     stop("simulation must be the result of simulate_trait()")
   }
-  if (is.null(clustering_result$module_quality)) {
+  if (is.null(predicted_memberships) && is.null(clustering_result$module_quality)) {
     stop("clustering_result must be the result of run_univariate_clustering()")
   }
 
   truth <- simulation$ground_truth$module_of_snp
-  pred <- clustering_result$clusters_reliable
+  pred_sets <- list()
+  pred_ids <- character(0)
 
   truth_lab <- ifelse(truth == 0L, "background", paste0("mod", truth))
   pred_lab <- rep("unassigned", length(truth_lab))
   names(pred_lab) <- names(truth_lab)
-  common <- intersect(names(truth_lab), names(pred))
-  pred_lab[common] <- as.character(pred[common])
+
+  if (is.null(predicted_memberships)) {
+    pred <- clustering_result$clusters_reliable
+    common <- intersect(names(truth_lab), names(pred))
+    pred_lab[common] <- as.character(pred[common])
+    pred_ids <- unique(common)
+    pred_sets <- split(common, as.character(pred[common]))
+    reliable_ids <- clustering_result$module_quality$cluster[
+      clustering_result$module_quality$reliable
+    ]
+  } else {
+    required <- c("snp_id", "program")
+    if (!is.data.frame(predicted_memberships) ||
+        !all(required %in% names(predicted_memberships))) {
+      stop("predicted_memberships must contain snp_id and program columns")
+    }
+    memberships <- predicted_memberships[
+      !is.na(predicted_memberships$snp_id) &
+        !is.na(predicted_memberships$program),
+      ,
+      drop = FALSE
+    ]
+    pred_ids <- unique(as.character(memberships$snp_id))
+    pred_sets <- split(
+      as.character(memberships$snp_id),
+      as.character(memberships$program)
+    )
+    pred_sets <- lapply(pred_sets, unique)
+
+    if (nrow(memberships) > 0) {
+      if ("abs_loading" %in% names(memberships)) {
+        loading <- memberships$abs_loading
+        loading[is.na(loading)] <- -Inf
+        memberships <- memberships[order(memberships$snp_id, -loading), , drop = FALSE]
+      }
+      winners <- memberships[!duplicated(memberships$snp_id), , drop = FALSE]
+      common <- intersect(names(truth_lab), as.character(winners$snp_id))
+      winner_idx <- match(common, as.character(winners$snp_id))
+      pred_lab[common] <- paste0(
+        "program", as.character(winners$program[winner_idx])
+      )
+    }
+    reliable_ids <- sort(unique(as.character(memberships$program)))
+  }
 
   structured <- truth_lab != "background"
 
-  recall_sets <- split(
-    names(pred_lab[structured][pred_lab[structured] != "unassigned"]),
-    pred_lab[structured][pred_lab[structured] != "unassigned"]
-  )
-  module_ids <- sort(unique(truth[truth > 0]))
+  recall_sets <- pred_sets
+  module_memberships <- simulation$ground_truth$module_memberships
+  if (is.null(module_memberships)) {
+    module_ids <- sort(unique(truth[truth > 0]))
+    module_memberships <- lapply(module_ids, function(m) {
+      names(truth)[truth == m]
+    })
+  }
+  module_ids <- seq_along(module_memberships)
   module_recall <- vapply(module_ids, function(m) {
-    members <- names(truth_lab)[truth_lab == paste0("mod", m)]
+    members <- module_memberships[[m]]
     if (length(recall_sets) == 0) {
       return(0)
     }
@@ -63,9 +116,6 @@ evaluate_univariate_simulation <- function(simulation, clustering_result) {
   module_recall <- stats::setNames(module_recall, sprintf("mod%d", module_ids))
 
   k_planted <- length(unique(truth[truth > 0]))
-  reliable_ids <- clustering_result$module_quality$cluster[
-    clustering_result$module_quality$reliable
-  ]
   k_hat <- length(reliable_ids)
 
   return(list(
@@ -78,11 +128,11 @@ evaluate_univariate_simulation <- function(simulation, clustering_result) {
       pred_lab[structured]
     ),
     background_absorbed = if (any(!structured)) {
-      mean(pred_lab[!structured] != "unassigned")
+      mean(names(truth_lab)[!structured] %in% pred_ids)
     } else {
       NA_real_
     },
-    coverage = mean(pred_lab != "unassigned"),
+    coverage = mean(names(truth_lab) %in% pred_ids),
     module_recall = module_recall,
     mean_module_recall = if (length(module_recall)) mean(module_recall) else NA_real_,
     confusion = table(truth = truth_lab, predicted = pred_lab)

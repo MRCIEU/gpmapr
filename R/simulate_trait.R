@@ -24,8 +24,9 @@
 #' be verified; unplanted components draw randomly from built-in pools, and
 #' `annotation_noise` controls contamination of planted labels.
 #' @param n_coloc_groups Integer number of SNPs (= coloc groups) for the target trait.
-#' @param K Integer number of planted modules. `K = 0` gives the pure null (all
-#'   SNPs unstructured).
+#' @param K Integer number of planted modules. If `NULL`, `K` is inferred from
+#'   the length of `module_sizes`, or set to `0` when `module_sizes` is `NULL`.
+#'   `K = 0` gives the pure null (all SNPs unstructured).
 #' @param module_sizes Optional integer vector of length `K`: SNPs per module
 #'   region (shared SNPs counted once per adjacent pair). Defaults to an equal
 #'   split of the non-background SNPs.
@@ -49,7 +50,8 @@
 #'   vector of length `K` giving one value per module. Varying effect sizes
 #'   across modules breaks the exchangeability of same-signature modules so
 #'   that methods which operate in trait space (e.g. EBMF) can separate them.
-#' @param noise_sd Standard deviation of noise effects added everywhere.
+#' @param noise_sd Standard deviation of noise effects added to target,
+#'   driver, and background trait observations.
 #' @param sign_pattern Driver-sign regime: `"coherent"` (all drivers positive),
 #'   `"flipped"` (signs alternate across drivers within a module, so
 #'   anti-correlated profiles share a module), `"random"` (independent signs).
@@ -101,7 +103,7 @@
 #'   }
 #' @export
 simulate_trait <- function(n_coloc_groups = 100,
-                           K = 0,
+                           K = NULL,
                            module_sizes = NULL,
                            n_background_snps = 0,
                            overlap = "disjoint",
@@ -117,21 +119,68 @@ simulate_trait <- function(n_coloc_groups = 100,
                            snps_per_trait = NULL,
                            traits_per_snp = NULL,
                            module_annotations = NULL,
-                            annotation_noise = 0.1,
-                            log_se_sd = 0,
-                            snp_driver_groups = 1,
-                            seed = NULL) {
+                           annotation_noise = 0.1,
+                           log_se_sd = 0,
+                           snp_driver_groups = 1,
+                           seed = NULL) {
   sign_pattern <- match.arg(sign_pattern)
 
   if (!is.numeric(n_coloc_groups) || length(n_coloc_groups) != 1 ||
         n_coloc_groups < 2 || n_coloc_groups != floor(n_coloc_groups)) {
     stop("n_coloc_groups must be an integer >= 2")
   }
-  if (!is.numeric(K) || length(K) != 1 || K < 0 || K != floor(K)) {
+  if (is.null(K)) {
+    K <- if (is.null(module_sizes)) 0L else length(module_sizes)
+  }
+  if (!is.numeric(K) || length(K) != 1 || !is.finite(K) || K < 0 ||
+      K != floor(K)) {
     stop("K must be a non-negative integer")
   }
   n_snps <- as.integer(n_coloc_groups)
   K <- as.integer(K)
+
+  if (!is.numeric(drivers_per_module) || length(drivers_per_module) != 1L ||
+      !is.finite(drivers_per_module) || drivers_per_module < 1 ||
+      drivers_per_module != floor(drivers_per_module)) {
+    stop("drivers_per_module must be a positive integer")
+  }
+  drivers_per_module <- as.integer(drivers_per_module)
+  if (!is.numeric(n_background_traits) || length(n_background_traits) != 1L ||
+      !is.finite(n_background_traits) || n_background_traits < 0 ||
+      n_background_traits != floor(n_background_traits)) {
+    stop("n_background_traits must be a non-negative integer")
+  }
+  n_background_traits <- as.integer(n_background_traits)
+  if (!is.numeric(n_background_snps) || length(n_background_snps) != 1L ||
+      !is.finite(n_background_snps) || n_background_snps < 0 ||
+      n_background_snps != floor(n_background_snps)) {
+    stop("n_background_snps must be a non-negative integer")
+  }
+  n_background_snps <- as.integer(n_background_snps)
+  if (!is.numeric(driver_sharing) || length(driver_sharing) != 1L ||
+      !is.finite(driver_sharing) || driver_sharing < 0 || driver_sharing > 1) {
+    stop("driver_sharing must be a number between 0 and 1")
+  }
+  if (!is.numeric(snp_driver_groups) || length(snp_driver_groups) != 1L ||
+      !is.finite(snp_driver_groups) || snp_driver_groups < 1 ||
+      snp_driver_groups != floor(snp_driver_groups) ||
+      snp_driver_groups > drivers_per_module) {
+    stop("snp_driver_groups must be an integer between 1 and drivers_per_module")
+  }
+  snp_driver_groups <- as.integer(snp_driver_groups)
+  if (!is.numeric(noise_sd) || length(noise_sd) != 1L ||
+      !is.finite(noise_sd) || noise_sd < 0) {
+    stop("noise_sd must be a non-negative finite number")
+  }
+  if (!is.numeric(log_se_sd) || length(log_se_sd) != 1L ||
+      !is.finite(log_se_sd) || log_se_sd < 0) {
+    stop("log_se_sd must be a non-negative finite number")
+  }
+  probabilities <- c(p_spurious, p_active_background, annotation_noise)
+  if (any(!is.finite(probabilities)) || any(probabilities < 0) ||
+      any(probabilities > 1)) {
+    stop("p_spurious, p_active_background, and annotation_noise must be between 0 and 1")
+  }
 
   effect_size <- .expand_per_module_parameter(
     effect_size, K, "effect_size", allow_empty = TRUE
@@ -139,6 +188,9 @@ simulate_trait <- function(n_coloc_groups = 100,
   p_structural_zero <- .expand_per_module_parameter(
     p_structural_zero, K, "p_structural_zero", allow_empty = TRUE
   )
+  if (any(p_structural_zero > 1)) {
+    stop("p_structural_zero must be between 0 and 1")
+  }
 
   overlap_n <- .resolve_overlap(overlap, K)
   if (!is.null(seed)) {
@@ -166,7 +218,7 @@ simulate_trait <- function(n_coloc_groups = 100,
   }
 
   n_drivers <- K * drivers_per_module
-  n_bg_traits <- as.integer(n_background_traits)
+  n_bg_traits <- n_background_traits
   trait_ids <- 1:(1 + n_drivers + n_bg_traits)
   target_tid <- 1L
   driver_tids <- if (n_drivers > 0) 2:(1 + n_drivers) else integer(0)
@@ -177,15 +229,20 @@ simulate_trait <- function(n_coloc_groups = 100,
               dimnames = list(as.character(trait_ids), .sim_variant_ids(n_snps)))
   snp_module <- module_of
 
-  M[as.character(target_tid), ] <- ifelse(
+  target_signal <- ifelse(
     snp_module > 0,
     effect_size[pmax(snp_module, 1)] * ifelse(snp_module %% 2 == 1, 1, -1),
-    stats::rnorm(n_snps, 0, noise_sd)
+    0
   )
+  M[as.character(target_tid), ] <- target_signal +
+    stats::rnorm(n_snps, 0, noise_sd)
 
   driver_signs <- switch(sign_pattern,
     coherent = rep(1, n_drivers),
-    flipped = ifelse(seq_len(max(n_drivers, 1)) %% 2 == 1, 1, -1)[seq_len(n_drivers)],
+    flipped = rep(
+      ifelse(seq_len(drivers_per_module) %% 2 == 1, 1, -1),
+      K
+    ),
     random = sample(c(-1, 1), n_drivers, replace = TRUE)
   )
   if (n_drivers > 0) {
@@ -314,7 +371,7 @@ simulate_trait <- function(n_coloc_groups = 100,
 
 
 .expand_per_module_parameter <- function(x, K, name, allow_empty = FALSE) {
-  if (!is.numeric(x) || length(x) == 0 || anyNA(x)) {
+  if (!is.numeric(x) || length(x) == 0 || anyNA(x) || any(!is.finite(x))) {
     stop(name, " must be a non-NA numeric vector")
   }
   if (length(x) == 1L) {
@@ -433,13 +490,32 @@ simulate_trait <- function(n_coloc_groups = 100,
     }
   }
   if (!is.null(traits_per_snp)) {
-    if (length(traits_per_snp) != 2 || any(traits_per_snp < 0)) {
+    if (length(traits_per_snp) != 2 || any(traits_per_snp < 0) ||
+        any(!is.finite(traits_per_snp)) ||
+        traits_per_snp[2] != floor(traits_per_snp[2])) {
       stop("traits_per_snp must be c(min, max)")
     }
     counts <- colSums(!is.na(M))
     over <- counts > traits_per_snp[2]
     for (c in colnames(M)[over]) {
-      drop <- sample(which(!is.na(M[, c])), counts[c] - traits_per_snp[2])
+      max_count <- as.integer(traits_per_snp[2])
+      protected_idx <- if (!is.null(protected_row)) {
+        match(protected_row, rownames(M))
+      } else {
+        NA_integer_
+      }
+      if (!is.na(protected_idx)) {
+        max_count <- max(max_count, 1L)
+      }
+      drop_n <- counts[c] - max_count
+      eligible <- which(!is.na(M[, c]))
+      if (!is.na(protected_idx)) {
+        eligible <- setdiff(eligible, protected_idx)
+      }
+      if (length(eligible) < drop_n) {
+        stop("traits_per_snp cap would remove the protected target-trait observation")
+      }
+      drop <- sample(eligible, drop_n)
       M[drop, c] <- NA_real_
     }
   }

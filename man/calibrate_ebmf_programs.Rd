@@ -37,8 +37,8 @@ A list with:
 raw_factor_signal, factor_strength)
 \item memberships: dataframe (snp_id, program, loading, abs_loading,
 lfsr, emp_p, q, core, tier)
-\item null_summary: list with per-replicate max masses, pooled loading
-quantiles, and pooled null factor strengths (with quantiles)
+\item null_summary: list with per-replicate max masses and pooled loading
+quantiles
 \item settings: calibration settings used
 }
 }
@@ -53,11 +53,7 @@ EBMF pipeline on each permuted matrix, and reports, for every fitted program:
 \item{Factor strength}{The proportion of the observed matrix signal
 attributable to the factor, computed from its fitted reconstruction:
 \eqn{\sum_i |L_{ik}| \sum_j |F_{jk}|} (raw factor signal) over the
-observed matrix signal \eqn{\sum |X|}. The raw factor signal is retained
-so the threshold can be calibrated. Null replicates contribute their own
-raw factor signals against the \emph{same} observed-matrix denominator, so
-observed factor strength can be compared against the null distribution
-(e.g. its 99th percentile).}
+observed matrix signal \eqn{\sum |X|}.}
 \item{SNP membership (emp_p / q)}{Each SNP x program loading receives an
 empirical p-value against the pooled null loading distribution, BH-corrected
 into q-values; cells with \code{q <= alpha_membership} are labelled \code{core}. This

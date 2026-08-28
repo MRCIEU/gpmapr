@@ -69,11 +69,7 @@ ebmf_posterior_table <- function(clustering_result) {
 #'   \item{Factor strength}{The proportion of the observed matrix signal
 #'   attributable to the factor, computed from its fitted reconstruction:
 #'   \eqn{\sum_i |L_{ik}| \sum_j |F_{jk}|} (raw factor signal) over the
-#'   observed matrix signal \eqn{\sum |X|}. The raw factor signal is retained
-#'   so the threshold can be calibrated. Null replicates contribute their own
-#'   raw factor signals against the *same* observed-matrix denominator, so
-#'   observed factor strength can be compared against the null distribution
-#'   (e.g. its 99th percentile).}
+#'   observed matrix signal \eqn{\sum |X|}.}
 #'   \item{SNP membership (emp_p / q)}{Each SNP x program loading receives an
 #'   empirical p-value against the pooled null loading distribution, BH-corrected
 #'   into q-values; cells with `q <= alpha_membership` are labelled `core`. This
@@ -100,8 +96,8 @@ ebmf_posterior_table <- function(clustering_result) {
 #'       raw_factor_signal, factor_strength)
 #'     \item memberships: dataframe (snp_id, program, loading, abs_loading,
 #'       lfsr, emp_p, q, core, tier)
-#'     \item null_summary: list with per-replicate max masses, pooled loading
-#'       quantiles, and pooled null factor strengths (with quantiles)
+#'     \item null_summary: list with per-replicate max masses and pooled loading
+#'       quantiles
 #'     \item settings: calibration settings used
 #'   }
 #' @export
@@ -186,7 +182,6 @@ calibrate_ebmf_programs <- function(clustering_result,
 
   null_max_mass <- numeric(n_null)
   null_cells <- vector("list", n_null)
-  null_factor_signals <- numeric(0)
   for (i in seq_len(n_null)) {
     if (verbose) {
       message("Null replicate ", i, "/", n_null)
@@ -196,7 +191,6 @@ calibrate_ebmf_programs <- function(clustering_result,
     null_max_mass[i] <- if (length(masses)) max(masses) else 0
     if (!is.null(fit) && fit$n_factors > 0) {
       null_cells[[i]] <- as.numeric(abs(fit$F_pm))
-      null_factor_signals <- c(null_factor_signals, .ebmf_factor_signal(fit))
     }
   }
   null_cells <- unlist(null_cells)
@@ -209,11 +203,6 @@ calibrate_ebmf_programs <- function(clustering_result,
     obs_input <- clustering_result$x_star
   }
   total_signal <- sum(abs(obs_input), na.rm = TRUE)
-  null_factor_strengths <- if (is.finite(total_signal) && total_signal > 0) {
-    null_factor_signals / total_signal
-  } else {
-    rep(NA_real_, length(null_factor_signals))
-  }
 
   posterior <- ebmf_posterior_table(clustering_result)
   min_core <- max(
@@ -232,11 +221,7 @@ calibrate_ebmf_programs <- function(clustering_result,
       null_summary = list(
         max_masses = null_max_mass,
         loading_quantiles = stats::quantile(null_cells,
-                                            c(.5, .9, .95, .99)),
-        factor_strength_quantiles = stats::quantile(
-          null_factor_strengths, c(.5, .9, .95, .99)
-        ),
-        n_null_factor_strengths = length(null_factor_strengths)
+                                            c(.5, .9, .95, .99))
       ),
       settings = list(n_null = n_null, alpha_membership = alpha_membership,
                       seed = seed,
@@ -297,12 +282,7 @@ calibrate_ebmf_programs <- function(clustering_result,
     null_summary = list(
       max_masses = null_max_mass,
       loading_quantiles = stats::quantile(null_cells, c(.5, .9, .95, .99)),
-      n_pooled_cells = length(null_cells),
-      factor_strength_quantiles = stats::quantile(
-        null_factor_strengths, c(.5, .9, .95, .99)
-      ),
-      n_null_factor_strengths = length(null_factor_strengths),
-      factor_strengths = null_factor_strengths
+      n_pooled_cells = length(null_cells)
     ),
     settings = list(n_null = n_null, alpha_membership = alpha_membership,
                     seed = seed, min_core_members = min_core,
@@ -313,11 +293,12 @@ calibrate_ebmf_programs <- function(clustering_result,
 
 #' @title Stability of EBMF Programs Across Trait Subsamples
 #' @description Refit the EBMF pipeline on trait subsamples of the observed
-#' matrix and score how consistently each program's member set reappears. For
-#' each replicate, a random fraction of trait rows is held out, the fit is
-#' repeated with the stored pipeline parameters, and each factor contributes
-#' its top-loaded SNP set. A reference program's replication score is the mean
-#' across replicates of its best overlap with any replicate factor set.
+#' matrix and score how consistently each program's filtered member set
+#' reappears. For each replicate, a random fraction of trait rows is held out,
+#' the fit is repeated with the stored pipeline parameters, and each factor's
+#' SNPs are filtered using the same lFSR and magnitude thresholds. A reference
+#' program's replication score is the mean across replicates of its best overlap
+#' with any replicate factor set.
 #' Descriptive: scores are not p-values. Use them to prioritise programmes whose
 #' membership survives resampling.
 #'
@@ -355,11 +336,23 @@ stability_ebmf_programs <- function(clustering_result,
                       replication = numeric(0), sd_replication = numeric(0)))
   }
 
+  lfsr_threshold <- params$ebmf_lfsr_threshold
+  magnitude_threshold <- params$ebmf_magnitude_threshold
+  keep_membership <- function(lfsr, abs_loading) {
+    lfsr_ok <- is.na(lfsr_threshold) |
+      (!is.na(lfsr) & lfsr < lfsr_threshold)
+    support_ok <- is.finite(abs_loading) & abs_loading > 0
+    magnitude_ok <- is.na(magnitude_threshold) |
+      (support_ok & abs_loading > magnitude_threshold)
+    lfsr_ok & support_ok & magnitude_ok
+  }
+
   ref_sets <- lapply(sort(unique(posterior$program)), function(pg) {
-    s <- posterior$snp_id[posterior$program == pg]
-    s[order(-posterior$abs_loading[posterior$program == pg])][
-      seq_len(min(top_n, length(s)))
-    ]
+    rows <- posterior$program == pg &
+      keep_membership(posterior$lfsr, posterior$abs_loading)
+    s <- posterior$snp_id[rows]
+    loading <- posterior$abs_loading[rows]
+    s[order(-loading)][seq_len(min(top_n, length(s)))]
   })
   names(ref_sets) <- sort(unique(posterior$program))
 
@@ -406,9 +399,20 @@ stability_ebmf_programs <- function(clustering_result,
       return(list())
     }
     lapply(seq_len(fit$n_factors), function(k) {
-      v <- abs(fit$F_pm[, k])
-      v <- v[!is.na(v)]
-      names(head(sort(v, decreasing = TRUE), top_n))
+      abs_loading <- abs(fit$F_pm[, k])
+      lfsr <- if (!is.null(fit$F_lfsr)) {
+        fit$F_lfsr[, k]
+      } else {
+        rep(NA_real_, length(abs_loading))
+      }
+      keep <- keep_membership(lfsr, abs_loading)
+      ids <- rownames(fit$F_pm)
+      if (is.null(ids)) {
+        ids <- as.character(seq_len(nrow(fit$F_pm)))
+      }
+      ids <- ids[keep]
+      loading <- abs_loading[keep]
+      ids[order(-loading)][seq_len(min(top_n, length(ids)))]
     })
   }
 
@@ -436,7 +440,7 @@ stability_ebmf_programs <- function(clustering_result,
   scores <- do.call(rbind, lapply(names(ref_sets), function(pg) {
     ref <- ref_sets[[pg]]
     per_rep <- vapply(replicate_sets_all, function(sets) {
-      if (length(sets) == 0) {
+      if (length(sets) == 0 || length(ref) == 0) {
         return(0)
       }
       max(vapply(sets, function(s) {

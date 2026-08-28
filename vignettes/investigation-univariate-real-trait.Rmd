@@ -245,9 +245,9 @@ knitr::kable(
 
 The pipeline's hard gates are bypassed: each EBMF program is validated with
 `summarise_ebmf_programs()`, which folds internal coherence
-(mean internal similarity and connectedness), permutation-calibrated factor
-strength, and trait-subsampling stability into one per-program table, plus the
-descriptive additional scores (aggregate posterior evidence and factor
+(mean internal similarity and connectedness) and trait-subsampling stability
+into one per-program table, plus the descriptive additional scores (factor
+strength, aggregate posterior evidence and factor
 distinctiveness).
 
 ```{r ebmf-calibration}
@@ -274,7 +274,7 @@ knitr::kable(
       ~ round(.x, 3)
     )),
   row.names = FALSE,
-  caption = "EBMF programs after validation (factor strength as proportion of observed matrix signal; replication is only checked for programs failing internal coherence)"
+  caption = "EBMF programs after validation (factor_strength and factor_strength/sqrt(n_snps_filtered) reported for context, not gating; replication is only checked for programs passing internal coherence)"
 )
 
 valid_ids <- program_summary$programs$program[

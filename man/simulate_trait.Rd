@@ -6,7 +6,7 @@
 \usage{
 simulate_trait(
   n_coloc_groups = 100,
-  K = 0,
+  K = NULL,
   module_sizes = NULL,
   n_background_snps = 0,
   overlap = "disjoint",
@@ -31,8 +31,9 @@ simulate_trait(
 \arguments{
 \item{n_coloc_groups}{Integer number of SNPs (= coloc groups) for the target trait.}
 
-\item{K}{Integer number of planted modules. \code{K = 0} gives the pure null (all
-SNPs unstructured).}
+\item{K}{Integer number of planted modules. If \code{NULL}, \code{K} is inferred from
+the length of \code{module_sizes}, or set to \code{0} when \code{module_sizes} is \code{NULL}.
+\code{K = 0} gives the pure null (all SNPs unstructured).}
 
 \item{module_sizes}{Optional integer vector of length \code{K}: SNPs per module
 region (shared SNPs counted once per adjacent pair). Defaults to an equal
@@ -64,7 +65,8 @@ vector of length \code{K} giving one value per module. Varying effect sizes
 across modules breaks the exchangeability of same-signature modules so
 that methods which operate in trait space (e.g. EBMF) can separate them.}
 
-\item{noise_sd}{Standard deviation of noise effects added everywhere.}
+\item{noise_sd}{Standard deviation of noise effects added to target,
+driver, and background trait observations.}
 
 \item{sign_pattern}{Driver-sign regime: \code{"coherent"} (all drivers positive),
 \code{"flipped"} (signs alternate across drivers within a module, so

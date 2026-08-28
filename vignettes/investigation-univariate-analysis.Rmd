@@ -27,8 +27,6 @@ params:
   ebmf_backfit: true
   min_mean_internal: 0.3
   min_connectedness: 0.25
-  min_factor_strength: 0.01
-  factor_strength_null_q: 0.99
   n_null: 10
   alpha_membership: 0.05
   n_candidate_tier: 25
@@ -76,7 +74,8 @@ Profiles are oriented, compressed, and clustered with **`r params$cluster_type`*
 matrix factorization with overlapping programs, hard-assigned to their
 strongest factor). Modules/programs are then validated with a filtering
 framework — internal coherence (mean internal similarity and connectedness),
-permutation-calibrated factor strength, and trait-subsampling stability —
+factor strength normalised by the square root of the number of filtered SNPs,
+and trait-subsampling stability —
 plus descriptive evidence scores (aggregate posterior evidence and factor
 distinctiveness) before interpretation.
 
@@ -112,8 +111,6 @@ ebmf_magnitude_threshold <- if (is.na(params$ebmf_magnitude_threshold)) {
 associations <- params$associations
 min_mean_internal <- as.numeric(params$min_mean_internal)
 min_connectedness <- as.numeric(params$min_connectedness)
-min_factor_strength <- as.numeric(params$min_factor_strength)
-factor_strength_null_q <- as.numeric(params$factor_strength_null_q)
 n_null <- as.integer(params$n_null)
 alpha_membership <- as.numeric(params$alpha_membership)
 n_candidate_tier <- as.integer(params$n_candidate_tier)
@@ -149,8 +146,6 @@ knitr::kable(
     ebmf_magnitude_threshold = if (cluster_type == "ebmf") ebmf_magnitude_threshold else NULL,
     min_mean_internal = min_mean_internal,
     min_connectedness = min_connectedness,
-    min_factor_strength = if (cluster_type == "ebmf") min_factor_strength else NULL,
-    factor_strength_null_q = if (cluster_type == "ebmf") factor_strength_null_q else NULL,
     n_null = if (cluster_type == "ebmf") n_null else NULL,
     alpha_membership = if (cluster_type == "ebmf") alpha_membership else NULL,
     n_candidate_tier = if (cluster_type == "ebmf") n_candidate_tier else NULL,
@@ -354,23 +349,23 @@ the SNP similarity graph:
 - **connectedness** — fraction of SNP pairs with `|S| >= similarity_threshold`
 
 For EBMF, `summarise_ebmf_programs()` folds the graph-reliability metrics
-together with permutation-calibrated **factor strength**, trait-subsampling
-**stability**, and the descriptive **additional scores** into a single
-per-program table with pass/fail flags and an overall `status`:
+together with trait-subsampling **stability** and the descriptive
+**additional scores** into a single per-program table with pass/fail flags and
+an overall `status`:
 
-- **factor_strength** — proportion of observed matrix signal attributable to
-  the factor (from its fitted reconstruction), plus the raw factor signal
-  retained for threshold calibration. A program passes
-  (`factor_strength_pass`) if `factor_strength >= min_factor_strength` **and**
-  it exceeds the `factor_strength_null_q` quantile of the permutation-null
-  factor strengths (rank-relative criterion: the factor must explain
-  substantially more signal than factors produced under the null).
+- **factor_strength / factor_strength_per_snp** — proportion of observed
+  matrix signal attributable to the factor (from its fitted reconstruction),
+  computed on the lFSR/magnitude-filtered subset of EBMF-supported SNPs;
+  `factor_strength_per_snp = factor_strength / sqrt(n_snps_filtered)`. Reported for
+  context only; it does not gate `status`.
 - **replication** — trait-subsampling stability: how often the top
   `stability_top_n` loading SNPs are recovered when `1 - frac_traits` of the
   traits are held out and flashier is refit (`n_rep` reruns, run in parallel
   on `cores` cores). Because this is expensive, it is only computed for
-  programs that fail the internal-coherence checks; those programs must reach
-  `replication >= stability_threshold`.
+  programs that pass the internal-coherence checks; those programs must reach
+  `replication >= stability_threshold`. Stability should use the same filtered
+  SNP reference sets as the other program-level calculations, and the
+  refitted programs are filtered with the same lFSR/magnitude thresholds.
 - **posterior_evidence** — aggregate (`posterior_stat`) of `-log10(lfsr)`
   across assigned SNPs. Distinguishes programs dominated by borderline
   `lfsr ~ 0.05` memberships from programs whose memberships carry much stronger
@@ -379,8 +374,8 @@ per-program table with pass/fail flags and an overall `status`:
   program's SNP loading vector with any other program; programs exceeding
   `redundancy_threshold` are flagged `redundant`.
 
-A program is `valid` if it passes all four filters (`size`, `internal`,
-`factor_strength`, `stability`); the failure reason is recorded in `status`.
+A program is `valid` if it passes all three filters (`size`, `internal`,
+`stability`); the failure reason is recorded in `status`.
 
 ```{r step4-quality, results='asis'}
 # if (cluster_type == "louvain") {
@@ -424,8 +419,6 @@ A program is `valid` if it passes all four filters (`size`, `internal`,
     min_module_size = min_module_size,
     min_mean_internal = min_mean_internal,
     min_connectedness = min_connectedness,
-    factor_strength_min = min_factor_strength,
-    factor_strength_null_q = factor_strength_null_q,
     n_null = n_null,
     alpha_membership = alpha_membership,
     n_candidate_tier = n_candidate_tier,
@@ -444,25 +437,20 @@ A program is `valid` if it passes all four filters (`size`, `internal`,
     program_summary$programs$status == "valid"
   ]
 
-  null_bar_pct <- 100 * stats::quantile(
-    program_summary$null_summary$factor_strengths,
-    factor_strength_null_q,
-    na.rm = TRUE
-  )
-
   print(
     knitr::kable(
       program_summary$programs |>
         dplyr::select(
-          program, n_snps,
+          program, n_snps, n_snps_filtered,
           mean_internal_similarity, connectedness,
-          factor_strength, replication,
+          factor_strength, factor_strength_per_snp, replication,
           posterior_evidence, max_abs_factor_corr, redundant,
-          size_pass, internal_pass, factor_strength, null_factor_strength_q, factor_strength_pass,
+          size_pass, internal_pass,
           stability_pass, stability_checked, status
         ) |>
         dplyr::mutate(
           factor_strength_pct = round(100 * factor_strength, 2),
+          factor_strength_per_snp_pct = round(100 * factor_strength_per_snp, 3),
           mean_internal_similarity = round(mean_internal_similarity, 3),
           connectedness = round(connectedness, 3),
           replication = round(replication, 3),
@@ -474,33 +462,29 @@ A program is `valid` if it passes all four filters (`size`, `internal`,
           redundant = dplyr::if_else(redundant, "yes", "no"),
           size_pass = dplyr::if_else(size_pass, "pass", "fail"),
           internal_pass = dplyr::if_else(internal_pass, "pass", "fail"),
-          factor_strength_pass = dplyr::case_when(
-            is.na(factor_strength_pass) ~ "n/a",
-            factor_strength_pass ~ "pass",
-            TRUE ~ "fail"
-          ),
           stability_pass = dplyr::case_when(
-            !stability_checked ~ "n/a (coherent)",
+            !stability_checked ~ "n/a (not checked)",
             stability_pass ~ "pass",
             TRUE ~ "fail"
           )
         ) |>
         dplyr::select(
-          program, n_snps, mean_internal_similarity, connectedness,
-          factor_strength_pct, replication, posterior_evidence,
+          program, n_snps, n_snps_filtered,
+          mean_internal_similarity, connectedness,
+          factor_strength_pct, factor_strength_per_snp_pct, replication, posterior_evidence,
           max_abs_factor_corr, redundant,
-          size_pass, internal_pass, factor_strength, null_factor_strength_q, factor_strength_pass, stability_pass, status
+          size_pass, internal_pass, stability_pass, status
         ),
       row.names = FALSE,
       caption = paste0(
-        "All EBMF programs returned by flash, with each filter check. ",
-        "factor_strength is shown as % of observed matrix signal and must exceed ",
-        "both the ", 100 * factor_strength_null_q, "th percentile of the null ",
-        "factor strengths (the bar is ",
-        format(round(null_bar_pct, 2), nsmall = 2), "% here) and ",
-        100 * min_factor_strength, "%; replication is only checked for programs ",
-        "failing internal coherence (otherwise --); status is 'valid' or lists ",
-        "the failed checks (size; internal; factor_strength; stability)."
+        "All EBMF programs returned by flash, with each filter check. n_snps ",
+        "is the number of SNPs with nonzero EBMF support and n_snps_filtered is ",
+        "the subset surviving the lFSR/magnitude gate; ",
+        "factor_strength (as % of observed matrix signal) and ",
+        "factor_strength/sqrt(n_snps_filtered) are reported for context but do not gate ",
+        "status; replication is only checked for programs passing internal ",
+        "coherence (otherwise --); status is 'valid' or lists the failed checks ",
+        "(size; internal; stability)."
       )
     )
   )
@@ -513,35 +497,17 @@ A program is `valid` if it passes all four filters (`size`, `internal`,
           n_valid = sum(status == "valid"),
           n_fail_size = sum(!size_pass),
           n_fail_internal = sum(!internal_pass),
-          n_fail_factor_strength = sum(!factor_strength_pass),
           n_fail_stability = sum(!stability_pass),
           n_redundant = sum(redundant, na.rm = TRUE)
-        ) |>
-        dplyr::mutate(
-          null_factor_strength_bar_pct = round(null_bar_pct, 2),
-          factor_strength_null_q = factor_strength_null_q
         ),
       row.names = FALSE,
-      caption = "EBMF program validation summary (null factor-strength bar = 100 x the factor_strength_null_q quantile of the permutation-null factor strengths)"
+      caption = "EBMF program validation summary (factor strength is reported but does not gate status)"
     )
   )
 
-  soft_memberships <- program_summary$memberships |>
-    dplyr::filter(
-      program %in% valid_ids,
-      !is.na(lfsr), lfsr < ebmf_lfsr_threshold,
-      is.na(ebmf_magnitude_threshold) |
-        abs_loading > ebmf_magnitude_threshold
-    )
-  overlap_ids <- soft_memberships |>
-    dplyr::count(snp_id) |>
-    dplyr::filter(n > 1) |>
-    dplyr::pull(snp_id)
-  overlap_memberships <- soft_memberships |>
-    dplyr::filter(snp_id %in% overlap_ids) |>
-    dplyr::select(snp_id, program, loading, abs_loading, lfsr, emp_p, q, tier)
-
-  clusters_analysis <- overlap_memberships |>
+  soft_memberships <- program_summary$assigned |>
+    dplyr::filter(program %in% valid_ids)
+  clusters_analysis <- soft_memberships |>
     dplyr::transmute(
       snp_id = snp_id,
       group = as.character(program)
@@ -550,7 +516,7 @@ A program is `valid` if it passes all four filters (`size`, `internal`,
 ```
 
 ```{r step4-heatmap, fig.height = 7, fig.width = 7}
-if (length(clusters_analysis) >= 2) {
+if (is.data.frame(clusters_analysis) && nrow(clusters_analysis) >= 2) {
   if (is.data.frame(clusters_analysis)) {
     heatmap_groups <- stats::setNames(
       clusters_analysis$group[!duplicated(clusters_analysis$snp_id)],

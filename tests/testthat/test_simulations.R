@@ -35,6 +35,17 @@ test_that("simulate_trait returns a valid trait object with ground truth", {
   expect_length(truth$multi_module_snps, 0)
 })
 
+test_that("module_sizes can define the number of planted modules", {
+  sim <- simulate_trait(
+    n_coloc_groups = 100,
+    module_sizes = c(5, 20, 50),
+    n_background_traits = 5,
+    seed = 43
+  )
+  expect_equal(sim$ground_truth$parameters$K, 3L)
+  expect_equal(sim$ground_truth$parameters$module_sizes, c(5L, 20L, 50L))
+})
+
 test_that("planted modules are recovered by the pipeline (disjoint)", {
   sim <- simulate_trait(
     n_coloc_groups = 48,
@@ -63,6 +74,45 @@ test_that("null simulation produces limited structure", {
   ev <- evaluate_univariate_simulation(sim, res)
   expect_equal(ev$k_planted, 0)
   expect_lte(ev$coverage, 0.5)
+})
+
+test_that("simulation evaluation accepts overlapping EBMF memberships", {
+  sim <- simulate_trait(
+    n_coloc_groups = 60,
+    K = 2,
+    module_sizes = c(20, 20),
+    drivers_per_module = 4,
+    p_structural_zero = 0.1,
+    seed = 13
+  )
+  res <- run_univariate_clustering(
+    sim$trait_object,
+    cluster_type = "ebmf",
+    min_snp_signals = 2,
+    ebmf_lfsr_threshold = 0.05,
+    ebmf_magnitude_threshold = 0.25,
+    min_module_size = 3
+  )
+  summary <- summarise_ebmf_programs(
+    res,
+    n_null = 2,
+    n_rep = 0,
+    verbose = FALSE
+  )
+  valid <- summary$programs$program[summary$programs$status == "valid"]
+  ev <- evaluate_univariate_simulation(
+    sim,
+    res,
+    predicted_memberships = summary$assigned[
+      summary$assigned$program %in% valid,
+      ,
+      drop = FALSE
+    ]
+  )
+  expect_true(all(c("coverage", "background_absorbed", "module_recall") %in%
+                    names(ev)))
+  expect_gte(ev$coverage, 0)
+  expect_lte(ev$coverage, 1)
 })
 
 test_that("overlap creates multi-module SNPs", {
@@ -120,6 +170,44 @@ test_that("sign_pattern flipped produces anti-correlated driver profiles", {
   drv <- sim$ground_truth$driver_traits$module_1
   means <- tapply(cg$beta[cg$trait_name %in% drv], cg$trait_name[cg$trait_name %in% drv], mean)
   expect_gt(max(means) * -min(means), 0)
+})
+
+test_that("flipped signs restart for each module", {
+  sim <- simulate_trait(
+    n_coloc_groups = 60,
+    K = 2,
+    module_sizes = c(20, 20),
+    drivers_per_module = 4,
+    sign_pattern = "flipped",
+    p_structural_zero = 0,
+    p_spurious = 0,
+    noise_sd = 0,
+    effect_size = 5,
+    seed = 10
+  )
+  cg <- sim$trait_object$coloc_groups
+  first_drivers <- vapply(seq_len(2), function(m) {
+    driver <- sim$ground_truth$driver_traits[[paste0("module_", m)]][1]
+    mean(cg$beta[cg$trait_name == driver])
+  }, numeric(1))
+  expect_equal(first_drivers, c(5, 5))
+})
+
+test_that("traits_per_snp preserves target-trait observations", {
+  sim <- simulate_trait(
+    n_coloc_groups = 20,
+    K = 1,
+    module_sizes = 10,
+    drivers_per_module = 2,
+    p_structural_zero = 0,
+    p_spurious = 0,
+    p_active_background = 0,
+    traits_per_snp = c(0, 1),
+    seed = 12
+  )
+  target_rows <- sim$trait_object$coloc_groups |>
+    dplyr::filter(trait_id == 1)
+  expect_equal(nrow(target_rows), 20)
 })
 
 test_that("density caps are respected approximately", {
