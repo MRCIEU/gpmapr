@@ -144,6 +144,8 @@ A list with:
 \item clusters: named Louvain cluster assignment per SNP
 \item clusters_reliable: subset of \code{clusters} restricted to reliable modules
 \item module_quality: reliability metrics dataframe
+\item ebmf_input: the features x SNPs matrix actually passed to flashier
+when \code{cluster_type = "ebmf"} (\code{NULL} otherwise)
 \item trait_info, snp_info: row / column metadata
 \item dropped_trait_ids: background traits removed by the sparse/ubiquitous filter
 \item group_traits: module-specific traits (when \code{compute_specific_traits = TRUE})

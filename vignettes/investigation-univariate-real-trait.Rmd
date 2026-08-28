@@ -14,6 +14,7 @@ params:
   ebmf_se_mode: "unit"
   ebmf_beta_scale: "trait"
   ebmf_magnitude_threshold: 0.25
+  cores: 5
 vignette: >
   %\VignetteIndexEntry{Real-trait univariate clustering}
   %\VignetteEngine{knitr::rmarkdown}
@@ -240,32 +241,49 @@ knitr::kable(
 )
 ```
 
-## Permutation-calibrated EBMF reporting
+## Validated EBMF program reporting
 
-The pipeline's hard gates are bypassed: the EBMF posterior is calibrated
-against permutation nulls of the observed matrix (each trait's values shuffled
-across SNPs, preserving sparsity and noise), and programs are reported only if
-they retain at least `min_module_size` FDR-controlled core members.
+The pipeline's hard gates are bypassed: each EBMF program is validated with
+`summarise_ebmf_programs()`, which folds internal coherence
+(mean internal similarity and connectedness), permutation-calibrated factor
+strength, and trait-subsampling stability into one per-program table, plus the
+descriptive additional scores (aggregate posterior evidence and factor
+distinctiveness).
 
 ```{r ebmf-calibration}
-cal <- calibrate_ebmf_programs(
+program_summary <- summarise_ebmf_programs(
   res_eb,
+  s_matrix = res_eb$s_matrix,
+  edge_threshold = params$similarity_threshold,
+  min_module_size = params$min_module_size,
   n_null = params$n_null,
+  cores = params$cores,
   verbose = FALSE
 )
 
 knitr::kable(
-  cal$programs[cal$programs$n_core > 0, ],
+  program_summary$programs |>
+    dplyr::select(
+      program, n_snps, mean_internal_similarity, connectedness,
+      factor_strength, replication, posterior_evidence,
+      max_abs_factor_corr, status
+    ) |>
+    dplyr::mutate(dplyr::across(
+      c(mean_internal_similarity, connectedness, factor_strength,
+        replication, posterior_evidence, max_abs_factor_corr),
+      ~ round(.x, 3)
+    )),
   row.names = FALSE,
-  caption = sprintf(
-    "EBMF programs after permutation calibration (%d nulls; detected = >= %d FDR-controlled members)",
-    params$n_null, params$min_module_size
-  )
+  caption = "EBMF programs after validation (factor strength as proportion of observed matrix signal; replication is only checked for programs failing internal coherence)"
 )
 
-core <- cal$memberships[cal$memberships$core & cal$memberships$q <= params$alpha_membership, ]
-if (nrow(core) > 0) {
-  cls <- setNames(core$program, core$snp_id)
+valid_ids <- program_summary$programs$program[
+  program_summary$programs$status == "valid"
+]
+valid_members <- program_summary$assigned |>
+  dplyr::filter(program %in% valid_ids)
+if (nrow(valid_members) > 0) {
+  cls <- setNames(valid_members$program, valid_members$snp_id)
   Xc <- res_eb$x_star[, names(cls), drop = FALSE]
   drv_core <- summarise_snp_modules(
     Xc, cls,
@@ -283,10 +301,10 @@ if (nrow(core) > 0) {
       dplyr::select(cluster, trait, mean_z) |>
       dplyr::arrange(cluster, dplyr::desc(abs(mean_z))),
     row.names = FALSE,
-    caption = "Top traits driving each program's FDR-controlled core SNPs"
+    caption = "Top traits driving each valid program's assigned SNPs"
   )
 } else {
-  cat("No FDR-controlled core members at alpha =", params$alpha_membership, "\n")
+  cat("No valid EBMF programs.\n")
 }
 ```
 

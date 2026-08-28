@@ -44,23 +44,42 @@ ebmf_posterior_table <- function(clustering_result) {
 }
 
 
+.ebmf_factor_signal <- function(fit) {
+  if (is.null(fit) || fit$n_factors == 0) {
+    return(numeric(0))
+  }
+  L_mat <- fit$L_pm
+  F_mat <- fit$F_pm
+  if (is.null(L_mat) || is.null(F_mat)) {
+    return(numeric(0))
+  }
+  raw <- colSums(abs(L_mat), na.rm = TRUE) * colSums(abs(F_mat), na.rm = TRUE)
+  return(unname(as.numeric(raw)))
+}
+
+
 #' @title Calibrate EBMF Programs Against Permutation Nulls
 #' @description Post-hoc, permutation-calibrated reporting layer for EBMF
 #' results. Generates `n_null` structureless versions of the *observed* matrix
 #' by independently shuffling each trait row across SNPs — preserving every
 #' trait's exact sparsity, effect distribution, and noise regime — refits the
-#' EBMF pipeline on each permuted matrix, and applies two gates:
+#' EBMF pipeline on each permuted matrix, and reports, for every fitted program:
 #'
 #' \describe{
-#'   \item{SNP membership (Gate 2)}{Each SNP x program loading receives an
+#'   \item{Factor strength}{The proportion of the observed matrix signal
+#'   attributable to the factor, computed from its fitted reconstruction:
+#'   \eqn{\sum_i |L_{ik}| \sum_j |F_{jk}|} (raw factor signal) over the
+#'   observed matrix signal \eqn{\sum |X|}. The raw factor signal is retained
+#'   so the threshold can be calibrated. Null replicates contribute their own
+#'   raw factor signals against the *same* observed-matrix denominator, so
+#'   observed factor strength can be compared against the null distribution
+#'   (e.g. its 99th percentile).}
+#'   \item{SNP membership (emp_p / q)}{Each SNP x program loading receives an
 #'   empirical p-value against the pooled null loading distribution, BH-corrected
-#'   into q-values. "Core members" are cells with `q <= alpha_membership`.}
-#'   \item{Program existence (Gate 1)}{Derived from Gate 2: a program is
-#'   reported only if it retains at least `min_core_members` FDR-controlled
-#'   members (default: the pipeline's `min_module_size`). Aggregate loading
-#'   mass is deliberately *not* used for detection — within-row permutation
-#'   preserves each trait's magnitude distribution, so null and real masses
-#'   are incomparable.}
+#'   into q-values; cells with `q <= alpha_membership` are labelled `core`. This
+#'   is a membership gate only — it no longer drives a program-level
+#'   detect/certify decision (see `summarise_ebmf_programs()` for the
+#'   program-level filters).}
 #' }
 #'
 #' No thresholds are applied inside the pipeline; this function is the
@@ -70,19 +89,19 @@ ebmf_posterior_table <- function(clustering_result) {
 #'   every null replicate.
 #' @param n_null Number of permutation replicates. More replicates sharpen the
 #'   empirical quantiles; 20 is a reasonable minimum.
-#' @param alpha_membership Membership FDR level for core members (Gate 2).
-#' @param n_candidate_tier Per detected program, how many non-core cells to
-#'   label as the uncertified "candidate" tier (top-loaded first).
+#' @param alpha_membership Membership FDR level for `core` cells.
+#' @param n_candidate_tier Per program, how many non-core cells to label as the
+#'   uncertified "candidate" tier (top-loaded first).
 #' @param seed RNG seed for the permutations.
 #' @param verbose Print progress messages.
 #' @return A list with:
 #'   \itemize{
-#'     \item programs: dataframe (program, loading_mass, n_core, n_candidate,
-#'       detected)
+#'     \item programs: dataframe (program, loading_mass, n_candidate,
+#'       raw_factor_signal, factor_strength)
 #'     \item memberships: dataframe (snp_id, program, loading, abs_loading,
 #'       lfsr, emp_p, q, core, tier)
-#'     \item null_summary: list with per-replicate max masses and pooled
-#'       loading quantiles
+#'     \item null_summary: list with per-replicate max masses, pooled loading
+#'       quantiles, and pooled null factor strengths (with quantiles)
 #'     \item settings: calibration settings used
 #'   }
 #' @export
@@ -167,6 +186,7 @@ calibrate_ebmf_programs <- function(clustering_result,
 
   null_max_mass <- numeric(n_null)
   null_cells <- vector("list", n_null)
+  null_factor_signals <- numeric(0)
   for (i in seq_len(n_null)) {
     if (verbose) {
       message("Null replicate ", i, "/", n_null)
@@ -176,10 +196,24 @@ calibrate_ebmf_programs <- function(clustering_result,
     null_max_mass[i] <- if (length(masses)) max(masses) else 0
     if (!is.null(fit) && fit$n_factors > 0) {
       null_cells[[i]] <- as.numeric(abs(fit$F_pm))
+      null_factor_signals <- c(null_factor_signals, .ebmf_factor_signal(fit))
     }
   }
   null_cells <- unlist(null_cells)
   null_cells <- null_cells[is.finite(null_cells)]
+
+  obs_fit <- clustering_result$cluster_details$flash_fit
+  obs_signal <- .ebmf_factor_signal(obs_fit)
+  obs_input <- clustering_result$ebmf_input
+  if (is.null(obs_input)) {
+    obs_input <- clustering_result$x_star
+  }
+  total_signal <- sum(abs(obs_input), na.rm = TRUE)
+  null_factor_strengths <- if (is.finite(total_signal) && total_signal > 0) {
+    null_factor_signals / total_signal
+  } else {
+    rep(NA_real_, length(null_factor_signals))
+  }
 
   posterior <- ebmf_posterior_table(clustering_result)
   min_core <- max(
@@ -189,23 +223,37 @@ calibrate_ebmf_programs <- function(clustering_result,
   if (nrow(posterior) == 0) {
     return(list(
       programs = data.frame(program = integer(0), loading_mass = numeric(0),
-                            n_core = integer(0), n_candidate = integer(0),
-                            detected = logical(0),
+                            n_candidate = integer(0),
+                            raw_factor_signal = numeric(0),
+                            factor_strength = numeric(0),
                             stringsAsFactors = FALSE),
       memberships = cbind(posterior, emp_p = numeric(0), q = numeric(0),
                           core = logical(0), tier = character(0)),
-      null_summary = list(max_masses = null_max_mass,
-                          loading_quantiles = stats::quantile(null_cells,
-                                                              c(.5, .9, .95, .99))),
+      null_summary = list(
+        max_masses = null_max_mass,
+        loading_quantiles = stats::quantile(null_cells,
+                                            c(.5, .9, .95, .99)),
+        factor_strength_quantiles = stats::quantile(
+          null_factor_strengths, c(.5, .9, .95, .99)
+        ),
+        n_null_factor_strengths = length(null_factor_strengths)
+      ),
       settings = list(n_null = n_null, alpha_membership = alpha_membership,
                       seed = seed,
-                       min_core_members = min_core,
-                       n_candidate_tier = n_candidate_tier)
+                      min_core_members = min_core,
+                      n_candidate_tier = n_candidate_tier)
     ))
   }
 
   programs <- aggregate(abs_loading ~ program, data = posterior, FUN = sum)
   names(programs)[names(programs) == "abs_loading"] <- "loading_mass"
+  programs$program <- as.integer(as.character(programs$program))
+  programs$raw_factor_signal <- obs_signal[programs$program]
+  programs$factor_strength <- if (is.finite(total_signal) && total_signal > 0) {
+    programs$raw_factor_signal / total_signal
+  } else {
+    NA_real_
+  }
 
   if (length(null_cells) == 0) {
     warning(
@@ -216,30 +264,18 @@ calibrate_ebmf_programs <- function(clustering_result,
     posterior$emp_p <- NA_real_
     posterior$q <- NA_real_
     posterior$core <- FALSE
-    programs$n_core <- 0L
-    programs$detected <- FALSE
   } else {
     posterior$emp_p <- vapply(posterior$abs_loading, function(x) {
       (1 + sum(null_cells >= x)) / (1 + length(null_cells))
     }, numeric(1))
     posterior$q <- stats::p.adjust(posterior$emp_p, method = "BH")
     posterior$core <- posterior$q <= alpha_membership
-
-    # Gate 1 derives from Gate 2: a program is reported only if it retains at
-    # least min_core_members FDR-controlled members. Aggregate loading mass
-    # cannot be used for detection because within-row permutation preserves
-    # each trait's magnitude distribution, making null and real masses
-    # incomparable.
-    core_counts <- table(factor(posterior$program[posterior$core],
-                                levels = programs$program))
-    programs$n_core <- as.integer(core_counts)
-    programs$detected <- programs$n_core >= min_core
   }
 
-  # Two-tier reporting: certified core plus an explicitly uncertified
+  # Two-tier reporting: calibrated core plus an explicitly uncertified
   # candidate tier. Candidate cells are retained for every fitted program so
   # a real-data report can show plausible biology even when no program passes
-  # the stricter certified gate.
+  # the stricter membership gate.
   posterior$tier <- NA_character_
   posterior$tier[posterior$core] <- "core"
   n_candidate <- integer(nrow(programs))
@@ -254,14 +290,19 @@ calibrate_ebmf_programs <- function(clustering_result,
   programs$n_candidate <- n_candidate
 
   return(list(
-    programs = programs[order(-programs$detected, -programs$n_core,
-                              -programs$n_candidate), ],
+    programs = programs[order(-programs$factor_strength, -programs$n_candidate,
+                              na.last = TRUE), ],
     memberships = posterior[, c("snp_id", "program", "loading", "abs_loading",
                                 "lfsr", "emp_p", "q", "core", "tier")],
     null_summary = list(
       max_masses = null_max_mass,
       loading_quantiles = stats::quantile(null_cells, c(.5, .9, .95, .99)),
-      n_pooled_cells = length(null_cells)
+      n_pooled_cells = length(null_cells),
+      factor_strength_quantiles = stats::quantile(
+        null_factor_strengths, c(.5, .9, .95, .99)
+      ),
+      n_null_factor_strengths = length(null_factor_strengths),
+      factor_strengths = null_factor_strengths
     ),
     settings = list(n_null = n_null, alpha_membership = alpha_membership,
                     seed = seed, min_core_members = min_core,
@@ -277,14 +318,22 @@ calibrate_ebmf_programs <- function(clustering_result,
 #' repeated with the stored pipeline parameters, and each factor contributes
 #' its top-loaded SNP set. A reference program's replication score is the mean
 #' across replicates of its best overlap with any replicate factor set.
-#' Descriptive: scores are not p-values. Use them to prioritise programs whose
+#' Descriptive: scores are not p-values. Use them to prioritise programmes whose
 #' membership survives resampling.
+#'
+#' The replicate refits are independent, so they can be run in parallel with
+#' `cores > 1` (fork-based `parallel::mclapply()`; serial on platforms without
+#' fork support). Each replicate sets its own seed, so results are reproducible
+#' regardless of `cores`. flashier itself is single-threaded, so the speedup
+#' scales with the number of worker processes.
 #' @param clustering_result Result of `run_univariate_clustering()` with
 #'   `cluster_type = "ebmf"`.
 #' @param n_rep Number of subsample replicates.
 #' @param frac_traits Fraction of trait rows sampled per replicate.
 #' @param top_n Size of each program's member set used for matching.
 #' @param seed RNG seed.
+#' @param cores Number of cores for parallel replicate refits. Defaults to `1`
+#'   (serial).
 #' @param verbose Print progress messages.
 #' @return A dataframe with columns `program`, `n_ref` (reference member-set
 #'   size), `replication` (mean best-overlap fraction), `sd_replication`.
@@ -294,6 +343,7 @@ stability_ebmf_programs <- function(clustering_result,
                                     frac_traits = 0.8,
                                     top_n = 20,
                                     seed = 1,
+                                    cores = 1,
                                     verbose = TRUE) {
   params <- clustering_result$parameters
   if (is.null(params) || !identical(params$cluster_type, "ebmf")) {
@@ -362,12 +412,26 @@ stability_ebmf_programs <- function(clustering_result,
     })
   }
 
-  replicate_sets_all <- lapply(seq_len(n_rep), function(i) {
+  run_reps <- function(i) {
     if (verbose) {
       message("Stability replicate ", i, "/", n_rep)
     }
-    replicate_sets(i)
-  })
+    tryCatch(replicate_sets(i), error = function(e) list())
+  }
+
+  n_cores <- max(1L, as.integer(cores))
+  if (n_cores > n_rep) {
+    n_cores <- n_rep
+  }
+  if (n_cores > 1) {
+    replicate_sets_all <- parallel::mclapply(
+      seq_len(n_rep),
+      run_reps,
+      mc.cores = n_cores
+    )
+  } else {
+    replicate_sets_all <- lapply(seq_len(n_rep), run_reps)
+  }
 
   scores <- do.call(rbind, lapply(names(ref_sets), function(pg) {
     ref <- ref_sets[[pg]]

@@ -21,10 +21,10 @@ every null replicate.}
 \item{n_null}{Number of permutation replicates. More replicates sharpen the
 empirical quantiles; 20 is a reasonable minimum.}
 
-\item{alpha_membership}{Membership FDR level for core members (Gate 2).}
+\item{alpha_membership}{Membership FDR level for \code{core} cells.}
 
-\item{n_candidate_tier}{Per detected program, how many non-core cells to
-label as the uncertified "candidate" tier (top-loaded first).}
+\item{n_candidate_tier}{Per program, how many non-core cells to label as the
+uncertified "candidate" tier (top-loaded first).}
 
 \item{seed}{RNG seed for the permutations.}
 
@@ -33,12 +33,12 @@ label as the uncertified "candidate" tier (top-loaded first).}
 \value{
 A list with:
 \itemize{
-\item programs: dataframe (program, loading_mass, n_core, n_candidate,
-detected)
+\item programs: dataframe (program, loading_mass, n_candidate,
+raw_factor_signal, factor_strength)
 \item memberships: dataframe (snp_id, program, loading, abs_loading,
 lfsr, emp_p, q, core, tier)
-\item null_summary: list with per-replicate max masses and pooled
-loading quantiles
+\item null_summary: list with per-replicate max masses, pooled loading
+quantiles, and pooled null factor strengths (with quantiles)
 \item settings: calibration settings used
 }
 }
@@ -47,18 +47,23 @@ Post-hoc, permutation-calibrated reporting layer for EBMF
 results. Generates \code{n_null} structureless versions of the \emph{observed} matrix
 by independently shuffling each trait row across SNPs — preserving every
 trait's exact sparsity, effect distribution, and noise regime — refits the
-EBMF pipeline on each permuted matrix, and applies two gates:
+EBMF pipeline on each permuted matrix, and reports, for every fitted program:
 
 \describe{
-\item{SNP membership (Gate 2)}{Each SNP x program loading receives an
+\item{Factor strength}{The proportion of the observed matrix signal
+attributable to the factor, computed from its fitted reconstruction:
+\eqn{\sum_i |L_{ik}| \sum_j |F_{jk}|} (raw factor signal) over the
+observed matrix signal \eqn{\sum |X|}. The raw factor signal is retained
+so the threshold can be calibrated. Null replicates contribute their own
+raw factor signals against the \emph{same} observed-matrix denominator, so
+observed factor strength can be compared against the null distribution
+(e.g. its 99th percentile).}
+\item{SNP membership (emp_p / q)}{Each SNP x program loading receives an
 empirical p-value against the pooled null loading distribution, BH-corrected
-into q-values. "Core members" are cells with \code{q <= alpha_membership}.}
-\item{Program existence (Gate 1)}{Derived from Gate 2: a program is
-reported only if it retains at least \code{min_core_members} FDR-controlled
-members (default: the pipeline's \code{min_module_size}). Aggregate loading
-mass is deliberately \emph{not} used for detection — within-row permutation
-preserves each trait's magnitude distribution, so null and real masses
-are incomparable.}
+into q-values; cells with \code{q <= alpha_membership} are labelled \code{core}. This
+is a membership gate only — it no longer drives a program-level
+detect/certify decision (see \code{summarise_ebmf_programs()} for the
+program-level filters).}
 }
 
 No thresholds are applied inside the pipeline; this function is the

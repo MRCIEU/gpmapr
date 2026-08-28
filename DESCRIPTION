@@ -18,6 +18,7 @@ Imports:
     ebnm,
     flashier,
     igraph,
+    parallel,
     readr,
     tidyLPA,
     tidyr

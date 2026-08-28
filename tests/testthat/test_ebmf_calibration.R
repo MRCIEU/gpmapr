@@ -40,7 +40,7 @@ test_that("ebmf_posterior_table rejects non-EBMF results", {
   expect_error(ebmf_posterior_table(res), "cluster_type")
 })
 
-test_that("calibrate_ebmf_programs returns calibrated gates", {
+test_that("calibrate_ebmf_programs returns factor strength and null calibration", {
   r <- make_ebmf_result()
   cal <- calibrate_ebmf_programs(
     r$res,
@@ -53,8 +53,16 @@ test_that("calibrate_ebmf_programs returns calibrated gates", {
   expect_true(all(is.finite(unlist(cal$null_summary$max_masses))))
   expect_setequal(
     names(cal$programs),
-    c("program", "loading_mass", "n_core", "n_candidate", "detected")
+    c("program", "loading_mass", "raw_factor_signal", "factor_strength",
+      "n_candidate")
   )
+  expect_true(all(is.finite(cal$programs$raw_factor_signal)))
+  expect_true(all(cal$programs$factor_strength >= 0))
+  expect_true(all(cal$programs$factor_strength <= 1))
+  expect_true("factor_strengths" %in% names(cal$null_summary))
+  expect_true(length(cal$null_summary$factor_strengths) > 0)
+  expect_false("n_core" %in% names(cal$programs))
+  expect_false("detected" %in% names(cal$programs))
 })
 
 test_that("stability scores EBMF programs across trait subsamples", {
@@ -69,6 +77,54 @@ test_that("stability scores EBMF programs across trait subsamples", {
   expect_true(all(c("program", "n_ref", "replication", "sd_replication") %in%
                     names(out)))
   expect_true(all(out$replication >= 0 & out$replication <= 1))
+})
+
+test_that("parallel stability replicates match serial results", {
+  r <- make_ebmf_result()
+  s1 <- stability_ebmf_programs(r$res, n_rep = 3, top_n = 5, cores = 1,
+                                verbose = FALSE)
+  s5 <- stability_ebmf_programs(r$res, n_rep = 3, top_n = 5, cores = 5,
+                                verbose = FALSE)
+  expect_identical(s1, s5)
+})
+
+test_that("summarise_ebmf_programs folds filters and additional scores", {
+  r <- make_ebmf_result()
+  ps <- summarise_ebmf_programs(
+    r$res,
+    n_null = 3,
+    n_rep = 2,
+    verbose = FALSE
+  )
+  expect_true(all(c(
+    "program", "n_snps", "mean_internal_similarity", "connectedness",
+    "raw_factor_signal", "factor_strength", "replication",
+    "posterior_evidence", "max_abs_factor_corr", "redundant",
+    "size_pass", "internal_pass", "factor_strength_pass", "stability_pass",
+    "status"
+  ) %in% names(ps$programs)))
+  expect_true(all(ps$programs$status == "valid" |
+                    grepl("^(size|internal|factor_strength|stability)", 
+                          ps$programs$status)))
+  expect_true(is.null(ps$factor_correlation) || is.matrix(ps$factor_correlation))
+  expect_setequal(
+    names(ps),
+    c("programs", "memberships", "assigned", "factor_correlation",
+      "null_summary", "settings")
+  )
+})
+
+test_that("summarise_ebmf_programs checks stability only for programs failing coherence", {
+  r <- make_ebmf_result()
+  ps <- summarise_ebmf_programs(
+    r$res,
+    n_null = 3,
+    n_rep = 2,
+    min_mean_internal = 0.99,
+    verbose = FALSE
+  )
+  expect_true(all(ps$programs$stability_checked))
+  expect_true(all(is.finite(ps$programs$replication)))
 })
 
 test_that("louvain path is untouched by calibration helpers", {

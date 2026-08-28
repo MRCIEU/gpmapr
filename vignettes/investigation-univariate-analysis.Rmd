@@ -10,12 +10,12 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 params:
   api: "production"
-  min_snp_signals: 2
+  min_snp_signals: 5
   min_module_size: 3
   cluster_type: "ebmf"
   louvain_gamma: 1.5
   compress_method: "asinh"
-  compress_scale: 5
+  compress_scale: 2
   include_trans: false
   include_situated_gene: false 
   similarity_threshold: 0.2
@@ -25,11 +25,21 @@ params:
   ebmf_lfsr_threshold: 0.05
   ebmf_prior: "point_normal"
   ebmf_backfit: true
+  min_mean_internal: 0.3
+  min_connectedness: 0.25
+  min_factor_strength: 0.01
+  factor_strength_null_q: 0.99
   n_null: 10
-  n_stability: 10
   alpha_membership: 0.05
   n_candidate_tier: 25
-  stability_threshold: 0.7
+  n_rep: 5
+  frac_traits: 0.8
+  stability_top_n: 20
+  stability_threshold: 0.5
+  posterior_stat: "median"
+  posterior_evidence_cap: 50
+  redundancy_threshold: 0.9
+  cores: 5
   associations: "coloc"
 ---
 
@@ -64,8 +74,11 @@ each row is a background study (phenotypic or molecular; no collapsing).
 Profiles are oriented, compressed, and clustered with **`r params$cluster_type`**
 (Louvain: signed modularity on the SNP similarity graph; EBMF: empirical Bayes
 matrix factorization with overlapping programs, hard-assigned to their
-strongest factor). Modules/programs are then filtered by graph reliability
-(internal similarity and connectedness) before interpretation.
+strongest factor). Modules/programs are then validated with a filtering
+framework — internal coherence (mean internal similarity and connectedness),
+permutation-calibrated factor strength, and trait-subsampling stability —
+plus descriptive evidence scores (aggregate posterior evidence and factor
+distinctiveness) before interpretation.
 
 We use **BMI** (trait id `1992`).
 
@@ -75,8 +88,6 @@ min_group_size <- 5
 max_snp_fraction <- 0.8
 top_n_traits <- 10L
 min_specificity <- 1.25
-min_mean_internal <- 0.3
-min_connectedness <- 0.5
 
 api <- params$api
 min_module_size <- as.integer(params$min_module_size)
@@ -99,11 +110,21 @@ ebmf_magnitude_threshold <- if (is.na(params$ebmf_magnitude_threshold)) {
   as.numeric(params$ebmf_magnitude_threshold)
 }
 associations <- params$associations
+min_mean_internal <- as.numeric(params$min_mean_internal)
+min_connectedness <- as.numeric(params$min_connectedness)
+min_factor_strength <- as.numeric(params$min_factor_strength)
+factor_strength_null_q <- as.numeric(params$factor_strength_null_q)
 n_null <- as.integer(params$n_null)
-n_stability <- as.integer(params$n_stability)
 alpha_membership <- as.numeric(params$alpha_membership)
 n_candidate_tier <- as.integer(params$n_candidate_tier)
+n_rep <- as.integer(params$n_rep)
+frac_traits <- as.numeric(params$frac_traits)
+stability_top_n <- as.integer(params$stability_top_n)
 stability_threshold <- as.numeric(params$stability_threshold)
+posterior_stat <- params$posterior_stat
+posterior_evidence_cap <- as.numeric(params$posterior_evidence_cap)
+redundancy_threshold <- as.numeric(params$redundancy_threshold)
+cores <- as.integer(params$cores)
 
 select_api(api)
 
@@ -126,10 +147,21 @@ knitr::kable(
     ebmf_prior = if (cluster_type == "ebmf") ebmf_prior else NULL,
     ebmf_backfit = if (cluster_type == "ebmf") ebmf_backfit else NULL,
     ebmf_magnitude_threshold = if (cluster_type == "ebmf") ebmf_magnitude_threshold else NULL,
+    min_mean_internal = min_mean_internal,
+    min_connectedness = min_connectedness,
+    min_factor_strength = if (cluster_type == "ebmf") min_factor_strength else NULL,
+    factor_strength_null_q = if (cluster_type == "ebmf") factor_strength_null_q else NULL,
     n_null = if (cluster_type == "ebmf") n_null else NULL,
-    n_stability = if (cluster_type == "ebmf") n_stability else NULL,
     alpha_membership = if (cluster_type == "ebmf") alpha_membership else NULL,
+    n_candidate_tier = if (cluster_type == "ebmf") n_candidate_tier else NULL,
+    n_rep = if (cluster_type == "ebmf") n_rep else NULL,
+    frac_traits = if (cluster_type == "ebmf") frac_traits else NULL,
+    stability_top_n = if (cluster_type == "ebmf") stability_top_n else NULL,
     stability_threshold = if (cluster_type == "ebmf") stability_threshold else NULL,
+    posterior_stat = if (cluster_type == "ebmf") posterior_stat else NULL,
+    posterior_evidence_cap = if (cluster_type == "ebmf") posterior_evidence_cap else NULL,
+    redundancy_threshold = if (cluster_type == "ebmf") redundancy_threshold else NULL,
+    cores = if (cluster_type == "ebmf") cores else NULL,
     associations = associations,
     stringsAsFactors = FALSE
   ),
@@ -312,101 +344,191 @@ if (cluster_type == "louvain") {
 }
 ```
 
-## Step 4.5: Module reliability
+## Step 4.5: Module / program validation
 
-`summarise_snp_module_quality()` scores each module on the similarity graph:
+Both clustering paths share the same internal-coherence metrics, computed on
+the SNP similarity graph:
 
 - **mean_internal_similarity** — mean off-diagonal `S` inside the module
 - **separation** — internal minus external mean similarity
 - **connectedness** — fraction of SNP pairs with `|S| >= similarity_threshold`
 
-A module is `reliable` if it has at least `min_module_size` SNPs, internal
-similarity `>= min_mean_internal`, and connectedness `>= min_connectedness`.
+For EBMF, `summarise_ebmf_programs()` folds the graph-reliability metrics
+together with permutation-calibrated **factor strength**, trait-subsampling
+**stability**, and the descriptive **additional scores** into a single
+per-program table with pass/fail flags and an overall `status`:
 
-```{r step4-quality}
-if (cluster_type == "louvain") {
-  module_quality <- summarise_snp_module_quality(
-    S,
-    clusters_fit$cluster,
+- **factor_strength** — proportion of observed matrix signal attributable to
+  the factor (from its fitted reconstruction), plus the raw factor signal
+  retained for threshold calibration. A program passes
+  (`factor_strength_pass`) if `factor_strength >= min_factor_strength` **and**
+  it exceeds the `factor_strength_null_q` quantile of the permutation-null
+  factor strengths (rank-relative criterion: the factor must explain
+  substantially more signal than factors produced under the null).
+- **replication** — trait-subsampling stability: how often the top
+  `stability_top_n` loading SNPs are recovered when `1 - frac_traits` of the
+  traits are held out and flashier is refit (`n_rep` reruns, run in parallel
+  on `cores` cores). Because this is expensive, it is only computed for
+  programs that fail the internal-coherence checks; those programs must reach
+  `replication >= stability_threshold`.
+- **posterior_evidence** — aggregate (`posterior_stat`) of `-log10(lfsr)`
+  across assigned SNPs. Distinguishes programs dominated by borderline
+  `lfsr ~ 0.05` memberships from programs whose memberships carry much stronger
+  posterior sign evidence.
+- **max_abs_factor_corr / redundant** — maximum absolute correlation of the
+  program's SNP loading vector with any other program; programs exceeding
+  `redundancy_threshold` are flagged `redundant`.
+
+A program is `valid` if it passes all four filters (`size`, `internal`,
+`factor_strength`, `stability`); the failure reason is recorded in `status`.
+
+```{r step4-quality, results='asis'}
+# if (cluster_type == "louvain") {
+#   module_quality <- summarise_snp_module_quality(
+#     S,
+#     clusters_fit$cluster,
+#     edge_threshold = similarity_threshold,
+#     min_module_size = min_module_size,
+#     min_mean_internal = min_mean_internal,
+#     min_connectedness = min_connectedness
+#   )
+#   program_summary <- NULL
+
+#   knitr::kable(
+#     module_quality |>
+#       dplyr::select(
+#         cluster, n_snps, mean_internal_similarity, mean_external_similarity,
+#         separation, connectedness
+#       ) |>
+#       dplyr::filter(n_snps >= min_module_size) |>
+#       dplyr::mutate(dplyr::across(
+#         c(
+#           mean_internal_similarity, mean_external_similarity,
+#           separation, connectedness
+#         ),
+#         ~ round(.x, 3)
+#       )),
+#     caption = "Louvain module reliability metrics",
+#     row.names = FALSE
+#   )
+
+#   reliable_ids <- module_quality$cluster[module_quality$reliable]
+#   clusters_analysis <- clusters_fit$cluster[
+#     clusters_fit$cluster %in% reliable_ids
+#   ]
+# } else {
+  program_summary <- summarise_ebmf_programs(
+    ebmf_result,
+    s_matrix = S,
     edge_threshold = similarity_threshold,
     min_module_size = min_module_size,
     min_mean_internal = min_mean_internal,
-    min_connectedness = min_connectedness
-  )
-} else {
-  module_quality <- ebmf_result$module_quality
-}
-
-knitr::kable(
-  module_quality |>
-    dplyr::select(-largest_component_frac, -n_components, -mean_silhouette) |>
-    dplyr::filter(n_snps >= min_module_size) |>
-    dplyr::mutate(
-      dplyr::across(
-        c(mean_internal_similarity, mean_external_similarity, separation, connectedness),
-        ~ round(.x, 3)
-      )
-    ),
-  caption = "Module reliability metrics",
-  row.names = FALSE
-)
-
-reliable_ids <- module_quality$cluster[module_quality$reliable]
-clusters_analysis <- clusters_fit$cluster[
-  clusters_fit$cluster %in% reliable_ids
-]
-```
-
-```{r step4-ebmf-reporting, results='asis'}
-if (cluster_type == "ebmf") {
-  cal <- calibrate_ebmf_programs(
-    ebmf_result,
+    min_connectedness = min_connectedness,
+    factor_strength_min = min_factor_strength,
+    factor_strength_null_q = factor_strength_null_q,
     n_null = n_null,
     alpha_membership = alpha_membership,
     n_candidate_tier = n_candidate_tier,
-    verbose = FALSE
-  )
-  stability <- stability_ebmf_programs(
-    ebmf_result,
-    n_rep = n_stability,
-    frac_traits = 0.8,
-    top_n = n_candidate_tier,
-    verbose = FALSE
+    n_rep = n_rep,
+    frac_traits = frac_traits,
+    top_n = stability_top_n,
+    stability_threshold = stability_threshold,
+    posterior_stat = posterior_stat,
+    posterior_evidence_cap = posterior_evidence_cap,
+    redundancy_threshold = redundancy_threshold,
+    cores = cores,
+    verbose = TRUE
   )
 
-  ebmf_program_report <- cal$programs |>
-    dplyr::left_join(stability, by = "program") |>
-    dplyr::mutate(
-      replication = tidyr::replace_na(replication, 0),
-      raw_reliable = program %in% as.character(reliable_ids),
-      report_status = dplyr::case_when(
-        detected ~ "certified",
-        replication >= stability_threshold ~ "stable candidate",
-        TRUE ~ "candidate only"
+  valid_ids <- program_summary$programs$program[
+    program_summary$programs$status == "valid"
+  ]
+
+  null_bar_pct <- 100 * stats::quantile(
+    program_summary$null_summary$factor_strengths,
+    factor_strength_null_q,
+    na.rm = TRUE
+  )
+
+  print(
+    knitr::kable(
+      program_summary$programs |>
+        dplyr::select(
+          program, n_snps,
+          mean_internal_similarity, connectedness,
+          factor_strength, replication,
+          posterior_evidence, max_abs_factor_corr, redundant,
+          size_pass, internal_pass, factor_strength, null_factor_strength_q, factor_strength_pass,
+          stability_pass, stability_checked, status
+        ) |>
+        dplyr::mutate(
+          factor_strength_pct = round(100 * factor_strength, 2),
+          mean_internal_similarity = round(mean_internal_similarity, 3),
+          connectedness = round(connectedness, 3),
+          replication = round(replication, 3),
+          posterior_evidence = round(posterior_evidence, 2),
+          max_abs_factor_corr = round(max_abs_factor_corr, 3),
+          replication = dplyr::if_else(
+            is.na(replication), "--", as.character(replication)
+          ),
+          redundant = dplyr::if_else(redundant, "yes", "no"),
+          size_pass = dplyr::if_else(size_pass, "pass", "fail"),
+          internal_pass = dplyr::if_else(internal_pass, "pass", "fail"),
+          factor_strength_pass = dplyr::case_when(
+            is.na(factor_strength_pass) ~ "n/a",
+            factor_strength_pass ~ "pass",
+            TRUE ~ "fail"
+          ),
+          stability_pass = dplyr::case_when(
+            !stability_checked ~ "n/a (coherent)",
+            stability_pass ~ "pass",
+            TRUE ~ "fail"
+          )
+        ) |>
+        dplyr::select(
+          program, n_snps, mean_internal_similarity, connectedness,
+          factor_strength_pct, replication, posterior_evidence,
+          max_abs_factor_corr, redundant,
+          size_pass, internal_pass, factor_strength, null_factor_strength_q, factor_strength_pass, stability_pass, status
+        ),
+      row.names = FALSE,
+      caption = paste0(
+        "All EBMF programs returned by flash, with each filter check. ",
+        "factor_strength is shown as % of observed matrix signal and must exceed ",
+        "both the ", 100 * factor_strength_null_q, "th percentile of the null ",
+        "factor strengths (the bar is ",
+        format(round(null_bar_pct, 2), nsmall = 2), "% here) and ",
+        100 * min_factor_strength, "%; replication is only checked for programs ",
+        "failing internal coherence (otherwise --); status is 'valid' or lists ",
+        "the failed checks (size; internal; factor_strength; stability)."
       )
-    ) |>
-    dplyr::arrange(
-      dplyr::desc(report_status == "certified"),
-      dplyr::desc(report_status == "stable candidate"),
-      dplyr::desc(replication),
-      dplyr::desc(n_core)
     )
+  )
 
-  print(knitr::kable(
-    ebmf_program_report |>
-      dplyr::select(
-        program, loading_mass, n_candidate, replication,
-        sd_replication, detected, report_status
-      ) |>
-      dplyr::mutate(dplyr::across(
-        c(loading_mass, replication, sd_replication), ~ round(.x, 3)
-      )),
-    row.names = FALSE,
-    caption = "EBMF programs: calibrated core members and stability-based reporting status"
-  ))
+  print(
+    knitr::kable(
+      program_summary$programs |>
+        dplyr::summarise(
+          n_programs = dplyr::n(),
+          n_valid = sum(status == "valid"),
+          n_fail_size = sum(!size_pass),
+          n_fail_internal = sum(!internal_pass),
+          n_fail_factor_strength = sum(!factor_strength_pass),
+          n_fail_stability = sum(!stability_pass),
+          n_redundant = sum(redundant, na.rm = TRUE)
+        ) |>
+        dplyr::mutate(
+          null_factor_strength_bar_pct = round(null_bar_pct, 2),
+          factor_strength_null_q = factor_strength_null_q
+        ),
+      row.names = FALSE,
+      caption = "EBMF program validation summary (null factor-strength bar = 100 x the factor_strength_null_q quantile of the permutation-null factor strengths)"
+    )
+  )
 
-  soft_memberships <- cal$memberships |>
+  soft_memberships <- program_summary$memberships |>
     dplyr::filter(
+      program %in% valid_ids,
       !is.na(lfsr), lfsr < ebmf_lfsr_threshold,
       is.na(ebmf_magnitude_threshold) |
         abs_loading > ebmf_magnitude_threshold
@@ -424,7 +546,7 @@ if (cluster_type == "ebmf") {
       snp_id = snp_id,
       group = as.character(program)
     )
-}
+# }
 ```
 
 ```{r step4-heatmap, fig.height = 7, fig.width = 7}
@@ -447,7 +569,11 @@ if (length(clusters_analysis) >= 2) {
       Rowv = NA,
       Colv = NA,
       scale = "none",
-      main = sprintf("SNP similarity (reliable %s modules)", cluster_type),
+      main = sprintf(
+        "SNP similarity (%s)",
+        if (cluster_type == "ebmf") "valid EBMF programs" else
+          paste("reliable", cluster_type, "modules")
+      ),
       xlab = "SNPs",
       ylab = "SNPs"
     )
@@ -808,13 +934,18 @@ module_annotation_status <- group_categories$summary |>
   ) |>
   dplyr::select(group, annotated)
 
+quality_for_typology <- if (cluster_type == "louvain") {
+  module_quality |>
+    dplyr::mutate(cluster = as.character(cluster)) |>
+    dplyr::select(cluster, separation, mean_internal_similarity, connectedness)
+} else {
+  program_summary$programs |>
+    dplyr::mutate(cluster = as.character(program)) |>
+    dplyr::select(cluster, separation, mean_internal_similarity, connectedness)
+}
+
 typology <- module_pleiotropy |>
-  dplyr::left_join(
-    module_quality |>
-      dplyr::mutate(cluster = as.character(cluster)) |>
-      dplyr::select(cluster, separation, mean_internal_similarity, connectedness),
-    by = c("group" = "cluster")
-  ) |>
+  dplyr::left_join(quality_for_typology, by = c("group" = "cluster")) |>
   dplyr::left_join(module_annotation_status, by = "group")
 
 typology_long <- typology |>

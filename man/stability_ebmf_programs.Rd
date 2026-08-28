@@ -10,6 +10,7 @@ stability_ebmf_programs(
   frac_traits = 0.8,
   top_n = 20,
   seed = 1,
+  cores = 1,
   verbose = TRUE
 )
 }
@@ -25,6 +26,9 @@ stability_ebmf_programs(
 
 \item{seed}{RNG seed.}
 
+\item{cores}{Number of cores for parallel replicate refits. Defaults to \code{1}
+(serial).}
+
 \item{verbose}{Print progress messages.}
 }
 \value{
@@ -38,6 +42,12 @@ each replicate, a random fraction of trait rows is held out, the fit is
 repeated with the stored pipeline parameters, and each factor contributes
 its top-loaded SNP set. A reference program's replication score is the mean
 across replicates of its best overlap with any replicate factor set.
-Descriptive: scores are not p-values. Use them to prioritise programs whose
+Descriptive: scores are not p-values. Use them to prioritise programmes whose
 membership survives resampling.
+
+The replicate refits are independent, so they can be run in parallel with
+\code{cores > 1} (fork-based \code{parallel::mclapply()}; serial on platforms without
+fork support). Each replicate sets its own seed, so results are reproducible
+regardless of \code{cores}. flashier itself is single-threaded, so the speedup
+scales with the number of worker processes.
 }

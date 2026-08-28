@@ -89,6 +89,8 @@
 #'     \item clusters: named Louvain cluster assignment per SNP
 #'     \item clusters_reliable: subset of `clusters` restricted to reliable modules
 #'     \item module_quality: reliability metrics dataframe
+#'     \item ebmf_input: the features x SNPs matrix actually passed to flashier
+#'       when `cluster_type = "ebmf"` (`NULL` otherwise)
 #'     \item trait_info, snp_info: row / column metadata
 #'     \item dropped_trait_ids: background traits removed by the sparse/ubiquitous filter
 #'     \item group_traits: module-specific traits (when `compute_specific_traits = TRUE`)
@@ -328,6 +330,7 @@ run_univariate_clustering <- function(trait_object,
     } else {
       NULL
     },
+    ebmf_input = if (cluster_type == "ebmf") ebmf_x_input else NULL,
     module_quality = module_quality,
     trait_info = pleiotropy$trait_info,
     snp_info = pleiotropy$snp_info,
