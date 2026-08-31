@@ -131,7 +131,7 @@ test_that("summarise_ebmf_programs folds filters and additional scores", {
   expect_true(all(is.na(ps$programs$factor_strength_per_snp) |
                     ps$programs$factor_strength_per_snp >= 0))
   expect_true(all(ps$programs$status == "valid" |
-                    grepl("^(size|internal|stability)",
+                    grepl("^(size|internal_similarity|connectedness|stability)",
                           ps$programs$status)))
   expect_true(is.null(ps$factor_correlation) || is.matrix(ps$factor_correlation))
   expect_setequal(
@@ -161,7 +161,7 @@ test_that("factor strength is reported but does not gate status", {
                           ps$programs$factor_strength /
                             sqrt(ps$programs$n_snps_filtered)) < tol))
   expect_true(all(ps$programs$status == "valid" |
-                    grepl("^(size|internal|stability)",
+                    grepl("^(size|internal_similarity|connectedness|stability)",
                           ps$programs$status)))
 })
 

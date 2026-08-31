@@ -114,6 +114,9 @@ the connectedness score come from the existing SNP-SNP similarity
 framework; \code{min_module_size} ensures the metrics are computed on enough
 filtered SNPs to be meaningful. \code{n_snps_filtered} reports the subset of
 EBMF-supported SNPs that also passes the lFSR/magnitude filter.
+Each component is reported as its own pass column — \code{size_pass},
+\code{internal_similarity_pass}, \code{connectedness_pass} — and \code{internal_pass}
+combines all three.
 \item \strong{Trait-subsampling stability} — the top-loading SNPs must be
 recovered with replication \verb{>= stability_threshold} when \code{1 - frac_traits}
 of the traits are held out and flashier is refit. Because this refits

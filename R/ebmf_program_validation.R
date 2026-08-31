@@ -16,6 +16,9 @@
 #'   framework; `min_module_size` ensures the metrics are computed on enough
 #'   filtered SNPs to be meaningful. `n_snps_filtered` reports the subset of
 #'   EBMF-supported SNPs that also passes the lFSR/magnitude filter.
+#'   Each component is reported as its own pass column — `size_pass`,
+#'   `internal_similarity_pass`, `connectedness_pass` — and `internal_pass`
+#'   combines all three.
 #'   \item **Trait-subsampling stability** — the top-loading SNPs must be
 #'   recovered with replication `>= stability_threshold` when `1 - frac_traits`
 #'   of the traits are held out and flashier is refit. Because this refits
@@ -188,11 +191,11 @@ summarise_ebmf_programs <- function(clustering_result,
       n_snps = as.integer(tidyr::replace_na(n_snps, 0L)),
       n_snps_filtered = as.integer(tidyr::replace_na(n_snps_filtered, 0L)),
       size_pass = n_snps_filtered >= min_module_size,
-      internal_pass = size_pass &
-        is.finite(mean_internal_similarity) &
-        mean_internal_similarity >= min_mean_internal &
-        is.finite(connectedness) &
-        connectedness >= min_connectedness
+      internal_similarity_pass = is.finite(mean_internal_similarity) &
+        mean_internal_similarity >= min_mean_internal,
+      connectedness_pass = is.finite(connectedness) &
+        connectedness >= min_connectedness,
+      internal_pass = size_pass & internal_similarity_pass & connectedness_pass
     )
 
   fit <- clustering_result$cluster_details$flash_fit
@@ -289,7 +292,8 @@ summarise_ebmf_programs <- function(clustering_result,
 
   pass_cols <- cbind(
     size = out$size_pass,
-    internal = out$internal_pass,
+    internal_similarity = out$internal_similarity_pass,
+    connectedness = out$connectedness_pass,
     stability = out$stability_pass
   )
   fail_reason <- apply(!pass_cols, 1, function(f) {
@@ -301,7 +305,9 @@ summarise_ebmf_programs <- function(clustering_result,
     return(paste(failed, collapse = "; "))
   })
   out$fail_reason <- fail_reason
-  out$status <- ifelse(fail_reason == "valid", "valid", fail_reason)
+  out$status <- as.character(
+    ifelse(fail_reason == "valid", "valid", fail_reason)
+  )
 
   out <- out |>
     dplyr::arrange(

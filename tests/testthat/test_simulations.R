@@ -222,3 +222,91 @@ test_that("density caps are respected approximately", {
   counts <- table(sim$trait_object$coloc_groups$coloc_group_id)
   expect_lte(max(counts), 6)
 })
+
+test_that("n_traits controls the total number of simulated traits", {
+  sim <- simulate_trait(
+    n_coloc_groups = 60,
+    K = 2,
+    module_sizes = c(15, 15),
+    drivers_per_module = 3,
+    n_traits = 20,
+    seed = 33
+  )
+  p <- sim$ground_truth$parameters
+  expect_equal(p$n_traits, 20L)
+  expect_equal(p$n_background_traits, 13L)
+  expect_equal(length(unique(sim$trait_object$coloc_groups$trait_id)), 20)
+  expect_error(
+    simulate_trait(n_coloc_groups = 60, K = 2, drivers_per_module = 3,
+                   n_traits = 5),
+    "n_traits"
+  )
+})
+
+test_that("molecular traits are gene-annotated and much sparser", {
+  sim <- simulate_trait(
+    n_coloc_groups = 200,
+    K = 0,
+    n_background_traits = 20,
+    p_molecular = 1,
+    p_active_molecular = 0.02,
+    p_active_background = 0.5,
+    seed = 17
+  )
+  cg <- sim$trait_object$coloc_groups
+  bg <- cg[cg$trait_id > 1, ]
+  expect_false(any(is.na(bg$gene)))
+  expect_false(any(is.na(bg$gene_id)))
+  expect_equal(length(sim$ground_truth$molecular_traits), 20)
+  counts <- table(bg$trait_id)
+  expect_lte(max(counts), 15)
+
+  sim_dense <- simulate_trait(
+    n_coloc_groups = 200,
+    K = 0,
+    n_background_traits = 20,
+    p_molecular = 0,
+    p_active_background = 0.5,
+    seed = 18
+  )
+  cg_dense <- sim_dense$trait_object$coloc_groups
+  bg_dense <- cg_dense[cg_dense$trait_id > 1, ]
+  expect_true(all(is.na(bg_dense$gene)))
+  expect_true(all(is.na(bg_dense$gene_id)))
+  expect_gt(mean(table(bg_dense$trait_id)), 5 * mean(counts))
+})
+
+test_that("molecular drivers are observed at a fraction of module SNPs", {
+  sim <- simulate_trait(
+    n_coloc_groups = 200,
+    K = 2,
+    module_sizes = c(50, 50),
+    drivers_per_module = 4,
+    p_molecular = 1,
+    p_active_molecular = 0.05,
+    p_structural_zero = 0,
+    seed = 1
+  )
+  cg <- sim$trait_object$coloc_groups
+  d1 <- sim$ground_truth$driver_traits$module_1
+  counts <- table(cg$trait_id[cg$trait_name %in% d1])
+  expect_lt(mean(counts), 25)
+})
+
+test_that("planted module genes force driver traits molecular", {
+  sim <- simulate_trait(
+    n_coloc_groups = 40,
+    K = 1,
+    module_sizes = 15,
+    drivers_per_module = 4,
+    module_annotations = list(list(genes = "HFE")),
+    annotation_noise = 0,
+    p_molecular = 0,
+    seed = 23
+  )
+  cg <- sim$trait_object$coloc_groups
+  drv <- sim$ground_truth$driver_traits$module_1
+  expect_true(all(cg$gene[cg$trait_name %in% drv] == "HFE"))
+  expect_false(any(is.na(cg$gene_id[cg$trait_name %in% drv])))
+  expect_equal(length(sim$ground_truth$molecular_traits), length(drv))
+})

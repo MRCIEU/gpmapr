@@ -13,12 +13,15 @@ simulate_trait(
   drivers_per_module = 5L,
   driver_sharing = 0,
   n_background_traits = 40L,
+  n_traits = NULL,
   effect_size = 3,
   noise_sd = 0.5,
   sign_pattern = c("coherent", "flipped", "random"),
   p_structural_zero = 0.4,
   p_spurious = 0.05,
   p_active_background = 0.08,
+  p_molecular = 0,
+  p_active_molecular = 0.01,
   snps_per_trait = NULL,
   traits_per_snp = NULL,
   module_annotations = NULL,
@@ -59,6 +62,12 @@ chain-like overlap structure that penalises merging.}
 
 \item{n_background_traits}{Number of unstructured background traits.}
 
+\item{n_traits}{Optional total number of traits (rows) in the trait x SNP
+matrix, including the target trait. When provided,
+\code{n_background_traits} is derived as \code{n_traits - 1 - K * drivers_per_module}
+and must be non-negative. When \code{NULL} (default), \code{n_background_traits} is
+used directly. Total traits = 1 + K * drivers_per_module + n_background_traits.}
+
 \item{effect_size}{Mean absolute z-score of driver effects inside their
 module. Either a single number applied to every module, or a numeric
 vector of length \code{K} giving one value per module. Varying effect sizes
@@ -81,6 +90,21 @@ small noise effect rather than being absent.}
 
 \item{p_active_background}{Per-SNP activation probability for background
 trait profiles.}
+
+\item{p_molecular}{Fraction (0–1) of non-target traits (driver and
+background) designated molecular. Molecular traits carry a gene
+annotation (\code{gene_id} non-missing) and are observed much more sparsely:
+drivers fill within-module support with probability \code{p_active_molecular}
+instead of \code{1 - p_structural_zero}, and background traits activate per SNP
+with probability \code{p_active_molecular} instead of \code{p_active_background}.
+Traits whose module annotation explicitly plants \code{genes} are always
+molecular. Default 0 = every non-target trait is a phenotype trait (no
+gene annotation, normal density).}
+
+\item{p_active_molecular}{Per-SNP observation probability for molecular
+traits. Set much lower than \code{p_active_background} to emulate eQTL-like
+sparsity, where a molecular trait is observed at only a small subset of
+SNPs. Default 0.01.}
 
 \item{snps_per_trait}{Optional range \code{c(min, max)}; trait rows exceeding the
 maximum have excess observations randomly removed (approximate caps;
@@ -127,7 +151,8 @@ A list with:
 background; shared SNPs take their earlier module), \code{multi_module_snps}
 (shared-SNP names), \code{module_memberships} (SNP index list, shared SNPs
 appear in both), \code{driver_traits} (per-module trait names),
-\code{planted_annotations}, \code{seed}, and \code{parameters}
+\code{molecular_traits} (trait names designated molecular), \code{planted_annotations},
+\code{seed}, and \code{parameters}
 }
 }
 \description{
@@ -138,11 +163,12 @@ The returned object feeds directly into \code{run_univariate_clustering()}, and
 the accompanying ground truth supports recovery scoring via
 \code{evaluate_univariate_simulation()}.
 
-Structure: \code{n_coloc_groups} SNPs (one coloc group / locus each). \code{K}
-contiguous module regions are laid out left-to-right; adjacent regions share
-\code{overlap} SNPs (shared SNPs have driver traits from both modules). SNPs not
-covered by any module are unstructured background: sparse random pleiotropic
-profiles with no shared latent structure.
+Structure: \code{n_coloc_groups} SNPs (one coloc group / locus each) define the
+total number of SNPs (trait x SNP matrix columns). \code{K} contiguous module
+regions are laid out left-to-right; adjacent regions share \code{overlap} SNPs
+(shared SNPs have driver traits from both modules). SNPs not covered by any
+module are unstructured background: sparse random pleiotropic profiles with
+no shared latent structure.
 
 Effects: each module has \code{drivers_per_module} driver traits with
 \code{effect_size}-scale effects on their module's SNPs. Driver support is thinned
@@ -150,6 +176,17 @@ by \code{p_structural_zero} (structural zeros inside true support). Cells outsid
 true support receive small noise effects with probability \code{p_spurious}.
 Background traits activate on each SNP independently with probability
 \code{p_active_background}, giving realistic marginal sparsity without structure.
+
+Trait composition: the total number of traits (rows) is
+\code{1} (target) + \code{K * drivers_per_module} (drivers) + \code{n_background_traits},
+or is fixed directly via \code{n_traits}. A fraction \code{p_molecular} of the
+non-target traits is designated molecular: these carry a gene annotation
+(\code{gene_id} non-missing) and are observed much more sparsely, with per-SNP
+probability \code{p_active_molecular} instead of \code{p_active_background}
+(background) or \code{1 - p_structural_zero} (within-module drivers). This
+emulates eQTL-like traits whose signal is confined to a small subset of
+SNPs. The remaining traits are phenotype traits (no gene annotation) at
+normal density.
 
 Annotations: \code{module_annotations} optionally plants genes / tissues /
 trait categories on each module's driver traits so enrichment machinery can
