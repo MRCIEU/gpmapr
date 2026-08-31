@@ -11,6 +11,7 @@ run_univariate_clustering(
   p_threshold = NULL,
   snp_key = c("variant_id", "display_snp", "coloc_group_id"),
   include_trans = FALSE,
+  trait_subset = c("all", "phenotypic"),
   min_snp_signals = 5L,
   max_snp_fraction = 0.8,
   compress_method = c("none", "asinh"),
@@ -54,6 +55,15 @@ a \code{coloc_groups} dataframe. For \code{associations = "full"} it must also c
 \item{include_trans}{If \code{FALSE} (default), rows flagged \code{cis_trans == "trans"}
 are removed before matrix construction (requires a \code{cis_trans} column;
 ignored otherwise).}
+
+\item{trait_subset}{Which trait rows back the trait x SNP matrix:
+\code{"all"} (default) uses every available background trait, while
+\code{"phenotypic"} keeps only phenotype traits (rows whose \code{feature_type} is
+\code{"phenotypic"} or missing) plus the target trait, dropping molecular /
+gene-annotated rows. Molecular traits are much sparser, so clustering on
+phenotype traits only can recover structure that sparse molecular rows
+dilute. Requires \code{trait_info} with a \code{feature_type} column (present for
+\code{trait()} and simulated objects).}
 
 \item{min_snp_signals}{Minimum non-\code{NA} SNPs per background trait row.}
 
@@ -147,7 +157,8 @@ A list with:
 \item ebmf_input: the features x SNPs matrix actually passed to flashier
 when \code{cluster_type = "ebmf"} (\code{NULL} otherwise)
 \item trait_info, snp_info: row / column metadata
-\item dropped_trait_ids: background traits removed by the sparse/ubiquitous filter
+\item dropped_trait_ids: background traits removed by the feature-type
+(\code{trait_subset}) and/or sparse/ubiquitous filter
 \item group_traits: module-specific traits (when \code{compute_specific_traits = TRUE})
 \item coloc_groups: coloc groups actually used (after trans filtering)
 \item parameters: list of settings used

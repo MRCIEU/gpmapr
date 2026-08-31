@@ -25,6 +25,14 @@
 #' @param include_trans If `FALSE` (default), rows flagged `cis_trans == "trans"`
 #'   are removed before matrix construction (requires a `cis_trans` column;
 #'   ignored otherwise).
+#' @param trait_subset Which trait rows back the trait x SNP matrix:
+#'   `"all"` (default) uses every available background trait, while
+#'   `"phenotypic"` keeps only phenotype traits (rows whose `feature_type` is
+#'   `"phenotypic"` or missing) plus the target trait, dropping molecular /
+#'   gene-annotated rows. Molecular traits are much sparser, so clustering on
+#'   phenotype traits only can recover structure that sparse molecular rows
+#'   dilute. Requires `trait_info` with a `feature_type` column (present for
+#'   `trait()` and simulated objects).
 #' @param min_snp_signals Minimum non-`NA` SNPs per background trait row.
 #' @param max_snp_fraction Maximum non-`NA` fraction per background trait row.
 #' @param compress_method Effect compression passed to `compress_effect_matrix()`.
@@ -92,7 +100,8 @@
 #'     \item ebmf_input: the features x SNPs matrix actually passed to flashier
 #'       when `cluster_type = "ebmf"` (`NULL` otherwise)
 #'     \item trait_info, snp_info: row / column metadata
-#'     \item dropped_trait_ids: background traits removed by the sparse/ubiquitous filter
+#'     \item dropped_trait_ids: background traits removed by the feature-type
+#'       (`trait_subset`) and/or sparse/ubiquitous filter
 #'     \item group_traits: module-specific traits (when `compute_specific_traits = TRUE`)
 #'     \item coloc_groups: coloc groups actually used (after trans filtering)
 #'     \item parameters: list of settings used
@@ -104,6 +113,7 @@ run_univariate_clustering <- function(trait_object,
                                       p_threshold = NULL,
                                       snp_key = c("variant_id", "display_snp", "coloc_group_id"),
                                       include_trans = FALSE,
+                                      trait_subset = c("all", "phenotypic"),
                                       min_snp_signals = 5L,
                                       max_snp_fraction = 0.8,
                                       compress_method = c("none", "asinh"),
@@ -130,6 +140,7 @@ run_univariate_clustering <- function(trait_object,
                                       top_n_traits = 10L) {
   associations <- match.arg(associations)
   snp_key <- match.arg(snp_key)
+  trait_subset <- match.arg(trait_subset)
   compress_method <- match.arg(compress_method)
   cluster_type <- match.arg(cluster_type)
   ebmf_prior <- match.arg(ebmf_prior)
@@ -190,6 +201,32 @@ run_univariate_clustering <- function(trait_object,
   X <- pleiotropy$x_matrix
   if (!target_id %in% rownames(X)) {
     stop("target trait row missing from the built pleiotropy matrix")
+  }
+
+  subset_dropped <- character(0)
+  if (trait_subset == "phenotypic") {
+    info <- pleiotropy$trait_info
+    if (is.null(info) || !"feature_type" %in% names(info)) {
+      stop("trait_subset = 'phenotypic' requires trait_info with a feature_type column")
+    }
+    keep_ids <- as.character(info$trait_id[
+      as.character(info$trait_id) == target_id |
+        is.na(info$feature_type) |
+        info$feature_type == "phenotypic"
+    ])
+    subset_dropped <- setdiff(rownames(X), keep_ids)
+    if (length(subset_dropped) > 0) {
+      X <- X[!rownames(X) %in% subset_dropped, , drop = FALSE]
+      for (mat in c("beta_matrix", "se_matrix")) {
+        if (!is.null(pleiotropy[[mat]])) {
+          pleiotropy[[mat]] <- pleiotropy[[mat]][
+            !rownames(pleiotropy[[mat]]) %in% subset_dropped, , drop = FALSE
+          ]
+        }
+      }
+      pleiotropy$trait_info <- info |>
+        dplyr::filter(!as.character(trait_id) %in% subset_dropped)
+    }
   }
 
   trait_snp_counts <- rowSums(!is.na(X))
@@ -334,7 +371,7 @@ run_univariate_clustering <- function(trait_object,
     module_quality = module_quality,
     trait_info = pleiotropy$trait_info,
     snp_info = pleiotropy$snp_info,
-    dropped_trait_ids = drop_trait_ids,
+    dropped_trait_ids = union(drop_trait_ids, subset_dropped),
     group_traits = group_traits,
     coloc_groups = coloc_groups,
     parameters = list(
@@ -343,6 +380,7 @@ run_univariate_clustering <- function(trait_object,
       p_threshold = p_threshold,
       snp_key = snp_key,
       include_trans = include_trans,
+      trait_subset = trait_subset,
       min_snp_signals = min_snp_signals,
       max_snp_fraction = max_snp_fraction,
       compress_method = compress_method,

@@ -10,7 +10,7 @@ simulate_trait(
   module_sizes = NULL,
   n_background_snps = 0,
   overlap = "disjoint",
-  drivers_per_module = 5L,
+  drivers_per_module = NULL,
   driver_sharing = 0,
   n_background_traits = 40L,
   n_traits = NULL,
@@ -21,6 +21,7 @@ simulate_trait(
   p_spurious = 0.05,
   p_active_background = 0.08,
   p_molecular = 0,
+  p_molecular_drivers = NULL,
   p_active_molecular = 0.01,
   snps_per_trait = NULL,
   traits_per_snp = NULL,
@@ -51,7 +52,10 @@ smaller adjacent module shared), or an explicit non-negative integer
 applied to every adjacent pair. Overlap is capped at half the smaller
 module minus one.}
 
-\item{drivers_per_module}{Number of driver traits per module.}
+\item{drivers_per_module}{Number of driver traits per module. Either a single
+positive integer applied to every module, or an integer vector of length
+\code{K} giving one value per module (so modules can carry different numbers of
+drivers). Total drivers = \code{sum(drivers_per_module)}.}
 
 \item{driver_sharing}{Fraction (0–1) of each module's drivers whose support
 extends into the previous module, so adjacent modules share some driver
@@ -64,9 +68,10 @@ chain-like overlap structure that penalises merging.}
 
 \item{n_traits}{Optional total number of traits (rows) in the trait x SNP
 matrix, including the target trait. When provided,
-\code{n_background_traits} is derived as \code{n_traits - 1 - K * drivers_per_module}
-and must be non-negative. When \code{NULL} (default), \code{n_background_traits} is
-used directly. Total traits = 1 + K * drivers_per_module + n_background_traits.}
+\code{n_background_traits} is derived as
+\code{n_traits - 1 - sum(drivers_per_module)} and must be non-negative. When
+\code{NULL} (default), \code{n_background_traits} is used directly. Total traits =
+1 + sum(drivers_per_module) + n_background_traits.}
 
 \item{effect_size}{Mean absolute z-score of driver effects inside their
 module. Either a single number applied to every module, or a numeric
@@ -91,15 +96,24 @@ small noise effect rather than being absent.}
 \item{p_active_background}{Per-SNP activation probability for background
 trait profiles.}
 
-\item{p_molecular}{Fraction (0–1) of non-target traits (driver and
-background) designated molecular. Molecular traits carry a gene
-annotation (\code{gene_id} non-missing) and are observed much more sparsely:
-drivers fill within-module support with probability \code{p_active_molecular}
-instead of \code{1 - p_structural_zero}, and background traits activate per SNP
-with probability \code{p_active_molecular} instead of \code{p_active_background}.
-Traits whose module annotation explicitly plants \code{genes} are always
-molecular. Default 0 = every non-target trait is a phenotype trait (no
-gene annotation, normal density).}
+\item{p_molecular}{Fraction (0–1) of background traits designated
+molecular, and — when \code{p_molecular_drivers = NULL} (default) — also the
+fraction of each module's drivers designated molecular. Molecular traits
+carry a gene annotation (\code{gene_id} non-missing) and are observed much more
+sparsely: drivers fill within-module support with probability
+\code{p_active_molecular} instead of \code{1 - p_structural_zero}, and background
+traits activate per SNP with probability \code{p_active_molecular} instead of
+\code{p_active_background}. Traits whose module annotation explicitly plants
+\code{genes} are always molecular. Default 0 = every non-target trait is a
+phenotype trait (no gene annotation, normal density).}
+
+\item{p_molecular_drivers}{Optional fraction (0–1) of each module's driver
+traits that are molecular, decoupled from \code{p_molecular} (which then
+governs background traits only). Either a single number applied to every
+module, or a numeric vector of length \code{K}. Useful when \code{p_molecular} is
+high but the modules must keep a dense (phenotype) driver core — if every
+driver in a module is a sparse molecular trait the module becomes
+unrecoverable. \code{NULL} (default) makes drivers follow \code{p_molecular}.}
 
 \item{p_active_molecular}{Per-SNP observation probability for molecular
 traits. Set much lower than \code{p_active_background} to emulate eQTL-like
@@ -178,7 +192,7 @@ Background traits activate on each SNP independently with probability
 \code{p_active_background}, giving realistic marginal sparsity without structure.
 
 Trait composition: the total number of traits (rows) is
-\code{1} (target) + \code{K * drivers_per_module} (drivers) + \code{n_background_traits},
+\code{1} (target) + \code{sum(drivers_per_module)} (drivers) + \code{n_background_traits},
 or is fixed directly via \code{n_traits}. A fraction \code{p_molecular} of the
 non-target traits is designated molecular: these carry a gene annotation
 (\code{gene_id} non-missing) and are observed much more sparsely, with per-SNP

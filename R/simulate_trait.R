@@ -21,7 +21,7 @@
 #' `p_active_background`, giving realistic marginal sparsity without structure.
 #'
 #' Trait composition: the total number of traits (rows) is
-#' `1` (target) + `K * drivers_per_module` (drivers) + `n_background_traits`,
+#' `1` (target) + `sum(drivers_per_module)` (drivers) + `n_background_traits`,
 #' or is fixed directly via `n_traits`. A fraction `p_molecular` of the
 #' non-target traits is designated molecular: these carry a gene annotation
 #' (`gene_id` non-missing) and are observed much more sparsely, with per-SNP
@@ -55,13 +55,17 @@
 #'   makes same-signature modules statistically exchangeable in trait space
 #'   and lets factor models merge them without loss. Positive sharing creates
 #'   chain-like overlap structure that penalises merging.
-#' @param drivers_per_module Number of driver traits per module.
+#' @param drivers_per_module Number of driver traits per module. Either a single
+#'   positive integer applied to every module, or an integer vector of length
+#'   `K` giving one value per module (so modules can carry different numbers of
+#'   drivers). Total drivers = `sum(drivers_per_module)`.
 #' @param n_background_traits Number of unstructured background traits.
 #' @param n_traits Optional total number of traits (rows) in the trait x SNP
 #'   matrix, including the target trait. When provided,
-#'   `n_background_traits` is derived as `n_traits - 1 - K * drivers_per_module`
-#'   and must be non-negative. When `NULL` (default), `n_background_traits` is
-#'   used directly. Total traits = 1 + K * drivers_per_module + n_background_traits.
+#'   `n_background_traits` is derived as
+#'   `n_traits - 1 - sum(drivers_per_module)` and must be non-negative. When
+#'   `NULL` (default), `n_background_traits` is used directly. Total traits =
+#'   1 + sum(drivers_per_module) + n_background_traits.
 #' @param effect_size Mean absolute z-score of driver effects inside their
 #'   module. Either a single number applied to every module, or a numeric
 #'   vector of length `K` giving one value per module. Varying effect sizes
@@ -79,15 +83,23 @@
 #'   small noise effect rather than being absent.
 #' @param p_active_background Per-SNP activation probability for background
 #'   trait profiles.
-#' @param p_molecular Fraction (0–1) of non-target traits (driver and
-#'   background) designated molecular. Molecular traits carry a gene
-#'   annotation (`gene_id` non-missing) and are observed much more sparsely:
-#'   drivers fill within-module support with probability `p_active_molecular`
-#'   instead of `1 - p_structural_zero`, and background traits activate per SNP
-#'   with probability `p_active_molecular` instead of `p_active_background`.
-#'   Traits whose module annotation explicitly plants `genes` are always
-#'   molecular. Default 0 = every non-target trait is a phenotype trait (no
-#'   gene annotation, normal density).
+#' @param p_molecular Fraction (0–1) of background traits designated
+#'   molecular, and — when `p_molecular_drivers = NULL` (default) — also the
+#'   fraction of each module's drivers designated molecular. Molecular traits
+#'   carry a gene annotation (`gene_id` non-missing) and are observed much more
+#'   sparsely: drivers fill within-module support with probability
+#'   `p_active_molecular` instead of `1 - p_structural_zero`, and background
+#'   traits activate per SNP with probability `p_active_molecular` instead of
+#'   `p_active_background`. Traits whose module annotation explicitly plants
+#'   `genes` are always molecular. Default 0 = every non-target trait is a
+#'   phenotype trait (no gene annotation, normal density).
+#' @param p_molecular_drivers Optional fraction (0–1) of each module's driver
+#'   traits that are molecular, decoupled from `p_molecular` (which then
+#'   governs background traits only). Either a single number applied to every
+#'   module, or a numeric vector of length `K`. Useful when `p_molecular` is
+#'   high but the modules must keep a dense (phenotype) driver core — if every
+#'   driver in a module is a sparse molecular trait the module becomes
+#'   unrecoverable. `NULL` (default) makes drivers follow `p_molecular`.
 #' @param p_active_molecular Per-SNP observation probability for molecular
 #'   traits. Set much lower than `p_active_background` to emulate eQTL-like
 #'   sparsity, where a molecular trait is observed at only a small subset of
@@ -138,7 +150,7 @@ simulate_trait <- function(n_coloc_groups = 100,
                            module_sizes = NULL,
                            n_background_snps = 0,
                            overlap = "disjoint",
-                           drivers_per_module = 5L,
+                           drivers_per_module = NULL,
                            driver_sharing = 0,
                            n_background_traits = 40L,
                            n_traits = NULL,
@@ -149,6 +161,7 @@ simulate_trait <- function(n_coloc_groups = 100,
                            p_spurious = 0.05,
                            p_active_background = 0.08,
                            p_molecular = 0,
+                           p_molecular_drivers = NULL,
                            p_active_molecular = 0.01,
                            snps_per_trait = NULL,
                            traits_per_snp = NULL,
@@ -173,17 +186,28 @@ simulate_trait <- function(n_coloc_groups = 100,
   n_snps <- as.integer(n_coloc_groups)
   K <- as.integer(K)
 
-  if (!is.numeric(drivers_per_module) || length(drivers_per_module) != 1L ||
-      !is.finite(drivers_per_module) || drivers_per_module < 1 ||
-      drivers_per_module != floor(drivers_per_module)) {
-    stop("drivers_per_module must be a positive integer")
+  if (K == 0) {
+    drivers_per_module <- integer(0)
+  } else if (is.null(drivers_per_module)) {
+    drivers_per_module <- rep(10L, K)
+  } else {
+    if (length(drivers_per_module) == 1L) {
+      drivers_per_module <- rep(drivers_per_module, K)
+    }
+    if (length(drivers_per_module) != K) {
+      stop("drivers_per_module must have length 1 or ", K)
+    }
+    if (any(drivers_per_module < 1) ||
+        any(drivers_per_module != floor(drivers_per_module))) {
+      stop("drivers_per_module must be integers >= 1 (single value or one per module)")
+    }
+    drivers_per_module <- as.integer(drivers_per_module)
   }
-  drivers_per_module <- as.integer(drivers_per_module)
-  n_drivers <- K * drivers_per_module
+  n_drivers <- if (K == 0) 0L else sum(drivers_per_module)
   if (!is.null(n_traits)) {
     if (!is.numeric(n_traits) || length(n_traits) != 1L || !is.finite(n_traits) ||
         n_traits < 1L + n_drivers || n_traits != floor(n_traits)) {
-      stop("n_traits must be a single integer >= 1 + K * drivers_per_module (",
+      stop("n_traits must be a single integer >= 1 + sum(drivers_per_module) (",
            1L + n_drivers, ")")
     }
     n_background_traits <- as.integer(n_traits) - 1L - n_drivers
@@ -207,7 +231,7 @@ simulate_trait <- function(n_coloc_groups = 100,
   if (!is.numeric(snp_driver_groups) || length(snp_driver_groups) != 1L ||
       !is.finite(snp_driver_groups) || snp_driver_groups < 1 ||
       snp_driver_groups != floor(snp_driver_groups) ||
-      snp_driver_groups > drivers_per_module) {
+      any(snp_driver_groups > drivers_per_module)) {
     stop("snp_driver_groups must be an integer between 1 and drivers_per_module")
   }
   snp_driver_groups <- as.integer(snp_driver_groups)
@@ -227,6 +251,13 @@ simulate_trait <- function(n_coloc_groups = 100,
       any(probabilities > 1)) {
     stop("p_spurious, p_active_background, p_molecular, p_active_molecular, and annotation_noise must be between 0 and 1")
   }
+  if (!is.null(p_molecular_drivers)) {
+    if (!is.numeric(p_molecular_drivers) || anyNA(p_molecular_drivers) ||
+        any(!is.finite(p_molecular_drivers)) ||
+        any(p_molecular_drivers < 0) || any(p_molecular_drivers > 1)) {
+      stop("p_molecular_drivers must be NULL or a number between 0 and 1")
+    }
+  }
 
   effect_size <- .expand_per_module_parameter(
     effect_size, K, "effect_size", allow_empty = TRUE
@@ -236,6 +267,13 @@ simulate_trait <- function(n_coloc_groups = 100,
   )
   if (any(p_structural_zero > 1)) {
     stop("p_structural_zero must be between 0 and 1")
+  }
+  p_molecular_drivers <- if (is.null(p_molecular_drivers)) {
+    NULL
+  } else {
+    .expand_per_module_parameter(
+      p_molecular_drivers, K, "p_molecular_drivers", allow_empty = TRUE
+    )
   }
 
   overlap_n <- .resolve_overlap(overlap, K)
@@ -268,12 +306,18 @@ simulate_trait <- function(n_coloc_groups = 100,
   target_tid <- 1L
   driver_tids <- if (n_drivers > 0) 2:(1 + n_drivers) else integer(0)
   bg_tids <- if (n_bg_traits > 0) seq_len(n_bg_traits) + 1L + n_drivers else integer(0)
-  driver_module <- if (n_drivers > 0) rep(seq_len(K), each = drivers_per_module) else integer(0)
+  driver_module <- if (n_drivers > 0) {
+    rep(seq_len(K), times = drivers_per_module)
+  } else {
+    integer(0)
+  }
   is_molecular <- .assign_molecular_traits(
     n_drivers = n_drivers,
     n_bg_traits = n_bg_traits,
     p_molecular = p_molecular,
+    p_molecular_drivers = p_molecular_drivers,
     driver_module = driver_module,
+    drivers_per_module = drivers_per_module,
     module_annotations = module_annotations
   )
 
@@ -291,10 +335,9 @@ simulate_trait <- function(n_coloc_groups = 100,
 
   driver_signs <- switch(sign_pattern,
     coherent = rep(1, n_drivers),
-    flipped = rep(
-      ifelse(seq_len(drivers_per_module) %% 2 == 1, 1, -1),
-      K
-    ),
+    flipped = unlist(lapply(seq_len(K), function(m) {
+      ifelse(seq_len(drivers_per_module[m]) %% 2 == 1, 1, -1)
+    })),
     random = sample(c(-1, 1), n_drivers, replace = TRUE)
   )
   if (n_drivers > 0) {
@@ -313,12 +356,12 @@ simulate_trait <- function(n_coloc_groups = 100,
       m <- driver_module[d]
       row <- as.character(driver_tids[d])
       in_module <- geometry$memberships[[m]]
-      slot <- (d - 1) %% drivers_per_module
-      if (m > 1 && slot < n_shared_per_module) {
+      slot <- (d - 1) %% drivers_per_module[m]
+      if (m > 1 && slot < n_shared_per_module[m]) {
         in_module <- union(in_module, geometry$memberships[[m - 1]])
       }
       if (n_groups > 1) {
-        driver_group <- min(n_groups, floor(slot / drivers_per_group) + 1)
+        driver_group <- min(n_groups, floor(slot / drivers_per_group[m]) + 1)
         grp <- snp_groups[[m]][as.character(colnames(M)[in_module])]
         keep <- !is.na(grp) & grp == driver_group
         in_module <- in_module[keep]
@@ -434,6 +477,7 @@ simulate_trait <- function(n_coloc_groups = 100,
         p_spurious = p_spurious,
         p_active_background = p_active_background,
         p_molecular = p_molecular,
+        p_molecular_drivers = p_molecular_drivers,
         p_active_molecular = p_active_molecular,
         annotation_noise = annotation_noise,
         log_se_sd = log_se_sd,
@@ -483,12 +527,14 @@ simulate_trait <- function(n_coloc_groups = 100,
 
 
 .assign_molecular_traits <- function(n_drivers, n_bg_traits, p_molecular,
-                                     driver_module, module_annotations) {
+                                     p_molecular_drivers, driver_module,
+                                     drivers_per_module, module_annotations) {
   n <- n_drivers + n_bg_traits
   is_molecular <- rep(FALSE, n)
   if (n == 0) {
     return(is_molecular)
   }
+  # Planted module genes always make their drivers molecular.
   if (n_drivers > 0 && !is.null(module_annotations)) {
     for (d in seq_len(n_drivers)) {
       m <- driver_module[d]
@@ -498,14 +544,37 @@ simulate_trait <- function(n_coloc_groups = 100,
       }
     }
   }
-  if (p_molecular > 0) {
-    desired <- round(p_molecular * n)
-    forced <- sum(is_molecular)
-    if (forced < desired) {
-      candidates <- which(!is_molecular)
-      pick <- sample(candidates, min(desired - forced, length(candidates)))
-      is_molecular[pick] <- TRUE
+  # Driver molecular assignment, per module. When p_molecular_drivers is NULL
+  # the drivers follow p_molecular (one fraction for every module); otherwise
+  # each module uses its own p_molecular_drivers[m], so a module can keep a
+  # dense phenotype driver core even when p_molecular (background) is high.
+  if (n_drivers > 0) {
+    driver_frac <- if (is.null(p_molecular_drivers)) {
+      rep(p_molecular, length(drivers_per_module))
+    } else {
+      p_molecular_drivers
     }
+    for (m in seq_along(drivers_per_module)) {
+      idx <- which(driver_module == m)
+      if (length(idx) == 0) {
+        next
+      }
+      desired <- round(driver_frac[m] * length(idx))
+      forced <- sum(is_molecular[idx])
+      if (forced < desired) {
+        candidates <- idx[!is_molecular[idx]]
+        pick <- sample(candidates, min(desired - forced, length(candidates)))
+        is_molecular[pick] <- TRUE
+      }
+    }
+  }
+  # Background molecular assignment.
+  if (n_bg_traits > 0 && p_molecular > 0) {
+    bg_idx <- n_drivers + seq_len(n_bg_traits)
+    desired <- round(p_molecular * n_bg_traits)
+    candidates <- bg_idx[!is_molecular[bg_idx]]
+    pick <- sample(candidates, min(desired, length(candidates)))
+    is_molecular[pick] <- TRUE
   }
   return(is_molecular)
 }

@@ -243,6 +243,83 @@ test_that("n_traits controls the total number of simulated traits", {
   )
 })
 
+test_that("drivers_per_module can vary per module", {
+  sim <- simulate_trait(
+    n_coloc_groups = 90,
+    K = 3,
+    module_sizes = c(10, 20, 30),
+    drivers_per_module = c(2, 5, 8),
+    seed = 44
+  )
+  counts <- lengths(sim$ground_truth$driver_traits)
+  expect_equal(unname(counts), c(2L, 5L, 8L))
+  expect_equal(
+    length(unique(sim$trait_object$coloc_groups$trait_id)),
+    1L + 2L + 5L + 8L + sim$ground_truth$parameters$n_background_traits
+  )
+  expect_error(
+    simulate_trait(n_coloc_groups = 60, K = 2, module_sizes = c(10, 10),
+                   drivers_per_module = c(2, 4), snp_driver_groups = 3),
+    "snp_driver_groups"
+  )
+})
+
+test_that("trait_subset = 'phenotypic' drops molecular trait rows", {
+  sim <- simulate_trait(
+    n_coloc_groups = 100,
+    K = 2,
+    module_sizes = c(20, 20),
+    drivers_per_module = 4,
+    p_molecular = 0.5,
+    p_molecular_drivers = 0.2,
+    p_active_molecular = 0.05,
+    p_active_background = 0.1,
+    seed = 50
+  )
+  res_all <- run_univariate_clustering(sim$trait_object, min_snp_signals = 2)
+  res_ph <- run_univariate_clustering(
+    sim$trait_object,
+    trait_subset = "phenotypic",
+    min_snp_signals = 2
+  )
+  expect_equal(res_all$parameters$trait_subset, "all")
+  expect_equal(res_ph$parameters$trait_subset, "phenotypic")
+  expect_true(any(res_all$trait_info$feature_type == "molecular"))
+  expect_lt(nrow(res_ph$x_matrix), nrow(res_all$x_matrix))
+  expect_true(all(res_ph$trait_info$feature_type %in% c("phenotypic", NA)))
+  expect_true(as.character(sim$trait_object$trait$id) %in% rownames(res_ph$x_matrix))
+  expect_error(
+    run_univariate_clustering(sim$trait_object, trait_subset = "bogus"),
+    "should be one of"
+  )
+})
+
+test_that("p_molecular_drivers caps the molecular fraction of module drivers", {
+  sim <- simulate_trait(
+    n_coloc_groups = 90,
+    K = 3,
+    module_sizes = c(10, 20, 30),
+    drivers_per_module = c(2, 5, 8),
+    p_molecular = 1,
+    p_molecular_drivers = 0.2,
+    seed = 45
+  )
+  gt <- sim$ground_truth
+  for (m in seq_along(gt$driver_traits)) {
+    drv <- gt$driver_traits[[m]]
+    n_mol <- sum(drv %in% gt$molecular_traits)
+    expect_lte(n_mol, round(0.2 * length(drv)) + 1L)
+    expect_lt(n_mol, length(drv))
+  }
+  n_bg_mol <- sum(grepl("^background", gt$molecular_traits))
+  expect_equal(n_bg_mol, gt$parameters$n_background_traits)
+  expect_error(
+    simulate_trait(n_coloc_groups = 60, K = 2, module_sizes = c(10, 10),
+                   p_molecular_drivers = 1.5),
+    "p_molecular_drivers"
+  )
+})
+
 test_that("molecular traits are gene-annotated and much sparser", {
   sim <- simulate_trait(
     n_coloc_groups = 200,

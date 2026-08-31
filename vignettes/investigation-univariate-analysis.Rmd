@@ -10,23 +10,24 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 params:
   api: "production"
-  min_snp_signals: 5
+  trait_subset: "phenotypic"
+  min_snp_signals: 2
   min_module_size: 3
   cluster_type: "ebmf"
   louvain_gamma: 1.5
   compress_method: "asinh"
-  compress_scale: 2
+  compress_scale: 5
   include_trans: false
   include_situated_gene: false 
   similarity_threshold: 0.2
   ebmf_se_mode: "unit"
   ebmf_beta_scale: "trait"
-  ebmf_magnitude_threshold: 0.5
-  ebmf_lfsr_threshold: 0.05
+  ebmf_magnitude_threshold: 0.75
+  ebmf_lfsr_threshold: 0.02
   ebmf_prior: "point_normal"
   ebmf_backfit: true
   min_mean_internal: 0.3
-  min_connectedness: 0.25
+  min_connectedness: 0.5
   n_null: 10
   alpha_membership: 0.05
   n_candidate_tier: 25
@@ -89,6 +90,7 @@ top_n_traits <- 10L
 min_specificity <- 1.25
 
 api <- params$api
+trait_subset <- params$trait_subset
 min_module_size <- as.integer(params$min_module_size)
 min_snp_signals <- as.integer(params$min_snp_signals)
 cluster_type <- params$cluster_type
@@ -130,6 +132,7 @@ knitr::kable(
     api = api,
     gpmap_url = getOption("gpmap_url"),
     min_snp_signals = min_snp_signals,
+    trait_subset = trait_subset,
     cluster_type = cluster_type,
     louvain_gamma = louvain_gamma,
     compress_method = compress_method,
@@ -313,6 +316,7 @@ if (cluster_type == "louvain") {
     ),
     target_trait_id = target_trait_id,
     associations = associations,
+    trait_subset = trait_subset,
     include_trans = include_trans,
     min_snp_signals = min_snp_signals,
     max_snp_fraction = max_snp_fraction,
