@@ -5,7 +5,7 @@ output:
     includes:
       in_header: investigation-wide.html
 vignette: >
-  %\VignetteIndexEntry{Investigation of SNP clustering}
+  %\VignetteIndexEntry{Univariate SNP biological clustering}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -31,30 +31,37 @@ according to their genome-wide pleiotropic profiles.
 The central question is: **within one trait, what distinct biological programs
 are represented by its associated SNPs?**
 
-The output is a set of SNP modules, each annotated with background traits,
-QTL studies, tissues, genes, and pathways. The runnable implementation is
+The output is a set of SNP programs (latent factors), each annotated with
+background traits, QTL studies, tissues, genes, and pathways. The runnable
+implementation is
 [Investigation of univariate analysis](investigation-univariate-analysis.html).
-[Investigation of EBMF analysis](investigation-ebmf-analysis.html) is the
-overlapping-program alternative.
+[Investigation of EBMF analysis](investigation-ebmf-analysis.html) explores the
+EBMF factorisation itself (priors, variance structure, PVE).
 
 Background traits stay at **study level**. Molecular QTL studies are not
 collapsed by gene, tissue, cis/trans, or QTL type.
 
 ### Core clustering preferences
 
-Any method we adopt for SNP grouping should satisfy:
+The grouping method should satisfy:
 
 1. **Handles high sparsity** — Must natively process large, sparse matrices
    (thousands of singleton feature rows) without treating structural zeros as
-   low-variance signal.  Alternatively, we can limit the sparsity by a hard
-   threshold on the number of non-missing SNPs per trait.
+   low-variance signal. EBMF does this by leaving missing cells out of the fit
+   (`flashier` skips `NA`); we additionally limit sparsity with a hard threshold
+   on the number of non-missing SNPs per trait (`min_snp_signals`).
 2. **Signed and sign-driven clustering** — Must preserve the meaning of
    continuous positive/negative z-scores so variants group by **directional
-   alignment**, not magnitude alone.
+   alignment**, not magnitude alone. We orient every SNP column by
+   \(\mathrm{sign}(z_{\mathrm{target}})\) before factorization.
 3. **Automated \(K\) discovery** — The engine should learn the number of
-   clusters or latent factors from the data (modularity, ELBO), rather than
-   relying on an arbitrary cut.  Filtering the results by a minimum module size
-   can help with this.
+   clusters or latent factors from the data. EBMF adds factors greedily while
+   the variational lower bound (ELBO) improves, then backfits; filtering the
+   resulting factors by an lFSR/magnitude membership gate and by the
+   validation checks below controls the final program count.
+4. **Overlapping membership** — A SNP can belong to more than one biological
+   program. EBMF produces soft factor loadings, so membership is per-SNP-per-
+   program rather than a single hard label.
 
 ```{r workflow-diagram, echo=FALSE, fig.height=8, fig.width=8}
 workflow_dot <- "
@@ -64,11 +71,10 @@ digraph workflow {
         fillcolor=\"#e1f5fe\" color=\"#01579b\"]
   S1 [label=\"1. Pleiotropy matrix\\n(study-level rows x SNPs)\"]
   S2 [label=\"2. Orient by sign(z_target)\\noptional asinh compression\"]
-  S3 [label=\"3. SNP-SNP cosine similarity S\"]
-  S4 [label=\"4. Cluster (signed Louvain default)\"]
-  S5 [label=\"5. Reliability + magnitude annotations\"]
-  S6 [label=\"6. Interpret reliable modules\\ntraits, tissues, pathways\"]
-  S1 -> S2 -> S3 -> S4 -> S5 -> S6
+  S3 [label=\"3. EBMF factorization Y = L F^T + E\\nlFSR + magnitude program gates\"]
+  S4 [label=\"4. Validate programs\\ncoherence on SNP-SNP S, stability, factor strength\"]
+  S5 [label=\"5. Interpret valid programs\\ntraits, tissues, pathways\"]
+  S1 -> S2 -> S3 -> S4 -> S5
 }
 "
 if (requireNamespace("DiagrammeR", quietly = TRUE)) {
@@ -97,8 +103,24 @@ Trait C        z      z      z      z
 ...
 ```
 
-Sparse rows (few non-missing SNPs) and ubiquitous rows (non-missing on almost
-every SNP) are dropped; the target trait row is kept.
+Which rows and columns back this matrix is controlled by three choices:
+
+- **`include_trans`** — whether trans-QTL association rows
+  (`cis_trans == "trans"`) are removed before the matrix is built. Excluding
+  them (default) keeps the analysis cis-focused; including them can surface
+  distributed regulatory programs at the cost of density and noise.
+- **`trait_subset`** — `"all"` keeps every available background trait;
+  `"phenotypic"` keeps only phenotype traits (rows whose `feature_type` is
+  `"phenotypic"` or missing) plus the target trait, dropping molecular /
+  gene-annotated rows. Molecular traits are much sparser, so clustering on
+  phenotype traits only can recover structure that sparse molecular rows
+  dilute.
+- **`min_snp_signals`** — sparse rows observed in fewer than this many SNPs
+  are dropped; ubiquitous rows (non-missing on more than `max_snp_fraction` of
+  SNPs) are dropped too. The target trait row is always kept.
+- **`compress_method`** — optional `asinh` compression of z-scores, which
+  limits the leverage of extreme z-scores without a hard clip. `"none"` preserves
+  effect scale but lets outliers dominate direction and norm.
 
 ### 2. Orient SNP profiles relative to the target trait
 
@@ -109,217 +131,159 @@ liability. For SNP \(j\):
 X^*_{tj} = \mathrm{sign}(z_j)\, X_{tj}
 \]
 
-Optional \(\mathrm{asinh}(z)\) compression then limits the leverage of extreme
-z-scores without a hard clip.
+Optional \(\mathrm{asinh}(z)\) compression (`compress_method = "asinh"`, with
+`compress_scale`) then limits the leverage of extreme z-scores without a hard
+clip. `"none"` preserves effect scale but lets outliers dominate direction and
+norm.
 
-### 3. Calculate SNP-SNP similarity
+### 3. Fit the EBMF latent-program model
 
-Compare every SNP with every other SNP by its oriented trajectory across
-background traits. Cosine similarity:
-
-\[
-S_{jk} = \frac{{x^*_j}^{\top} x^*_k}{\|x^*_j\|\,\|x^*_k\|}
-\]
-
-The result is SNP x SNP:
-
-- \(+1\) = concordant (parallel) profiles
-- \(0\) = unrelated
-- \(-1\) = discordant (anti-parallel) profiles
-
-### 4. Cluster the SNPs
-
-Group SNPs into modules from \(S\). The univariate vignette uses
-`cluster_snp_profiles_louvain()`. Spectral clustering is available as
-`cluster_snp_profiles_spectral()`. Soft overlapping programs live in the EBMF
-vignette.
-
-The recommended trial order is below. The first method provides the current
-baseline; the following methods increasingly test different assumptions.
-
-#### 1. Signed Louvain (current baseline)
-
-Represent \(S\) as a signed weighted graph: SNP = node, similarity = edge.
-Weak edges with \(|S| <\) `similarity_threshold` can be zeroed first.
-Implemented as `cluster_snp_profiles_louvain()`.
-
-Advantages:
-
-- Returns a data-driven number of modules for fixed graph parameters
-- Handles sparse networks
-- Signed Louvain uses negative edges (anti-parallel profiles) rather than
-  discarding them
-
-Problems:
-
-- Standard (unsigned) Louvain is directionally blind; we therefore use signed
-  modularity
-- Very sparse graphs can produce many tiny communities
-- Resolution (`gamma`) and the similarity threshold both change community size
-- Local optimisation can vary across runs or become trapped in suboptimal
-  partitions
-
-Use repeated runs across seeds, `gamma`, and `similarity_threshold` as the
-reference against which other methods are compared.
-
-#### 2. Signed Leiden (highest-priority addition)
-
-Leiden is a community-detection refinement designed to produce better-connected
-and more stable communities than Louvain.
-
-Advantages:
-
-- Closest methodological upgrade to the current pipeline
-- Retains sparse graph processing and data-driven module discovery
-- Reduces disconnected or poorly connected communities
-
-Problems:
-
-- Standard Leiden implementations generally assume non-negative weights
-- A valid implementation needs signed modularity or coupled positive and
-  negative graph layers; negative \(S\) values must not simply be discarded
-- Resolution and edge-threshold choices still affect the number of modules
-
-#### 3. Empirical Bayes matrix factorization
-
-Treat the SNP x trait matrix as noisy observations of latent programs:
+Treat the oriented (and optionally compressed) traits x SNPs matrix as noisy
+observations of latent programs:
 
 \[
 Y = LF^{\top} + E
 \]
 
-- \(Y\) = SNP x trait matrix
-- \(L\) = SNP loadings
-- \(F\) = trait factors
+- \(Y\) = features x SNPs matrix (traits and molecular QTL studies as rows)
+- \(L\) = feature loadings (which traits drive each program)
+- \(F\) = SNP factors (which SNPs each program loads on)
 - \(E\) = residual error
 
-Advantages: SNPs can belong to multiple programs; \(K\) is inferred (ELBO);
-overlapping biology is the default assumption.
+Implemented via `flashier`: factors are added greedily while the variational
+lower bound improves (`greedy_Kmax`), then cyclically backfit. The number of
+programs is learned, not fixed. The sparse prior on loadings and factors is
+`ebmf_prior`:
 
-Problems: factors are not necessarily mutually exclusive SNP modules and can
-capture broad technical or global effects. Hard module labels require a
-separate loading-to-membership rule.
+- `"point_normal"` (default) — a sparse, spike-and-slab style prior; good
+  general default.
+- `"point_laplace"` — heavier tails; often better when true effects are large
+  relative to noise.
 
-Prefer this if the architecture is expected to be overlapping rather than
-mutually exclusive SNP groups. See
-[Investigation of EBMF analysis](investigation-ebmf-analysis.html).
+**Extracting programs.** A SNP belongs to a program when its posterior factor
+loading is both *significant* and *non-negligible*:
 
-#### 4. Signed degree-corrected stochastic block model
+- `lfsr` < `ebmf_lfsr_threshold` (local false sign rate; defaults to `0.05`)
+- `|loading|` > `ebmf_magnitude_threshold` (absolute posterior mean of `F_pm`;
+  defaults to `0.25`)
 
-Model positive and negative graph edges as arising from latent SNP blocks.
-A nested model with minimum-description-length selection can infer the number
-of blocks while allowing SNPs to have different overall connectivity.
+Because EBMF is soft, one SNP can pass the gate for several programs
+(overlapping membership). Before extraction, at most one *global* mega-factor
+— a factor that soft-assigns nearly every SNP or explains a large share of PVE
+— is dropped (`ebmf_drop_global = TRUE` via `identify_ebmf_global_factors()`);
+this guards against the "one giant cluster" failure mode. Nothing assumes
+factor 1 is global.
 
-Advantages:
+Why EBMF over community detection (Louvain / Leiden):
 
-- Strong conceptual match for sparse signed networks
-- Degree correction helps distinguish modules from highly connected hub SNPs
-- Model selection can estimate the number of blocks
+- SNPs can belong to multiple programs; biology is overlapping, not mutually
+  exclusive.
+- \(K\) is inferred by the fit (ELBO) rather than by a graph-resolution or
+  edge-threshold parameter.
+- The input is the dense oriented z-score matrix itself, so no information is
+  lost to a pairwise similarity threshold.
+- Missing data are handled probabilistically instead of being zero-filled into
+  similarity edges.
 
-Problems:
+The cost is that factors are not guaranteed to be disjoint SNP modules and can
+capture broad technical/global effects — which is exactly why the validation
+layer in Step 4 exists.
 
-- Weighted signed-edge support is more specialised than Louvain or Leiden
-- Considerably more implementation and validation work
-- Block structure is not identical to clustering by directional profile
+### 4. Validating programs
 
-#### 5. HDBSCAN on a sign-preserving embedding
+`run_univariate_clustering()` returns the fit and soft memberships;
+`summarise_ebmf_programs()` folds everything into a per-program table with
+pass/fail flags and an overall `status`. The checks split into those computed
+**on the SNP x SNP similarity matrix** `S` (internal coherence) and those that
+use **other means** (the EBMF fit itself and refits under trait subsampling).
+A program is **`valid`** only if it passes all **filter gates**; some metrics
+are reported descriptively and never gate `status`.
 
-Apply HDBSCAN to a low-dimensional representation of the oriented SNP profiles
-or signed similarity graph.
+#### The SNP x SNP similarity matrix
 
-Advantages:
-
-- Learns a data-driven number of clusters
-- Can label poorly supported SNPs as noise instead of forcing membership
-- Handles clusters with unequal density
-
-Problems:
-
-- Does not operate directly on signed edges
-- Results depend on the embedding, distance, and minimum cluster-size choices
-- Sparse missing values must be handled before constructing the embedding
-
-#### 6. Spectral clustering
-
-Uses the graph Laplacian and its eigenvectors via
-`cluster_snp_profiles_spectral()`.
-
-Advantages: compresses many background traits into major axes of variation.
-
-Problems: fragmented similarity graphs produce many disconnected components;
-usually requires selecting \(K\).
-
-### 5. Assessing module quality
-
-Two complementary checks. Graph diagnostics ask whether a module is a real
-blob on \(S\). Trait specificity asks whether that blob has a distinct
-biological driver.
-
-#### Module reliability scores
-
-After clustering, go back to \(S\) with `summarise_snp_module_quality()`.
-These diagnostics are not Louvain-specific: they need \(S\) and hard cluster
-labels from any method.
-
-A module is marked `reliable` only if all three hold:
-
-1. Size \(\ge 3\) SNPs
-2. Mean internal similarity \(\ge 0.3\)
-3. Connectedness \(\ge 0.5\)
-
-Size, internal similarity, and connectedness ask "is this a real blob?"
-Downstream interpretation uses only SNPs in modules that pass all three.
-
-**Internal similarity.** Mean signed cosine among member SNPs (diagonal
-excluded). High values mean oriented profiles are roughly parallel. The
-cutoff \(0.3\) is a weak "same direction, not noise" bar.
-
-External similarity is the mean \(S\) from members to all other SNPs.
-**Separation** is internal minus external. It is diagnostic, not a cutoff: a
-module can be internally coherent but still sit inside a similar background.
-
-**Connectedness.** Graph density on the thresholded unsigned graph
-(\(|S| \ge\) `similarity_threshold`). Internal similarity can look decent if a
-few pairs are very similar and the rest are near zero. Connectedness \(\ge 0.5\)
-requires at least half of all pairs to be strong edges.
-
-**Silhouette.** Rousseeuw silhouette with distance \(1 - S\) is still reported,
-but is not part of the `reliable` rule. Because SNPs can participate in more
-than one biological program, negative silhouettes are expected under hard
-clustering and should not by themselves discard a coherent module.
-
-The table also reports the number of connected components and the fraction of
-SNPs in the largest component; those are not part of the `reliable` rule.
-
-#### Enrichment of background traits
-
-If no traits are specifically elevated in a module relative to the rest of the
-SNPs, the module is harder to trust biologically.
-`summarise_module_specific_traits()` ranks traits by module-vs-rest contrast:
-
-| Metric | Meaning |
-|---|---|
-| `abs_mean_z` | Mean absolute z for the trait among SNPs in the module |
-| `abs_mean_z_rest` | Mean absolute z among all other SNPs |
-| `specificity` | Relative enrichment of the trait inside the module |
-| `abs_mean_z_delta` | Absolute lift versus the rest |
+EBMF never sees pairwise SNP similarity — it factorises the traits x SNPs
+matrix directly — but the same oriented (and optionally compressed) SNP
+profiles are used to build the SNP x SNP cosine similarity matrix `S`, which
+backs the coherence checks below. For SNPs \(j\) and \(k\):
 
 \[
-\mathrm{specificity} = \frac{\overline{|z|}_{\mathrm{module}}}{\overline{|z|}_{\mathrm{rest}} + 0.1}
+S_{jk} = \frac{{x^*_j}^{\top} x^*_k}{\|x^*_j\|\,\|x^*_k\|}
 \]
 
-\[
-\mathrm{abs\_mean\_z\_delta} = \overline{|z|}_{\mathrm{module}} - \overline{|z|}_{\mathrm{rest}}
-\]
+- \(+1\) = concordant (parallel) profiles
+- \(0\) = unrelated
+- \(-1\) = discordant (anti-parallel) profiles
 
-These describe what drives each cluster without using pathway enrichment as
-the clustering criterion.
+#### Checks on the similarity matrix (internal coherence)
 
-### 6. Interpret biological modules
+Computed on `S`, restricted to the program's gated SNPs:
 
-The univariate vignette currently interprets **reliable** modules as:
+- **mean_internal_similarity** — mean off-diagonal `S` among member SNPs
+  (diagonal excluded). High values mean oriented profiles are roughly
+  parallel. Must be `>= min_mean_internal` (default `0.3`), a weak
+  "same direction, not noise" bar.
+- **connectedness** — the fraction of member-SNP pairs with
+  \(|S| \ge\) `similarity_threshold` (the same `edge_threshold` used in the
+  old graph clustering). Mean internal similarity can look decent if a few
+  pairs are very similar and the rest are near zero; connectedness
+  `>= min_connectedness` (default `0.5`) requires at least half of all pairs
+  to be strong edges, so the program is a real connected blob on `S`, not
+  one tight pair inside a diffuse background.
+- **Separation** (internal minus external similarity) is also reported —
+  diagnostic only, not a gate: a program can be internally coherent yet sit
+  inside a similar background.
 
-- **Top traits by magnitude** (`abs_mean_z` within the module).
+#### Checks by other means
+
+These come from the EBMF fit itself, not from `S`:
+
+- **Size** — at least `min_module_size` SNPs survive the lFSR/magnitude gate
+  (`n_snps_filtered`, counted from the EBMF membership). This ensures the
+  coherence metrics are computed on enough SNPs to be meaningful.
+- **Stability** — the program's top `top_n` loading SNPs must be recovered
+  with replication `>= stability_threshold` (default `0.7`) when `1 -
+  frac_traits` of the trait rows are held out and flashier is refit
+  (`n_rep` replicates). Because this refits EBMF, it is run only for programs
+  that already pass the size and internal-coherence gates. Descriptive, but
+  gated: a program that does not survive trait subsampling is rejected.
+
+**Descriptive scores** (reported for context, but **not** used to gate
+`status`):
+
+- **factor_strength** — the proportion of the observed matrix signal
+  attributable to the factor, computed from its fitted reconstruction on the
+  gated (assigned) SNPs:
+  \(\sum_i |L_{ik}| \sum_j |F_{jk}|\) over the total observed signal
+  \(\sum |X|\). `factor_strength_per_snp = factor_strength / sqrt(n_snps_filtered)`
+  normalises it by the square root of program size. These prioritise programs
+  that carry real matrix signal rather than marginal memberships.
+- **posterior_evidence** — aggregate (`median` or `mean`) of `-log10(lfsr)`
+  across the program's assigned SNPs (capped so lFSR underflow does not blow
+  up). Distinguishes programs dominated by borderline `lfsr ~ 0.05`
+  memberships from programs whose memberships carry much stronger posterior
+  sign evidence.
+- **max_abs_factor_corr / redundant** — the maximum absolute correlation of the
+  program's SNP loading vector with any other program; programs exceeding
+  `redundancy_threshold` are flagged `redundant` (near-duplicate factors).
+
+`status` is `"valid"` when all gates pass, otherwise the failed gate(s) are
+listed (`size; internal; stability`). Downstream interpretation uses only the
+gated memberships of `valid` programs.
+
+**Permutation calibration (reporting layer).** `calibrate_ebmf_programs()`
+additionally shuffles each trait row independently (`n_null` replicates,
+preserving each trait's sparsity and effect distribution), refits the pipeline,
+and pools the null loading distribution. Each SNP x program loading gets an
+empirical p-value and BH q-value against this null; cells with `q <=
+alpha_membership` are labelled `core`, and the top remaining loadings per
+program form an explicitly uncertified `candidate` tier. This is a membership
+labelling layer, not a program-level validity gate.
+
+### 5. Interpret valid programs
+
+The univariate vignette interprets **valid** EBMF programs as:
+
+- **Top traits by magnitude** (`abs_mean_z` within the program).
 - **Trait-category composition** (`enrich_snp_group_trait_categories()`):
   observed vs expected share against the rest of the trait SNP baseline
   (coloc rows for SNPs attributed to the analysed trait, not the whole GPMap
@@ -330,219 +294,113 @@ The univariate vignette currently interprets **reliable** modules as:
 - **Pathway enrichment** on QTL genes (KEGG and Reactome), treated as
   secondary because the full-trait gene set is often empty for broad traits
   such as BMI.
-- **SNP pleiotropy typology** (`summarise_snp_group_pleiotropy()`): modules are
-  placed on a *breadth* axis (mean per-SNP distinct trait categories / distinct
-  genes) against *tightness* (separation). Descriptive only — it classifies
-  modules as specific programs (tight + narrow), regulatory hubs (tight +
-  broad), or generic background (loose + broad), without acting as a filter or
-  reliability criterion.
+- **SNP pleiotropy typology** (`summarise_snp_group_pleiotropy()`): programs
+  are placed on a *breadth* axis (mean per-SNP distinct trait categories /
+  distinct genes) against *tightness* (separation). Descriptive only — it
+  classifies programs as specific programs (tight + narrow), regulatory hubs
+  (tight + broad), or generic background (loose + broad), without acting as a
+  filter or reliability criterion.
 
 #### Multiple testing correction for trait-category and tissue enrichments
 
-Each reliable module is tested against **every** trait category and **every**
+Each valid program is tested against **every** trait category and **every**
 tissue for over-representation relative to the trait baseline (leave-one-out
-hypergeometric test, plus the permutation and module-vs-modules summaries). A
-single module therefore produces dozens of hypothesis tests — one per category
-or tissue — and across all modules in a run the pipeline performs hundreds. If
+hypergeometric test, plus the permutation and program-vs-programs summaries). A
+single program therefore produces dozens of hypothesis tests — one per category
+or tissue — and across all programs in a run the pipeline performs hundreds. If
 we declared everything with raw p < 0.05 significant, we would expect ~5% of
-purely null categories/tissues to pass by chance; a module testing ~50
+purely null categories/tissues to pass by chance; a program testing ~50
 categories would accumulate ~2-3 false hits before any real biology.
 
 We therefore apply **Benjamini–Hochberg (BH) FDR
-correction** *within each module*, across the categories (or tissues) tested
-for that module. BH sorts the raw p-values, then finds the largest prefix that
+correction** *within each program*, across the categories (or tissues) tested
+for that program. BH sorts the raw p-values, then finds the largest prefix that
 can be declared significant while keeping the expected fraction of false
 positives among the significant calls at or below the chosen level (0.05). The
 reported `FDR` for a category/tissue is the smallest FDR level at which that
 row would still be called significant (a "q-value"): a category with
 `FDR = 0.03` means that if we declare it significant, we expect ≤3% of the
-significant calls for that module to be false positives.
+significant calls for that program to be false positives.
 
-Note: **Correction is per-module, not global.** Each module's FDR is computed over
-the categories/tissues tested for that module alone. Running many modules
-still multiplies the opportunities for false positives across the whole
+Note: **Correction is per-program, not global.** Each program's FDR is computed
+over the categories/tissues tested for that program alone. Running many
+programs still multiplies the opportunities for false positives across the whole
 analysis, which is why the vignette insists on agreement between the three
-methods (`FDR` hypergeometric, `perm` permutation, `vsmod` module-vs-modules
-Fisher) and on replication across grid runs before treating a hit as real.
+methods (`FDR` hypergeometric, `perm` permutation, `vsmod` program-vs-programs
+Fisher) and on replication across runs before treating a hit as real.
 
 ## Variables to consider
 
-Exposed in the univariate vignette today:
+Exposed in the univariate vignette today (EBMF path):
 
 | Parameter | Values | Meaning | Explanation |
 |---|---|---|---|
-| `api` | `production`, `local` | Public GPMap vs local QTL DB | Local data can add trans-QTL studies, increasing matrix density and changing the regulatory signals that connect SNPs. This can alter both module membership and tissue/gene interpretation. Production is more reproducible but may omit those signals. |
-| `min_snp_signals` | `1`, `3`, `5` | Minimum SNPs with a value for a background trait | Raising it removes singleton or very sparse rows, reducing unstable edges and computation. It can also remove rare, module-specific biology. Lowering it preserves those signals but makes similarity more sensitive to sparse observations. |
-| `similarity_threshold` | `0`, `0.2`, `0.5` | Minimum \(\|S\|\) retained as a Louvain edge | Raising it removes weak positive and negative edges, producing a sparser graph that may split into more or smaller modules. Lowering it preserves gradual structure but weak or noisy links can merge otherwise distinct modules. |
-| `compress_method` | `none`, `asinh` | Transformation applied to z-scores | `asinh` is nearly linear around zero but compresses extreme values, so cosine similarity reflects patterns across several traits rather than one very large z-score. `none` preserves effect scale but allows outliers to dominate direction and norm. |
-| `louvain_gamma` | `2`, `3` | Signed Louvain resolution | Higher `gamma` rewards smaller communities and generally increases the number of modules; lower values merge broader profiles. It directly affects module size, separation, connectedness, and the number passing reliability filters. |
+| `Dataset` | `production`, `local` | Public GPMap vs new trans-QTL DB | Local data added trans-QTL studies, increasing matrix density and changing the regulatory signals that connect SNPs. This can alter both program membership and tissue/gene interpretation. Production is more reproducible but may omit those signals. |
+| `include_trans` | `TRUE`, `FALSE` | Whether trans-QTL rows are retained | Including trans effects can reveal distributed regulatory programs and improve tissue/pathway interpretation, while increasing density and possible noise. Excluding them gives a more local cis-focused analysis but may miss system-level mechanisms. |
+| `trait_subset` | `all`, `phenotypic` | Which trait rows back the matrix | `phenotypic` drops sparse molecular / gene-annotated rows (keeping the target trait), recovering structure that sparse molecular rows dilute but losing QTL-level signal. `all` keeps every available background trait at the cost of extra sparsity. |
+| `min_snp_signals` | `1`, `2`, `3`, `5` | Minimum SNPs with a value for a background trait | Raising it removes singleton or very sparse rows, reducing unstable factors and computation. It can also remove rare, module-specific biology. Lowering it preserves those signals but makes factorization more sensitive to sparse observations. |
+| `compress_method` | `asinh`, `none` | Transformation applied to z-scores | `asinh` is nearly linear around zero but compresses extreme values, so factors reflect patterns across several traits rather than one very large z-score. `none` preserves effect scale but allows outliers to dominate direction and norm. |
+| `similarity_threshold` | `0`, `0.2`, `0.5` | Absolute \(\|S\|\) edge cutoff for the connectedness gate | Not an EBMF input, but used by the validation layer: `connectedness` counts SNP pairs with \(\|S\| \ge\) this threshold. Raising it makes the connectedness gate stricter and the coherence metrics more conservative. |
+| `ebmf_lfsr_threshold` | `0.05`, `0.02`, `0.1` | Local false sign rate cutoff for SNP membership | Lowering it keeps only SNPs whose program loading has very strong posterior sign evidence, shrinking and sharpening programs. Raising it adds borderline `lfsr ~ threshold` memberships. |
+| `ebmf_magnitude_threshold` | `0.25`, `0.5`, `0.75`, `NA` | Minimum absolute posterior loading for SNP membership | Raising it keeps only SNPs with substantial program loadings. `NA` gates membership on lFSR alone (useful when loadings are on raw-beta scale). |
+| `ebmf_prior` | `point_normal`, `point_laplace` | Prior family for EBMF loadings/factors | `point_normal` is the general default; `point_laplace` has heavier tails and is often better when true effects are large relative to noise. |
+| `min_module_size` | `3`, `5` | Minimum gated SNPs for the size gate | Ensures the coherence and stability metrics are computed on enough SNPs to be meaningful; also the effective minimum program size. |
+| `min_mean_internal` | `0.3` | Minimum mean internal similarity | The "same direction, not noise" bar on `S` among gated member SNPs. |
+| `min_connectedness` | `0.5` | Minimum pair-connectedness | Requires at least this fraction of member-SNP pairs to exceed `similarity_threshold`, so a program is a connected blob rather than one tight pair in a diffuse background. |
+| `stability_threshold` | `0.5`, `0.7` | Minimum replication for stability | Fraction of a program's top-loading SNPs that must reappear when traits are held out and EBMF is refit. |
 
-Also relevant, but not currently params of the univariate vignette:
+Reliability/validation cutoffs used after clustering therefore are:
+`min_module_size`, `min_mean_internal = 0.3`, `min_connectedness = 0.5`,
+`stability_threshold`, plus the membership gates `ebmf_lfsr_threshold` and
+`ebmf_magnitude_threshold`. `factor_strength`, `posterior_evidence`, and
+`max_abs_factor_corr`/`redundant` are reported descriptively but do not gate
+`status`.
 
-| Parameter | Values | Meaning | Explanation |
-|---|---|---|---|
-| Trans QTLs | include / exclude | Whether distant molecular effects are retained | Including trans effects can reveal distributed regulatory programs and improve tissue/pathway interpretation, while increasing density and possible noise. Excluding them gives a more local cis-focused analysis but may miss system-level mechanisms. |
-| Clustering method | Louvain, Leiden, EBMF, SBM, HDBSCAN, spectral | Model used to define modules or programs | Louvain/Leiden/SBM produce graph communities; EBMF allows overlapping programs; HDBSCAN can leave uncertain SNPs unassigned; spectral methods usually require \(K\). Different assumptions change module count and membership, so compare stability and interpretation rather than scores alone. |
+## What we simulate
 
-Trans QTL include/exclude is currently a manual `cis_trans` filter or an API
-choice (`local` vs `production`).
+Parameter choices are validated on synthetic data with **known ground truth**
+rather than on a single real-trait sweep (see
+[Simulation study of EBMF programs](investigation-univariate-simulations.html)).
+`simulate_trait()` generates a trait object of the same shape as
+`trait(id, include_associations = TRUE)` and plants a latent module structure
+over SNPs:
 
-Reliability cutoffs used after clustering: `min_module_size = 3`,
-`min_mean_internal = 0.3`, `min_connectedness = 0.5`.
+- **Planted modules** — `K` modules occupy SNP sets (disjoint by default, or
+  `nested` where a parent module contains the others as correlated subsets).
+  Each module has `n_traits_per_module` driver traits with `effect_size`-scale
+  effects on its module's SNPs, under a `sign_pattern` (`coherent`, `flipped`,
+  or `random` signs).
+- **Trait-space overlap** — a fraction `trait_overlap` of each module's driver
+  traits is shared with the other modules; a shared trait's effects are
+  correlated across the modules it drives (`trait_effect_corr`) but not
+  identical. Increasing `trait_overlap` should make EBMF programs increasingly
+  overlap and the planted modules harder to tell apart — the vignette runs
+  versions from `0` (clean) to `1` (full overlap), plus a **null** version
+  (`K = 0`, no modules) that checks for false structure.
+- **Realistic noise and sparsity** — structural zeros inside true support
+  (`p_structural_zero`), spurious off-support noise (`p_spurious`), sparse
+  unstructured background traits (`p_active_background`), and a
+  `p_molecular` fraction of gene-annotated molecular (eQTL-like) traits that
+  are observed much more sparsely (`p_active_molecular`, with driver molecular
+  fraction set separately by `p_molecular_drivers`). Optional per-cell SE
+  heterogeneity (`log_se_sd`) and within-module SNP sub-patterns
+  (`snp_driver_groups`) break the exchangeability that would make modules
+  trivially separable.
 
-## Appendix: Choosing clustering parameters
+The simulation is scored against ground truth by
+`evaluate_univariate_simulation()`:
 
-A sweep of the three main clustering parameters was run for BMI
-(`target_trait_id = 1992`, `associations = "copermloc"`) by rendering the univariate
-vignette across `louvain_gamma` in {2, 3}, `min_snp_signals` in {3, 5}, and
-`similarity_threshold` in {0, 0.2, 0.5} (12 runs). The table below summarises,
-per run, the diagnostics over **reliable** modules only. Significance is
-"significant by any method" (`sig_any` = hypergeometric FDR, permutation FDR, or
-module-vs-modules Fisher, all at 0.05); `n_category_modules`, `n_tissue_modules`,
-`n_pathway_modules`, and `n_phenotype_modules` count the modules with at least
-one significant trait category, tissue, pathway (KEGG/Reactome), or phenotype
-(HP) hit respectively.
+- **module_recall** — for each planted module, the largest fraction of its SNPs
+  contained in any single predicted program (fair to overlapping/merged
+  programs).
+- **coverage** — fraction of all SNPs placed into valid programs.
+- **background_absorbed** — fraction of unstructured background SNPs absorbed
+  into valid programs (higher = more hallucinated structure).
+- **ARI** (`ari_all`, `ari_structured`) — adjusted Rand index against the
+  planted partition, using each SNP's strongest program as a hard projection.
 
-```{r appendix-grid-comparison, echo=FALSE}
-grid_summary <- data.frame(
-  run = c(
-    "g2 mss3 thr0", "g2 mss3 thr0.2", "g2 mss3 thr0.5",
-    "g2 mss5 thr0", "g2 mss5 thr0.2", "g2 mss5 thr0.5",
-    "g3 mss3 thr0", "g3 mss3 thr0.2", "g3 mss3 thr0.5",
-    "g3 mss5 thr0", "g3 mss5 thr0.2", "g3 mss5 thr0.5"
-  ),
-  gamma = c(2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3),
-  min_snp_signals = c(3, 3, 3, 5, 5, 5, 3, 3, 3, 5, 5, 5),
-  similarity_threshold = c(0, 0.2, 0.5, 0, 0.2, 0.5, 0, 0.2, 0.5, 0, 0.2, 0.5),
-  n_modules = c(24, 22, 18, 24, 20, 19, 22, 17, 31, 23, 16, 30),
-  n_reliable = c(23, 20, 16, 23, 19, 17, 17, 16, 29, 18, 15, 27),
-  reliable_snps = c(394, 437, 409, 396, 439, 423, 158, 263, 354, 160, 261, 321),
-  mean_internal_similarity = c(0.604, 0.574, 0.588, 0.610, 0.574, 0.596, 0.642, 0.554, 0.560, 0.630, 0.584, 0.562),
-  mean_separation = c(0.310, 0.267, 0.229, 0.313, 0.270, 0.232, 0.394, 0.297, 0.205, 0.383, 0.318, 0.210),
-  mean_connectedness = c(1.000, 0.978, 0.822, 1.000, 0.966, 0.833, 1.000, 0.945, 0.843, 1.000, 0.946, 0.838),
-  n_category_modules = c(5, 6, 5, 5, 7, 4, 2, 3, 5, 1, 4, 4),
-  n_tissue_modules = c(3, 1, 0, 3, 1, 0, 2, 2, 0, 2, 1, 1),
-  n_pathway_modules = c(5, 3, 4, 6, 4, 4, 2, 3, 2, 2, 3, 3),
-  n_phenotype_modules = c(1, 1, 3, 1, 2, 2, 2, 2, 2, 2, 2, 4),
-  stringsAsFactors = FALSE
-)
-
-knitr::kable(
-  grid_summary |>
-    dplyr::arrange(gamma, min_snp_signals, similarity_threshold),
-  caption = "Parameter-grid sweep (12 runs): reliable-module diagnostics by run (BMI, coloc associations; mean internal/separation/connectedness; counts of modules with significant category, tissue, pathway, and phenotype hits)",
-  row.names = FALSE,
-  align = "r"
-)
-```
-
-Reading across the grid:
-
-- **`louvain_gamma` — 2 beats 3.** At `gamma = 3` the graph fragments: with
-  `similarity_threshold = 0.5` it returns 30-31 modules but only ~320-355
-  reliable SNPs; at `thr = 0` the reliable SNP count collapses to 158-160,
-  leaving only tiny, tight cliques (mean internal similarity 0.63-0.64 but
-  modules of 3-26 SNPs). `gamma = 2` keeps far more reliable SNPs (394-439),
-  the same key modules at larger sizes, and the strongest fold enrichments
-  (e.g. a metabolic-disease module with fold enrichment ~10).
-- **`min_snp_signals` — a tie; 5 is marginally cleaner.** At `gamma = 2`,
-  `mss = 5` keeps slightly more reliable SNPs (396-439 vs 394-437) and at
-  `thr = 0.2` surfaces the most category hits of any run (`n_category_modules =
-  7`), while the stand-out modules stay the same. Either value works.
-- **`similarity_threshold` — the choice now has three regimes, and `0.2` is the
-  sweet spot.** At `thr = 0` every pair is an edge, so `connectedness` is 1.000
-  for every module and no longer discriminates; weak edges keep modules small
-  and internally tight, and tissue-specific modules emerge that are absent
-  elsewhere (Adipose Subcutaneous FE = 40, Cells Cultured fibroblasts FE = 37,
-  Brain (Meta) FE = 13). But `thr = 0` also surfaces noisy viral/bacterial
-  pathway hits (Virion - Herpesvirus, Salmonella infection) on weak edges. At
-  `thr = 0.5` modules are fewer, denser, `connectedness` (0.82-0.84) becomes a
-  meaningful gate, and specific modules appear (dyslipidemia FE = 10,
-  Phototransduction, Arginine, Calmodulin) — but the tissue modules vanish
-  (`n_tissue_modules` 0-1). At `thr = 0.2` `connectedness` is informative again
-  (0.97-0.98) while reliable SNP counts peak (437-439 at `gamma = 2`), tissue
-  hits are retained (Thyroid FE = 37), strong category hits appear (Circulatory
-  FE = 8, Digestive FE = 5.2, Metabolic Disease FE = 7.8 with FDR = 0.00026),
-  and most viral/bacterial noise is gone — only the large background module
-  (128-171 SNPs) keeps Virion - Herpesvirus.
-- **HP phenotypes add signal mostly in mid-size, weakly-defined modules.** The
-  recurring hits are broad measurement terms (DHEA-sulphate measurement on
-  38-50-SNP modules, Reaction time, Sodium, White matter microstructure). The
-  biologically coherent ones are `Age at menarche` on the Reproductive Measures
-  module (`FE = 4.6`, gamma 3), `Insulinogenic index` / `Organic aciduria` on
-  gamma-3 thr-0 glycemic-like modules, and `Cerebral amyloid deposition
-  measurement` on a specific lipid module that also carries the Plasma
-  lipoprotein assembly pathway and a Metabolic Disease hit (see the notable
-  modules table). The DHEA-sulphate term's reappearance across runs and module
-  sizes is consistent with HP annotation bias — treat it as weak evidence.
-
-**Recommended defaults: `louvain_gamma = 2`, `min_snp_signals = 5`,
-`similarity_threshold = 0.2`** (run `g2 mss5 thr0.2`). It keeps the largest
-reliable SNP set (439) with an informative `connectedness` gate (0.966), the
-most category hits (7), a tissue hit (Thyroid FE = 37), and a specific lipid
-module, while shedding the viral/bacterial noise of `thr = 0` and keeping more
-signal than `thr = 0.5`. Use `thr = 0` only when tissue-level modules matter
-more than a working reliability gate; `thr = 0.5` remains the conservative,
-cleanest default.
-
-### Notable modules from the sweep
-
-Each module is described by its **significant trait-category, tissue, pathway
-(KEGG/Reactome), and phenotype (HP)** hits (method tags: `FDR`/`perm`/`vsmod`;
-`FE` with bootstrap `CI`). Repeated runs of the same module are given together.
-
-| Module | Significant trait category | Significant tissue | Significant pathway | Significant phenotype (HP) |
-|---|---|---|---|---|
-| **Dyslipidemia / metabolic** — `g2 mss3 thr0.5` mod 191 (3 SNPs); `g2 mss5 thr0.5` mod 190 (3 SNPs) | Metabolic Disease FE=10 (FDR=0.008, perm, vsmod); Circulatory FE=9.5 | — | — | — |
-| **Lipid / amyloid** — `g2 mss5 thr0.2` mod 504 (9 SNPs); `g3 mss3 thr0.2` mod 692 (6 SNPs); `g3 mss5 thr0.2` mod 695 (8 SNPs) | Metabolic Disease FE=7.8-8.9 (FDR ~ 0.0002, perm, vsmod) | — | Reactome Plasma lipoprotein assembly | HP: Cerebral amyloid deposition measurement |
-| **Adipose Subcutaneous** — `g2 mss3 thr0` mod 60 (3 SNPs); `g2 mss5 thr0` mod 61 (3 SNPs) | — | Adipose Subcutaneous FE=40, CI=[33,49] (FDR, perm, vsmod) | — | — |
-| **Thyroid** — `g2 mss3 thr0.2` / `g2 mss5 thr0.2` mod 470 (3 SNPs) | — | Thyroid FE=37 (FDR=0.027, perm, vsmod) | — | — |
-| **CNS / Brain (Meta)** — `g2 mss3 thr0` mod 164 (7 SNPs); `g2 mss5 thr0` mod 162 (7 SNPs); `g3 mss3 thr0` mod 414 (3 SNPs); `g3 mss3 thr0.2` mod 210 (3 SNPs); `g3 mss3 thr0.2` mod 663 (7 SNPs) | Anthropometric (background) | Brain (Meta) FE=13-27 (FDR, perm, vsmod) | — | — |
-| **Fibroblasts** — `g2 mss3 thr0` / `g2 mss5 thr0` mod 212 (3 SNPs) | — | Cells Cultured fibroblasts FE=37 (FDR, perm, vsmod) | — | — |
-| **Testis** — `g3 mss3 thr0` mod 330 (3 SNPs); `g3 mss5 thr0` mod 333 (3 SNPs) | — | Testis FE=29 (FDR, perm, vsmod) | — | — |
-| **Whole blood / immune** — `g3 mss5 thr0.5` mod 196 (3 SNPs) | — | Whole blood FE=8.9 (FDR=0.008, perm, vsmod) | — | — |
-| **Socioeconomic / education** — `g3 mss3 thr0.5` mod 39 (3 SNPs); `g3 mss5 thr0.5` mod 337 (4 SNPs) | Socioeconomic Measures FE=8.8-10 (FDR, perm, vsmod) | — | — | — |
-| **Reproductive** — `g3 mss3 thr0.5` / `g3 mss5 thr0.5` mod 24 (6 SNPs) | Reproductive Measures FE=4.6 (FDR=0.021, perm) | — | — | HP: Age at menarche |
-| **Whole-trait "general adiposity"** — `g2 mss3 thr0` mod 101 (70 SNPs); `g2 mss5 thr0` mod 104 (70 SNPs); `g2 mss3 thr0.5` mod 249 (158 SNPs); `g2 mss5 thr0.5` mod 244 (158 SNPs); `g2 mss5 thr0.2` mod 171 (128 SNPs) | Physiological Measures FE=1.2-1.4 (FDR ~ 0.002-0.005, perm, vsmod); Anthropometric Measures FE=1.3-1.9 | — | — | — |
-| **Phototransduction / melanogenesis** — `g2 mss3 thr0.5` mod 157 (9 SNPs); `g2 mss5 thr0.5` mod 218 (16 SNPs) | Anthropometric (background) | — | KEGG Phototransduction, Melanogenesis, Ras signaling (FDR ~ 0.013) | — |
-| **Arginine biosynthesis** — `g2 mss5 thr0.5` mod 189 (38 SNPs) | weak (FE 1.5-2.5) | — | KEGG Arginine biosynthesis (FDR=0.02) | — |
-| **Nervous-system / calcium** — `g2 mss5 thr0.5` mod 224 (15 SNPs); `g2 mss3 thr0.5` mod 228 (18 SNPs) | Nervous System Disorders (background) | — | Reactome Calmodulin induced events; G-protein mediated events, opioid signalling | — |
-| **Broad measurement phenotypes (caution)** — `g2 mss3 thr0.5` mod 67 (50 SNPs); `g2 mss5 thr0.5` mod 70 (48 SNPs); `g3 mss3 thr0.5` mod 75 (38 SNPs); `g3 mss5 thr0.5` mod 77 (41 SNPs); `g2 mss3 thr0` mod 421 / `g2 mss5 thr0` mod 422 (7 SNPs) | Anthropometric (background) | — | — | HP: DHEA-sulphate measurement (recurring); HP: Reaction time measurement |
-
-Notes on interpretation:
-
-- The **dyslipidemia module** (Metabolic Disease FE = 10, directionally pure
-  triglycerides/ApoB/HDL profile) is the most specific and reproducible
-  category module at `thr = 0.5`, appearing at `gamma = 2` for both `mss = 3`
-  and `mss = 5`.
-- The **lipid / amyloid module is the new standout at `thr = 0.2`**: Metabolic
-  Disease FE = 7.8-8.9 with FDR ~ 0.0002 and all three methods agreeing, plus a
-  Reactome Plasma lipoprotein assembly pathway and an HP Cerebral amyloid
-  deposition phenotype. It reproduces across `gamma = 2` and `gamma = 3` and
-  both `mss` values, making it the strongest multi-source hit in the sweep.
-- The **tissue-specific modules** (Adipose Subcutaneous FE = 40, fibroblasts
-  FE = 37, Brain (Meta), Testis, Thyroid FE = 37) appear at `thr = 0` and
-  `thr = 0.2`, where weak edges are retained. The Adipose Subcutaneous hit has
-  a tight CI ([33, 49]) and is confirmed by all three significance methods.
-  These are lost at `thr = 0.5`.
-- The **large "general adiposity" modules** (70-171 SNPs) are only enriched
-  for the ubiquitous Physiological/Anthropometric categories at small fold
-  changes (FE 1.2-1.9); they capture the shared BMI background rather than a
-  distinct program and are significant mainly because of their size.
-- **HP phenotype hits (new in this grid).** The biologically coherent ones land
-  on modules already supported by category/tissue/pathway signal: `Age at
-  menarche` on the Reproductive Measures module, `Cerebral amyloid deposition`
-  on the lipid module, and `Insulinogenic index` / `Organic aciduria` on
-  gamma-3 thr-0 glycemic-like modules. The rest are broad measurement terms
-  (DHEA-sulphate, Reaction time, White matter microstructure, Sodium,
-  Intraocular pressure, Temporal) that recur on different mid-size modules
-  across runs — consistent with HP annotation bias, so treat them as weak
-  evidence only.
-- **Likely noise to treat with caution:** the viral/bacterial pathway hits at
-  `thr = 0` (Virion - Herpesvirus on an 86-SNP module, Salmonella infection),
-  the residual Virion - Herpesvirus on the large background module at
-  `thr = 0.2`, `gamma = 3`'s tiny 3-SNP pathway modules (Long-term potentiation,
-  Hormone signaling), and sparse-count artifacts such as Cell Trait FE = 120 at
-  `g3 mss5 thr0.2`. Marginal permutation-only calls (e.g. Whole blood FE = 4.1
-  at `g2 mss5 thr0.5`) can flip between renders and should not be over-read.
-```
+These improvements over the earlier grid sweep: the simulation now plants
+overlapping modules with correlated shared-trait effects, molecular/QTL-like
+sparsity, per-cell noise, and SNP sub-structure; the validation battery is
+applied and scored per program; and the null condition directly tests the
+false-discovery behaviour of the EBMF + validation pipeline.

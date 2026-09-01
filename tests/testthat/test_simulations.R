@@ -13,7 +13,7 @@ test_that("simulate_trait returns a valid trait object with ground truth", {
     n_coloc_groups = 60,
     K = 3,
     module_sizes = c(10, 10, 10),
-    drivers_per_module = 4,
+    n_traits_per_module = 4,
     n_background_traits = 15,
     seed = 42
   )
@@ -81,7 +81,7 @@ test_that("simulation evaluation accepts overlapping EBMF memberships", {
     n_coloc_groups = 60,
     K = 2,
     module_sizes = c(20, 20),
-    drivers_per_module = 4,
+    n_traits_per_module = 4,
     p_structural_zero = 0.1,
     seed = 13
   )
@@ -115,21 +115,90 @@ test_that("simulation evaluation accepts overlapping EBMF memberships", {
   expect_lte(ev$coverage, 1)
 })
 
-test_that("overlap creates multi-module SNPs", {
+test_that("trait_overlap shares driver traits across modules without SNP overlap", {
   sim <- simulate_trait(
-    n_coloc_groups = 120,
+    n_coloc_groups = 150,
     K = 3,
-    overlap = 10,
+    module_sizes = c(30, 40, 50),
+    n_traits_per_module = 20,
+    trait_overlap = 0.5,
+    trait_effect_corr = 0.8,
     seed = 3
   )
-  expect_length(sim$ground_truth$multi_module_snps, 20)
-  sim2 <- simulate_trait(
-    n_coloc_groups = 200,
-    K = 3,
-    overlap = "strong",
-    seed = 3
+  gt <- sim$ground_truth
+  expect_length(gt$multi_module_snps, 0)
+  expect_equal(sum(gt$module_of_snp > 0), sum(lengths(gt$module_memberships)))
+  shared <- Reduce(intersect, gt$driver_traits)
+  expect_length(shared, 10L)
+  expect_equal(gt$driver_overlap[1, 2], 0.5)
+  expect_equal(gt$driver_overlap[1, 1], 1)
+  expect_equal(
+    sim$ground_truth$parameters$n_driver_rows,
+    10L + 3L * 10L
   )
-  expect_gt(length(sim2$ground_truth$multi_module_snps), 0)
+})
+
+test_that("shared trait effects are correlated but not identical across modules", {
+  sim <- simulate_trait(
+    n_coloc_groups = 150,
+    K = 2,
+    module_sizes = c(50, 50),
+    n_traits_per_module = 20,
+    trait_overlap = 0.75,
+    trait_effect_corr = 0.9,
+    p_structural_zero = 0,
+    p_spurious = 0,
+    noise_sd = 0,
+    seed = 4
+  )
+  gt <- sim$ground_truth
+  cg <- sim$trait_object$coloc_groups
+  m1 <- names(gt$module_of_snp)[gt$module_of_snp == 1]
+  m2 <- names(gt$module_of_snp)[gt$module_of_snp == 2]
+  shared <- Reduce(intersect, gt$driver_traits)
+  expect_length(shared, 15L)
+  effects <- vapply(shared, function(tr) {
+    c(
+      mean(cg$beta[cg$trait_name == tr & cg$variant_id %in% m1]),
+      mean(cg$beta[cg$trait_name == tr & cg$variant_id %in% m2])
+    )
+  }, numeric(2))
+  expect_gt(stats::cor(effects[1, ], effects[2, ]), 0.5)
+  expect_gt(sum(effects[1, ] != effects[2, ]), 0)
+})
+
+test_that("overlap = 'nested' nests modules inside the parent with correlated effects", {
+  sim <- simulate_trait(
+    n_coloc_groups = 400,
+    K = 4,
+    module_sizes = c(300, 160, 80, 40),
+    overlap = "nested",
+    n_traits_per_module = 10,
+    noise_sd = 0,
+    p_structural_zero = 0,
+    p_spurious = 0,
+    seed = 6
+  )
+  gt <- sim$ground_truth
+  ms <- gt$module_memberships
+  expect_true(all(ms[[2]] %in% ms[[1]]))
+  expect_true(all(ms[[3]] %in% ms[[1]]))
+  expect_true(all(ms[[4]] %in% ms[[1]]))
+  expect_gt(length(gt$multi_module_snps), 0)
+  expect_equal(sim$ground_truth$parameters$overlap, "nested")
+  expect_equal(sim$ground_truth$parameters$nested_effect_corr, 0.8)
+  cg <- sim$trait_object$coloc_groups
+  shared <- intersect(ms[[1]], ms[[2]])
+  d1 <- gt$driver_traits[[1]][1]
+  d2 <- gt$driver_traits[[2]][1]
+  b1 <- cg$beta[cg$trait_name == d1 & cg$variant_id %in% shared]
+  b2 <- cg$beta[cg$trait_name == d2 & cg$variant_id %in% shared]
+  expect_gt(stats::cor(b1, b2), 0.5)
+  expect_error(
+    simulate_trait(n_coloc_groups = 400, K = 3, module_sizes = c(100, 200, 300),
+                   overlap = "nested", seed = 7),
+    "largest"
+  )
 })
 
 test_that("module_annotations are planted on driver traits", {
@@ -137,7 +206,7 @@ test_that("module_annotations are planted on driver traits", {
     n_coloc_groups = 60,
     K = 2,
     module_sizes = c(12, 12),
-    drivers_per_module = 4,
+    n_traits_per_module = 4,
     annotation_noise = 0,
     module_annotations = list(
       list(tissues = "Liver", genes = "HFE"),
@@ -159,7 +228,7 @@ test_that("sign_pattern flipped produces anti-correlated driver profiles", {
     n_coloc_groups = 40,
     K = 1,
     module_sizes = 20,
-    drivers_per_module = 6,
+    n_traits_per_module = 6,
     sign_pattern = "flipped",
     p_structural_zero = 0,
     effect_size = 5,
@@ -177,7 +246,7 @@ test_that("flipped signs restart for each module", {
     n_coloc_groups = 60,
     K = 2,
     module_sizes = c(20, 20),
-    drivers_per_module = 4,
+    n_traits_per_module = 4,
     sign_pattern = "flipped",
     p_structural_zero = 0,
     p_spurious = 0,
@@ -198,7 +267,7 @@ test_that("traits_per_snp preserves target-trait observations", {
     n_coloc_groups = 20,
     K = 1,
     module_sizes = 10,
-    drivers_per_module = 2,
+    n_traits_per_module = 2,
     p_structural_zero = 0,
     p_spurious = 0,
     p_active_background = 0,
@@ -228,7 +297,7 @@ test_that("n_traits controls the total number of simulated traits", {
     n_coloc_groups = 60,
     K = 2,
     module_sizes = c(15, 15),
-    drivers_per_module = 3,
+    n_traits_per_module = 3,
     n_traits = 20,
     seed = 33
   )
@@ -237,18 +306,18 @@ test_that("n_traits controls the total number of simulated traits", {
   expect_equal(p$n_background_traits, 13L)
   expect_equal(length(unique(sim$trait_object$coloc_groups$trait_id)), 20)
   expect_error(
-    simulate_trait(n_coloc_groups = 60, K = 2, drivers_per_module = 3,
+    simulate_trait(n_coloc_groups = 60, K = 2, n_traits_per_module = 3,
                    n_traits = 5),
     "n_traits"
   )
 })
 
-test_that("drivers_per_module can vary per module", {
+test_that("n_traits_per_module can vary per module", {
   sim <- simulate_trait(
     n_coloc_groups = 90,
     K = 3,
     module_sizes = c(10, 20, 30),
-    drivers_per_module = c(2, 5, 8),
+    n_traits_per_module = c(2, 5, 8),
     seed = 44
   )
   counts <- lengths(sim$ground_truth$driver_traits)
@@ -259,7 +328,7 @@ test_that("drivers_per_module can vary per module", {
   )
   expect_error(
     simulate_trait(n_coloc_groups = 60, K = 2, module_sizes = c(10, 10),
-                   drivers_per_module = c(2, 4), snp_driver_groups = 3),
+                   n_traits_per_module = c(2, 4), snp_driver_groups = 3),
     "snp_driver_groups"
   )
 })
@@ -269,7 +338,7 @@ test_that("trait_subset = 'phenotypic' drops molecular trait rows", {
     n_coloc_groups = 100,
     K = 2,
     module_sizes = c(20, 20),
-    drivers_per_module = 4,
+    n_traits_per_module = 4,
     p_molecular = 0.5,
     p_molecular_drivers = 0.2,
     p_active_molecular = 0.05,
@@ -299,7 +368,7 @@ test_that("p_molecular_drivers caps the molecular fraction of module drivers", {
     n_coloc_groups = 90,
     K = 3,
     module_sizes = c(10, 20, 30),
-    drivers_per_module = c(2, 5, 8),
+    n_traits_per_module = c(2, 5, 8),
     p_molecular = 1,
     p_molecular_drivers = 0.2,
     seed = 45
@@ -358,7 +427,7 @@ test_that("molecular drivers are observed at a fraction of module SNPs", {
     n_coloc_groups = 200,
     K = 2,
     module_sizes = c(50, 50),
-    drivers_per_module = 4,
+    n_traits_per_module = 4,
     p_molecular = 1,
     p_active_molecular = 0.05,
     p_structural_zero = 0,
@@ -375,7 +444,7 @@ test_that("planted module genes force driver traits molecular", {
     n_coloc_groups = 40,
     K = 1,
     module_sizes = 15,
-    drivers_per_module = 4,
+    n_traits_per_module = 4,
     module_annotations = list(list(genes = "HFE")),
     annotation_noise = 0,
     p_molecular = 0,

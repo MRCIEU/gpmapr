@@ -7,29 +7,36 @@
 #' `evaluate_univariate_simulation()`.
 #'
 #' Structure: `n_coloc_groups` SNPs (one coloc group / locus each) define the
-#' total number of SNPs (trait x SNP matrix columns). `K` contiguous module
-#' regions are laid out left-to-right; adjacent regions share `overlap` SNPs
-#' (shared SNPs have driver traits from both modules). SNPs not covered by any
-#' module are unstructured background: sparse random pleiotropic profiles with
-#' no shared latent structure.
+#' total number of SNPs (trait x SNP matrix columns). `K` module regions are
+#' laid out left-to-right as **disjoint** (non-overlapping) SNP sets by default,
+#' or, with `overlap = "nested"`, as a parent module (module 1) containing every
+#' other module's SNPs as correlated subsets. SNPs not covered by any module
+#' are unstructured background: sparse random pleiotropic profiles with no
+#' shared latent structure.
 #'
-#' Effects: each module has `drivers_per_module` driver traits with
-#' `effect_size`-scale effects on their module's SNPs. Driver support is thinned
-#' by `p_structural_zero` (structural zeros inside true support). Cells outside
+#' Effects: each module has `n_traits_per_module` driver traits with
+#' `effect_size`-scale effects on their module's SNPs. A fraction
+#' `trait_overlap` of each module's driver traits is **shared with the other
+#' modules**: a shared trait drives every module that draws it, with per-module
+#' effects that are correlated across modules (`trait_effect_corr`) but not
+#' identical. This creates modules with distinct SNP sets but overlapping,
+#' correlated trait signatures. Driver support is thinned by
+#' `p_structural_zero` (structural zeros inside true support). Cells outside
 #' true support receive small noise effects with probability `p_spurious`.
 #' Background traits activate on each SNP independently with probability
 #' `p_active_background`, giving realistic marginal sparsity without structure.
 #'
 #' Trait composition: the total number of traits (rows) is
-#' `1` (target) + `sum(drivers_per_module)` (drivers) + `n_background_traits`,
-#' or is fixed directly via `n_traits`. A fraction `p_molecular` of the
-#' non-target traits is designated molecular: these carry a gene annotation
-#' (`gene_id` non-missing) and are observed much more sparsely, with per-SNP
-#' probability `p_active_molecular` instead of `p_active_background`
-#' (background) or `1 - p_structural_zero` (within-module drivers). This
-#' emulates eQTL-like traits whose signal is confined to a small subset of
-#' SNPs. The remaining traits are phenotype traits (no gene annotation) at
-#' normal density.
+#' `1` (target) + `n_driver_rows` (unique driver traits; fewer than
+#' `sum(n_traits_per_module)` when `trait_overlap > 0` because shared traits
+#' are counted once) + `n_background_traits`, or is fixed directly via
+#' `n_traits`. A fraction `p_molecular` of the non-target traits is designated
+#' molecular: these carry a gene annotation (`gene_id` non-missing) and are
+#' observed much more sparsely, with per-SNP probability `p_active_molecular`
+#' instead of `p_active_background` (background) or `1 - p_structural_zero`
+#' (within-module drivers). This emulates eQTL-like traits whose signal is
+#' confined to a small subset of SNPs. The remaining traits are phenotype
+#' traits (no gene annotation) at normal density.
 #'
 #' Annotations: `module_annotations` optionally plants genes / tissues /
 #' trait categories on each module's driver traits so enrichment machinery can
@@ -40,32 +47,46 @@
 #'   the length of `module_sizes`, or set to `0` when `module_sizes` is `NULL`.
 #'   `K = 0` gives the pure null (all SNPs unstructured).
 #' @param module_sizes Optional integer vector of length `K`: SNPs per module
-#'   region (shared SNPs counted once per adjacent pair). Defaults to an equal
+#'   region (disjoint regions, laid out left-to-right). Defaults to an equal
 #'   split of the non-background SNPs.
 #' @param n_background_snps Minimum number of trailing SNPs reserved as
 #'   unstructured background.
-#' @param overlap Either `"disjoint"` (no shared SNPs), `"moderate"`
-#'   (~50 shared SNPs between adjacent modules), `"strong"` (~half of the
-#'   smaller adjacent module shared), or an explicit non-negative integer
-#'   applied to every adjacent pair. Overlap is capped at half the smaller
-#'   module minus one.
-#' @param driver_sharing Fraction (0–1) of each module's drivers whose support
-#'   extends into the previous module, so adjacent modules share some driver
-#'   traits. Zero (default) gives every module an exclusive driver set, which
-#'   makes same-signature modules statistically exchangeable in trait space
-#'   and lets factor models merge them without loss. Positive sharing creates
-#'   chain-like overlap structure that penalises merging.
-#' @param drivers_per_module Number of driver traits per module. Either a single
+#' @param overlap How the planted modules are arranged in SNP space:
+#'   `"disjoint"` (default) gives every module its own contiguous, non-
+#'   overlapping SNP set; `"nested"` makes the largest module (module 1) the
+#'   parent and samples every other module's SNPs as a subset of it, so the
+#'   smaller modules are contained inside the parent and may overlap one
+#'   another.
+#' @param nested_effect_corr Correlation between a nested module's effects and
+#'   the parent module's effects at SNPs shared by both, used when
+#'   `overlap = "nested"`. Effects are generated as
+#'   `z_child = corr*z_parent + sqrt(1-corr^2)*N(0,1)` per shared SNP, so a
+#'   nested module is a correlated (not arbitrary) subset of the parent.
+#'   Default 0.8.
+#' @param n_traits_per_module Number of driver traits per module. Either a single
 #'   positive integer applied to every module, or an integer vector of length
-#'   `K` giving one value per module (so modules can carry different numbers of
-#'   drivers). Total drivers = `sum(drivers_per_module)`.
+#'   `K` giving one value per module. Total driver positions =
+#'   `sum(n_traits_per_module)`; the number of unique driver trait rows is
+#'   smaller when `trait_overlap > 0`.
+#' @param trait_overlap Fraction (0–1) of each module's driver traits that are
+#'   shared with the other modules. `0` (default) gives every module an
+#'   exclusive driver set (independent trait signatures); `0.5` shares half the
+#'   drivers; `0.75` gives strongly overlapping signatures; `0.9` almost
+#'   identical signatures. Shared traits drive every module that draws them.
+#' @param trait_effect_corr Correlation between the effect sizes of a shared
+#'   trait across the modules it drives. Effects are generated as
+#'   `z1 ~ N(0,1)` and `z2 = corr*z1 + sqrt(1-corr^2)*N(0,1)`, so shared
+#'   effects are correlated but identical only when `corr = 1`. Default 0.8.
+#' @param driver_sharing Fraction (0–1) of each module's drivers whose support
+#'   extends into the previous module's SNP set (a SNP-space mechanism, kept
+#'   separate from `trait_overlap`). Zero (default) confines every driver's
+#'   support to its own module's SNPs.
 #' @param n_background_traits Number of unstructured background traits.
 #' @param n_traits Optional total number of traits (rows) in the trait x SNP
 #'   matrix, including the target trait. When provided,
 #'   `n_background_traits` is derived as
-#'   `n_traits - 1 - sum(drivers_per_module)` and must be non-negative. When
-#'   `NULL` (default), `n_background_traits` is used directly. Total traits =
-#'   1 + sum(drivers_per_module) + n_background_traits.
+#'   `n_traits - 1 - n_driver_rows` and must be non-negative. When
+#'   `NULL` (default), `n_background_traits` is used directly.
 #' @param effect_size Mean absolute z-score of driver effects inside their
 #'   module. Either a single number applied to every module, or a numeric
 #'   vector of length `K` giving one value per module. Varying effect sizes
@@ -138,11 +159,14 @@
 #'     \item trait_object: simulated trait result usable by
 #'       `run_univariate_clustering()`
 #'     \item ground_truth: list with `module_of_snp` (named vector, `0` =
-#'       background; shared SNPs take their earlier module), `multi_module_snps`
-#'       (shared-SNP names), `module_memberships` (SNP index list, shared SNPs
-#'       appear in both), `driver_traits` (per-module trait names),
-#'       `molecular_traits` (trait names designated molecular), `planted_annotations`,
-#'       `seed`, and `parameters`
+#'       background; each SNP is labelled by its most specific module), 
+#'       `multi_module_snps` (SNP names shared by more than one module; empty
+#'       for `overlap = "disjoint"`), `module_memberships` (SNP index list),
+#'       `driver_traits` (per-module trait names, including shared traits),
+#'       `driver_overlap` (K x K matrix of the fraction of each module's driver
+#'       traits shared with every other module), `molecular_traits` (trait
+#'       names designated molecular), `planted_annotations`, `seed`, and
+#'       `parameters`
 #'   }
 #' @export
 simulate_trait <- function(n_coloc_groups = 100,
@@ -150,7 +174,10 @@ simulate_trait <- function(n_coloc_groups = 100,
                            module_sizes = NULL,
                            n_background_snps = 0,
                            overlap = "disjoint",
-                           drivers_per_module = NULL,
+                           nested_effect_corr = 0.8,
+                           n_traits_per_module = NULL,
+                           trait_overlap = 0,
+                           trait_effect_corr = 0.8,
                            driver_sharing = 0,
                            n_background_traits = 40L,
                            n_traits = NULL,
@@ -171,6 +198,7 @@ simulate_trait <- function(n_coloc_groups = 100,
                            snp_driver_groups = 1,
                            seed = NULL) {
   sign_pattern <- match.arg(sign_pattern)
+  overlap <- match.arg(overlap, c("disjoint", "nested"))
 
   if (!is.numeric(n_coloc_groups) || length(n_coloc_groups) != 1 ||
         n_coloc_groups < 2 || n_coloc_groups != floor(n_coloc_groups)) {
@@ -187,30 +215,43 @@ simulate_trait <- function(n_coloc_groups = 100,
   K <- as.integer(K)
 
   if (K == 0) {
-    drivers_per_module <- integer(0)
-  } else if (is.null(drivers_per_module)) {
-    drivers_per_module <- rep(10L, K)
+    n_traits_per_module <- integer(0)
+  } else if (is.null(n_traits_per_module)) {
+    n_traits_per_module <- rep(10L, K)
   } else {
-    if (length(drivers_per_module) == 1L) {
-      drivers_per_module <- rep(drivers_per_module, K)
+    if (length(n_traits_per_module) == 1L) {
+      n_traits_per_module <- rep(n_traits_per_module, K)
     }
-    if (length(drivers_per_module) != K) {
-      stop("drivers_per_module must have length 1 or ", K)
+    if (length(n_traits_per_module) != K) {
+      stop("n_traits_per_module must have length 1 or ", K)
     }
-    if (any(drivers_per_module < 1) ||
-        any(drivers_per_module != floor(drivers_per_module))) {
-      stop("drivers_per_module must be integers >= 1 (single value or one per module)")
+    if (any(n_traits_per_module < 1) ||
+        any(n_traits_per_module != floor(n_traits_per_module))) {
+      stop("n_traits_per_module must be integers >= 1 (single value or one per module)")
     }
-    drivers_per_module <- as.integer(drivers_per_module)
+    n_traits_per_module <- as.integer(n_traits_per_module)
   }
-  n_drivers <- if (K == 0) 0L else sum(drivers_per_module)
+  if (!is.numeric(trait_overlap) || length(trait_overlap) != 1L ||
+      !is.finite(trait_overlap) || trait_overlap < 0 || trait_overlap > 1) {
+    stop("trait_overlap must be a number between 0 and 1")
+  }
+  if (!is.numeric(trait_effect_corr) || length(trait_effect_corr) != 1L ||
+      !is.finite(trait_effect_corr) ||
+      trait_effect_corr < -1 || trait_effect_corr > 1) {
+    stop("trait_effect_corr must be a number between -1 and 1")
+  }
+  n_shared <- if (K > 0) as.integer(round(n_traits_per_module * trait_overlap)) else integer(0)
+  n_specific <- if (K > 0) n_traits_per_module - n_shared else integer(0)
+  n_shared_pool <- if (K > 0) max(n_shared) else 0L
+  n_driver_rows <- if (K > 0) n_shared_pool + sum(n_specific) else 0L
+
   if (!is.null(n_traits)) {
     if (!is.numeric(n_traits) || length(n_traits) != 1L || !is.finite(n_traits) ||
-        n_traits < 1L + n_drivers || n_traits != floor(n_traits)) {
-      stop("n_traits must be a single integer >= 1 + sum(drivers_per_module) (",
-           1L + n_drivers, ")")
+        n_traits < 1L + n_driver_rows || n_traits != floor(n_traits)) {
+      stop("n_traits must be a single integer >= 1 + n_driver_rows (",
+           1L + n_driver_rows, ")")
     }
-    n_background_traits <- as.integer(n_traits) - 1L - n_drivers
+    n_background_traits <- as.integer(n_traits) - 1L - n_driver_rows
   }
   if (!is.numeric(n_background_traits) || length(n_background_traits) != 1L ||
       !is.finite(n_background_traits) || n_background_traits < 0 ||
@@ -224,6 +265,11 @@ simulate_trait <- function(n_coloc_groups = 100,
     stop("n_background_snps must be a non-negative integer")
   }
   n_background_snps <- as.integer(n_background_snps)
+  if (!is.numeric(nested_effect_corr) || length(nested_effect_corr) != 1L ||
+      !is.finite(nested_effect_corr) ||
+      nested_effect_corr < -1 || nested_effect_corr > 1) {
+    stop("nested_effect_corr must be a number between -1 and 1")
+  }
   if (!is.numeric(driver_sharing) || length(driver_sharing) != 1L ||
       !is.finite(driver_sharing) || driver_sharing < 0 || driver_sharing > 1) {
     stop("driver_sharing must be a number between 0 and 1")
@@ -231,8 +277,8 @@ simulate_trait <- function(n_coloc_groups = 100,
   if (!is.numeric(snp_driver_groups) || length(snp_driver_groups) != 1L ||
       !is.finite(snp_driver_groups) || snp_driver_groups < 1 ||
       snp_driver_groups != floor(snp_driver_groups) ||
-      any(snp_driver_groups > drivers_per_module)) {
-    stop("snp_driver_groups must be an integer between 1 and drivers_per_module")
+      any(snp_driver_groups > n_traits_per_module)) {
+    stop("snp_driver_groups must be an integer between 1 and n_traits_per_module")
   }
   snp_driver_groups <- as.integer(snp_driver_groups)
   if (!is.numeric(noise_sd) || length(noise_sd) != 1L ||
@@ -276,7 +322,6 @@ simulate_trait <- function(n_coloc_groups = 100,
     )
   }
 
-  overlap_n <- .resolve_overlap(overlap, K)
   if (!is.null(seed)) {
     if (!is.numeric(seed) || length(seed) != 1) {
       stop("seed must be a single number")
@@ -292,33 +337,59 @@ simulate_trait <- function(n_coloc_groups = 100,
     K = K,
     module_sizes = module_sizes,
     n_background_snps = n_background_snps,
-    overlap_n = overlap_n
+    overlap = overlap
   )
 
   module_of <- rep(0L, n_snps)
-  for (m in seq_len(K)) {
-    unfilled <- module_of[geometry$regions[[m]]] == 0L
-    module_of[geometry$regions[[m]][unfilled]] <- m
+  fill_order <- order(
+    vapply(geometry$memberships, length, integer(1)),
+    seq_len(K)
+  )
+  for (m in fill_order) {
+    unfilled <- module_of[geometry$memberships[[m]]] == 0L
+    module_of[geometry$memberships[[m]][unfilled]] <- m
+  }
+
+  snp_z <- NULL
+  if (identical(overlap, "nested") && K > 0) {
+    z_parent <- rep(NA_real_, n_snps)
+    parent_idx <- geometry$memberships[[1]]
+    z_parent[parent_idx] <- stats::rnorm(length(parent_idx))
+    snp_z <- vector("list", K)
+    snp_z[[1]] <- z_parent
+    for (m in 2:K) {
+      idx <- geometry$memberships[[m]]
+      snp_z[[m]] <- rep(NA_real_, n_snps)
+      snp_z[[m]][idx] <- nested_effect_corr * z_parent[idx] +
+        sqrt(1 - nested_effect_corr^2) * stats::rnorm(length(idx))
+    }
   }
 
   n_bg_traits <- n_background_traits
-  trait_ids <- 1:(1 + n_drivers + n_bg_traits)
+  trait_ids <- 1:(1 + n_driver_rows + n_bg_traits)
   target_tid <- 1L
-  driver_tids <- if (n_drivers > 0) 2:(1 + n_drivers) else integer(0)
-  bg_tids <- if (n_bg_traits > 0) seq_len(n_bg_traits) + 1L + n_drivers else integer(0)
-  driver_module <- if (n_drivers > 0) {
-    rep(seq_len(K), times = drivers_per_module)
+  driver_tids <- if (n_driver_rows > 0) 2:(1 + n_driver_rows) else integer(0)
+  bg_tids <- if (n_bg_traits > 0) seq_len(n_bg_traits) + 1L + n_driver_rows else integer(0)
+
+  roster <- .build_trait_roster(K, n_shared, n_specific)
+  driver_module <- roster$module
+  trait_first_module <- if (n_driver_rows > 0) {
+    vapply(seq_len(n_driver_rows), function(r) {
+      min(roster$module[roster$trait_row == r])
+    }, integer(1))
   } else {
     integer(0)
   }
+
   is_molecular <- .assign_molecular_traits(
-    n_drivers = n_drivers,
+    n_driver_rows = n_driver_rows,
     n_bg_traits = n_bg_traits,
     p_molecular = p_molecular,
     p_molecular_drivers = p_molecular_drivers,
-    driver_module = driver_module,
-    drivers_per_module = drivers_per_module,
-    module_annotations = module_annotations
+    n_specific = n_specific,
+    roster = roster,
+    module_annotations = module_annotations,
+    K = K
   )
 
   M <- matrix(NA_real_, nrow = length(trait_ids), ncol = n_snps,
@@ -333,15 +404,33 @@ simulate_trait <- function(n_coloc_groups = 100,
   M[as.character(target_tid), ] <- target_signal +
     stats::rnorm(n_snps, 0, noise_sd)
 
-  driver_signs <- switch(sign_pattern,
-    coherent = rep(1, n_drivers),
-    flipped = unlist(lapply(seq_len(K), function(m) {
-      ifelse(seq_len(drivers_per_module[m]) %% 2 == 1, 1, -1)
-    })),
-    random = sample(c(-1, 1), n_drivers, replace = TRUE)
+  trait_signs <- switch(sign_pattern,
+    coherent = rep(1L, n_driver_rows),
+    flipped = vapply(seq_len(n_driver_rows), function(r) {
+      slot <- min(roster$slot[roster$trait_row == r])
+      ifelse(slot %% 2 == 1, 1L, -1L)
+    }, integer(1)),
+    random = sample(c(-1L, 1L), n_driver_rows, replace = TRUE)
   )
-  if (n_drivers > 0) {
-    n_shared_per_module <- floor(drivers_per_module * driver_sharing)
+
+  roster$effect_mult <- trait_signs[roster$trait_row]
+  if (n_driver_rows > 0 && any(roster$is_shared)) {
+    for (r in seq_len(n_driver_rows)) {
+      pos <- which(roster$trait_row == r)
+      if (length(pos) > 1) {
+        z <- numeric(length(pos))
+        z[1] <- stats::rnorm(1)
+        for (k in 2:length(pos)) {
+          z[k] <- trait_effect_corr * z[k - 1] +
+            sqrt(1 - trait_effect_corr^2) * stats::rnorm(1)
+        }
+        roster$effect_mult[pos] <- trait_signs[r] * z
+      }
+    }
+  }
+
+  if (n_driver_rows > 0) {
+    n_shared_per_module <- floor(n_traits_per_module * driver_sharing)
     n_groups <- max(1L, as.integer(snp_driver_groups))
     snp_groups <- vector("list", K)
     if (n_groups > 1) {
@@ -351,35 +440,54 @@ simulate_trait <- function(n_coloc_groups = 100,
         snp_groups[[m]] <- stats::setNames(g, colnames(M)[idx])
       }
     }
-    drivers_per_group <- drivers_per_module / n_groups
-    for (d in seq_len(n_drivers)) {
-      m <- driver_module[d]
-      row <- as.character(driver_tids[d])
-      in_module <- geometry$memberships[[m]]
-      slot <- (d - 1) %% drivers_per_module[m]
-      if (m > 1 && slot < n_shared_per_module[m]) {
-        in_module <- union(in_module, geometry$memberships[[m - 1]])
-      }
-      if (n_groups > 1) {
-        driver_group <- min(n_groups, floor(slot / drivers_per_group[m]) + 1)
-        grp <- snp_groups[[m]][as.character(colnames(M)[in_module])]
-        keep <- !is.na(grp) & grp == driver_group
-        in_module <- in_module[keep]
-        if (length(in_module) == 0) {
-          in_module <- geometry$memberships[[m]][1]
+    drivers_per_group <- n_traits_per_module / n_groups
+    for (r in seq_len(n_driver_rows)) {
+      row <- as.character(driver_tids[r])
+      pos <- which(roster$trait_row == r)
+      filled <- integer(0)
+      for (k in seq_along(pos)) {
+        m <- roster$module[pos[k]]
+        slot0 <- roster$slot[pos[k]] - 1L
+        in_module <- geometry$memberships[[m]]
+        if (m > 1 && slot0 < n_shared_per_module[m]) {
+          in_module <- union(in_module, geometry$memberships[[m - 1]])
+        }
+        if (n_groups > 1) {
+          driver_group <- min(n_groups, floor(slot0 / drivers_per_group[m]) + 1)
+          grp <- snp_groups[[m]][as.character(colnames(M)[in_module])]
+          keep <- !is.na(grp) & grp == driver_group
+          in_module <- in_module[keep]
+          if (length(in_module) == 0) {
+            in_module <- geometry$memberships[[m]][1]
+          }
+        }
+        in_module <- setdiff(in_module, filled)
+        if (length(in_module) > 0) {
+          fill_prob <- if (is_molecular[r]) {
+            p_active_molecular
+          } else {
+            1 - p_structural_zero[m]
+          }
+          effect_z <- if (!is.null(snp_z)) {
+            zv <- z_parent[in_module]
+            if (m > 1) {
+              in_mod <- in_module %in% geometry$memberships[[m]]
+              zv[in_mod] <- snp_z[[m]][in_module[in_mod]]
+            }
+            zv
+          } else {
+            rep(1, length(in_module))
+          }
+          M[row, in_module] <- ifelse(
+            stats::runif(length(in_module)) < fill_prob,
+            effect_size[m] * roster$effect_mult[pos[k]] * effect_z +
+              stats::rnorm(length(in_module), 0, noise_sd),
+            NA_real_
+          )
+          filled <- c(filled, in_module)
         }
       }
-      M[row, in_module] <- ifelse(
-        stats::runif(length(in_module)) < if (is_molecular[d]) {
-          p_active_molecular
-        } else {
-          1 - p_structural_zero[m]
-        },
-        effect_size[m] * driver_signs[d] +
-          stats::rnorm(length(in_module), 0, noise_sd),
-        NA_real_
-      )
-      off_module <- setdiff(seq_len(n_snps), in_module)
+      off_module <- setdiff(seq_len(n_snps), filled)
       spur <- stats::runif(length(off_module)) < p_spurious
       vals <- rep(NA_real_, length(off_module))
       vals[spur] <- stats::rnorm(sum(spur), 0, noise_sd)
@@ -389,7 +497,7 @@ simulate_trait <- function(n_coloc_groups = 100,
   if (n_bg_traits > 0) {
     for (t in seq_along(bg_tids)) {
       row <- as.character(bg_tids[t])
-      act_prob <- if (is_molecular[n_drivers + t]) {
+      act_prob <- if (is_molecular[n_driver_rows + t]) {
         p_active_molecular
       } else {
         p_active_background
@@ -408,7 +516,7 @@ simulate_trait <- function(n_coloc_groups = 100,
     trait_ids = trait_ids,
     target_tid = target_tid,
     driver_tids = driver_tids,
-    driver_module = driver_module,
+    trait_first_module = trait_first_module,
     bg_tids = bg_tids,
     module_annotations = module_annotations,
     annotation_noise = annotation_noise,
@@ -438,16 +546,19 @@ simulate_trait <- function(n_coloc_groups = 100,
   multi_snps <- names(which(table(unlist(memberships_named)) > 1))
 
   driver_names <- lapply(seq_len(K), function(m) {
-    return(annotations$trait_name[driver_tids[driver_module == m]])
+    rows <- unique(roster$trait_row[roster$module == m])
+    return(annotations$trait_name[driver_tids[rows]])
   })
 
   molecular_trait_ids <- c(
-    driver_tids[is_molecular[seq_len(n_drivers)]],
-    bg_tids[is_molecular[n_drivers + seq_len(n_bg_traits)]]
+    driver_tids[is_molecular[seq_len(n_driver_rows)]],
+    bg_tids[is_molecular[n_driver_rows + seq_len(n_bg_traits)]]
   )
   molecular_traits <- annotations$trait_name[
     annotations$trait_id %in% molecular_trait_ids
   ]
+
+  driver_overlap <- .driver_overlap_matrix(roster, K)
 
   return(list(
     trait_object = trait_object,
@@ -456,6 +567,7 @@ simulate_trait <- function(n_coloc_groups = 100,
       multi_module_snps = multi_snps,
       module_memberships = memberships_named,
       driver_traits = stats::setNames(driver_names, sprintf("module_%d", seq_len(K))),
+      driver_overlap = driver_overlap,
       molecular_traits = molecular_traits,
       planted_annotations = module_annotations,
       seed = seed,
@@ -463,13 +575,19 @@ simulate_trait <- function(n_coloc_groups = 100,
         n_coloc_groups = n_snps,
         K = K,
         module_sizes = geometry$sizes,
-        overlap_n = geometry$overlaps,
         n_background_snps_reserved = n_background_snps,
         n_background_snps_actual = sum(module_of == 0L),
-        drivers_per_module = drivers_per_module,
+        overlap = overlap,
+        nested_effect_corr = nested_effect_corr,
+        n_traits_per_module = n_traits_per_module,
+        trait_overlap = trait_overlap,
+        trait_effect_corr = trait_effect_corr,
+        n_shared = n_shared,
+        n_specific = n_specific,
+        n_driver_rows = n_driver_rows,
         driver_sharing = driver_sharing,
         n_background_traits = n_bg_traits,
-        n_traits = as.integer(1L + n_drivers + n_bg_traits),
+        n_traits = as.integer(1L + n_driver_rows + n_bg_traits),
         effect_size = effect_size,
         noise_sd = noise_sd,
         sign_pattern = sign_pattern,
@@ -504,62 +622,92 @@ simulate_trait <- function(n_coloc_groups = 100,
 }
 
 
-.resolve_overlap <- function(overlap, K) {
-  if (K <= 1) {
-    return(rep(0L, max(K - 1, 0)))
+.build_trait_roster <- function(K, n_shared, n_specific) {
+  if (K == 0) {
+    return(data.frame(
+      trait_row = integer(0), module = integer(0), slot = integer(0),
+      is_shared = logical(0), stringsAsFactors = FALSE
+    ))
   }
-  if (length(overlap) == 1 && is.character(overlap)) {
-    o <- switch(match.arg(overlap, c("disjoint", "moderate", "strong")),
-      disjoint = 0L,
-      moderate = 50L,
-      strong = NA_integer_
-    )
-    return(rep(o, K - 1L))
-  }
-  if (length(overlap) == 1 && is.numeric(overlap)) {
-    if (overlap < 0 || overlap != floor(overlap)) {
-      stop("overlap must be a named level or a non-negative integer")
+  rows <- list()
+  n_shared_pool <- max(n_shared)
+  if (n_shared_pool > 0) {
+    for (p in seq_len(n_shared_pool)) {
+      for (m in which(n_shared >= p)) {
+        rows[[length(rows) + 1L]] <- data.frame(
+          trait_row = p, module = m, slot = p, is_shared = TRUE,
+          stringsAsFactors = FALSE
+        )
+      }
     }
-    return(rep(as.integer(overlap), K - 1L))
   }
-  stop("overlap must be 'disjoint', 'moderate', 'strong', or a single integer")
+  row_counter <- n_shared_pool
+  for (m in seq_len(K)) {
+    if (n_specific[m] > 0) {
+      for (j in seq_len(n_specific[m])) {
+        row_counter <- row_counter + 1L
+        rows[[length(rows) + 1L]] <- data.frame(
+          trait_row = row_counter, module = m,
+          slot = n_shared[m] + j, is_shared = FALSE,
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+  }
+  if (length(rows) == 0) {
+    return(data.frame(
+      trait_row = integer(0), module = integer(0), slot = integer(0),
+      is_shared = logical(0), stringsAsFactors = FALSE
+    ))
+  }
+  return(do.call(rbind, rows))
 }
 
 
-.assign_molecular_traits <- function(n_drivers, n_bg_traits, p_molecular,
-                                     p_molecular_drivers, driver_module,
-                                     drivers_per_module, module_annotations) {
-  n <- n_drivers + n_bg_traits
+.assign_molecular_traits <- function(n_driver_rows, n_bg_traits, p_molecular,
+                                     p_molecular_drivers, n_specific, roster,
+                                     module_annotations, K) {
+  n <- n_driver_rows + n_bg_traits
   is_molecular <- rep(FALSE, n)
   if (n == 0) {
     return(is_molecular)
   }
-  # Planted module genes always make their drivers molecular.
-  if (n_drivers > 0 && !is.null(module_annotations)) {
-    for (d in seq_len(n_drivers)) {
-      m <- driver_module[d]
-      spec <- if (m <= length(module_annotations)) module_annotations[[m]] else NULL
-      if (!is.null(spec) && !is.null(spec$genes) && length(spec$genes) > 0) {
-        is_molecular[d] <- TRUE
+  frac <- if (is.null(p_molecular_drivers)) {
+    rep(p_molecular, K)
+  } else {
+    p_molecular_drivers
+  }
+  if (n_driver_rows > 0) {
+    first_mod <- vapply(seq_len(n_driver_rows), function(r) {
+      min(roster$module[roster$trait_row == r])
+    }, integer(1))
+    # Planted module genes always make their drivers molecular.
+    if (!is.null(module_annotations)) {
+      for (r in seq_len(n_driver_rows)) {
+        mods <- unique(roster$module[roster$trait_row == r])
+        planted <- any(vapply(mods, function(m) {
+          spec <- if (m <= length(module_annotations)) module_annotations[[m]] else NULL
+          !is.null(spec) && !is.null(spec$genes) && length(spec$genes) > 0
+        }, logical(1)))
+        if (planted) {
+          is_molecular[r] <- TRUE
+        }
       }
     }
-  }
-  # Driver molecular assignment, per module. When p_molecular_drivers is NULL
-  # the drivers follow p_molecular (one fraction for every module); otherwise
-  # each module uses its own p_molecular_drivers[m], so a module can keep a
-  # dense phenotype driver core even when p_molecular (background) is high.
-  if (n_drivers > 0) {
-    driver_frac <- if (is.null(p_molecular_drivers)) {
-      rep(p_molecular, length(drivers_per_module))
-    } else {
-      p_molecular_drivers
+    # Shared traits: bernoulli draw by the first driving module's fraction.
+    shared_rows <- unique(roster$trait_row[roster$is_shared])
+    for (r in shared_rows) {
+      if (!is_molecular[r]) {
+        is_molecular[r] <- stats::runif(1) < frac[first_mod[r]]
+      }
     }
-    for (m in seq_along(drivers_per_module)) {
-      idx <- which(driver_module == m)
+    # Specific traits: exact per-module counts keep a dense phenotype core.
+    for (m in seq_len(K)) {
+      idx <- unique(roster$trait_row[!roster$is_shared & roster$module == m])
       if (length(idx) == 0) {
         next
       }
-      desired <- round(driver_frac[m] * length(idx))
+      desired <- round(frac[m] * length(idx))
       forced <- sum(is_molecular[idx])
       if (forced < desired) {
         candidates <- idx[!is_molecular[idx]]
@@ -570,7 +718,7 @@ simulate_trait <- function(n_coloc_groups = 100,
   }
   # Background molecular assignment.
   if (n_bg_traits > 0 && p_molecular > 0) {
-    bg_idx <- n_drivers + seq_len(n_bg_traits)
+    bg_idx <- n_driver_rows + seq_len(n_bg_traits)
     desired <- round(p_molecular * n_bg_traits)
     candidates <- bg_idx[!is_molecular[bg_idx]]
     pick <- sample(candidates, min(desired, length(candidates)))
@@ -580,9 +728,29 @@ simulate_trait <- function(n_coloc_groups = 100,
 }
 
 
-.plant_module_regions <- function(n_snps, K, module_sizes, n_background_snps, overlap_n) {
+.driver_overlap_matrix <- function(roster, K) {
   if (K == 0) {
-    return(list(regions = list(), memberships = list(), sizes = integer(0), overlaps = integer(0)))
+    return(matrix(numeric(0), nrow = 0, ncol = 0))
+  }
+  traits_by_mod <- lapply(seq_len(K), function(m) {
+    unique(roster$trait_row[roster$module == m])
+  })
+  mat <- matrix(0, nrow = K, ncol = K)
+  for (i in seq_len(K)) {
+    for (j in seq_len(K)) {
+      mat[i, j] <- length(intersect(traits_by_mod[[i]], traits_by_mod[[j]])) /
+        length(traits_by_mod[[i]])
+    }
+  }
+  return(mat)
+}
+
+
+.plant_module_regions <- function(n_snps, K, module_sizes, n_background_snps,
+                                  overlap = "disjoint") {
+  if (K == 0) {
+    return(list(regions = list(), memberships = list(), sizes = integer(0),
+                overlap = overlap))
   }
   capacity <- n_snps - max(0L, as.integer(n_background_snps))
   if (capacity < K) {
@@ -601,16 +769,30 @@ simulate_trait <- function(n_coloc_groups = 100,
     sizes <- as.integer(module_sizes)
   }
 
-  overlaps <- integer(max(K - 1L, 0))
-  for (i in seq_along(overlaps)) {
-    cap <- floor(min(sizes[i], sizes[i + 1]) / 2) - 1L
-    if (is.na(overlap_n[i])) {
-      overlaps[i] <- max(cap, 0L)
-    } else {
-      overlaps[i] <- as.integer(min(overlap_n[i], max(cap, 0L)))
+  if (identical(overlap, "nested")) {
+    if (any(sizes[1] < sizes[-1])) {
+      stop("for overlap = 'nested', module_sizes[1] must be the largest module (the parent)")
     }
+    if (sizes[1] > capacity) {
+      stop("modules need ", sizes[1], " SNPs for the parent module but only ",
+           capacity, " available")
+    }
+    memberships <- vector("list", K)
+    memberships[[1]] <- seq_len(sizes[1])
+    if (K > 1) {
+      for (m in 2:K) {
+        memberships[[m]] <- sort(sample(memberships[[1]], sizes[m], replace = FALSE))
+      }
+    }
+    return(list(
+      regions = memberships,
+      memberships = memberships,
+      sizes = sizes,
+      overlap = overlap
+    ))
   }
-  consumed <- sum(sizes) - sum(overlaps)
+
+  consumed <- sum(sizes)
   if (consumed > n_snps) {
     stop("modules need ", consumed, " SNPs but only ", n_snps, " available")
   }
@@ -622,21 +804,14 @@ simulate_trait <- function(n_coloc_groups = 100,
     end <- start + sizes[m] - 1L
     regions[[m]] <- start:end
     memberships[[m]] <- start:end
-    if (m < K) {
-      o <- overlaps[m]
-      if (o > 0) {
-        shared <- (end - o + 1L):end
-        memberships[[m + 1]] <- c(shared, regions[[m + 1]])
-      }
-      start <- end - o + 1L
-    }
+    start <- end + 1L
   }
 
   return(list(
     regions = regions,
     memberships = memberships,
     sizes = sizes,
-    overlaps = overlaps
+    overlap = overlap
   ))
 }
 
@@ -717,7 +892,7 @@ simulate_trait <- function(n_coloc_groups = 100,
 .sim_trait_annotations <- function(trait_ids,
                                    target_tid,
                                    driver_tids,
-                                   driver_module,
+                                   trait_first_module,
                                    bg_tids,
                                    module_annotations,
                                    annotation_noise,
@@ -780,7 +955,7 @@ simulate_trait <- function(n_coloc_groups = 100,
 
   if (length(driver_tids) > 0) {
     for (d in seq_along(driver_tids)) {
-      m <- driver_module[d]
+      m <- trait_first_module[d]
       spec <- specs[[m]]
       tid_row <- out$trait_id == driver_tids[d]
       out$trait_name[tid_row] <- sprintf("driver_mod%d_%03d", m, d)

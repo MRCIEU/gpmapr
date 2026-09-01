@@ -10,7 +10,10 @@ simulate_trait(
   module_sizes = NULL,
   n_background_snps = 0,
   overlap = "disjoint",
-  drivers_per_module = NULL,
+  nested_effect_corr = 0.8,
+  n_traits_per_module = NULL,
+  trait_overlap = 0,
+  trait_effect_corr = 0.8,
   driver_sharing = 0,
   n_background_traits = 40L,
   n_traits = NULL,
@@ -40,38 +43,55 @@ the length of \code{module_sizes}, or set to \code{0} when \code{module_sizes} i
 \code{K = 0} gives the pure null (all SNPs unstructured).}
 
 \item{module_sizes}{Optional integer vector of length \code{K}: SNPs per module
-region (shared SNPs counted once per adjacent pair). Defaults to an equal
+region (disjoint regions, laid out left-to-right). Defaults to an equal
 split of the non-background SNPs.}
 
 \item{n_background_snps}{Minimum number of trailing SNPs reserved as
 unstructured background.}
 
-\item{overlap}{Either \code{"disjoint"} (no shared SNPs), \code{"moderate"}
-(~50 shared SNPs between adjacent modules), \code{"strong"} (~half of the
-smaller adjacent module shared), or an explicit non-negative integer
-applied to every adjacent pair. Overlap is capped at half the smaller
-module minus one.}
+\item{overlap}{How the planted modules are arranged in SNP space:
+\code{"disjoint"} (default) gives every module its own contiguous, non-
+overlapping SNP set; \code{"nested"} makes the largest module (module 1) the
+parent and samples every other module's SNPs as a subset of it, so the
+smaller modules are contained inside the parent and may overlap one
+another.}
 
-\item{drivers_per_module}{Number of driver traits per module. Either a single
+\item{nested_effect_corr}{Correlation between a nested module's effects and
+the parent module's effects at SNPs shared by both, used when
+\code{overlap = "nested"}. Effects are generated as
+\code{z_child = corr*z_parent + sqrt(1-corr^2)*N(0,1)} per shared SNP, so a
+nested module is a correlated (not arbitrary) subset of the parent.
+Default 0.8.}
+
+\item{n_traits_per_module}{Number of driver traits per module. Either a single
 positive integer applied to every module, or an integer vector of length
-\code{K} giving one value per module (so modules can carry different numbers of
-drivers). Total drivers = \code{sum(drivers_per_module)}.}
+\code{K} giving one value per module. Total driver positions =
+\code{sum(n_traits_per_module)}; the number of unique driver trait rows is
+smaller when \code{trait_overlap > 0}.}
+
+\item{trait_overlap}{Fraction (0–1) of each module's driver traits that are
+shared with the other modules. \code{0} (default) gives every module an
+exclusive driver set (independent trait signatures); \code{0.5} shares half the
+drivers; \code{0.75} gives strongly overlapping signatures; \code{0.9} almost
+identical signatures. Shared traits drive every module that draws them.}
+
+\item{trait_effect_corr}{Correlation between the effect sizes of a shared
+trait across the modules it drives. Effects are generated as
+\code{z1 ~ N(0,1)} and \code{z2 = corr*z1 + sqrt(1-corr^2)*N(0,1)}, so shared
+effects are correlated but identical only when \code{corr = 1}. Default 0.8.}
 
 \item{driver_sharing}{Fraction (0–1) of each module's drivers whose support
-extends into the previous module, so adjacent modules share some driver
-traits. Zero (default) gives every module an exclusive driver set, which
-makes same-signature modules statistically exchangeable in trait space
-and lets factor models merge them without loss. Positive sharing creates
-chain-like overlap structure that penalises merging.}
+extends into the previous module's SNP set (a SNP-space mechanism, kept
+separate from \code{trait_overlap}). Zero (default) confines every driver's
+support to its own module's SNPs.}
 
 \item{n_background_traits}{Number of unstructured background traits.}
 
 \item{n_traits}{Optional total number of traits (rows) in the trait x SNP
 matrix, including the target trait. When provided,
 \code{n_background_traits} is derived as
-\code{n_traits - 1 - sum(drivers_per_module)} and must be non-negative. When
-\code{NULL} (default), \code{n_background_traits} is used directly. Total traits =
-1 + sum(drivers_per_module) + n_background_traits.}
+\code{n_traits - 1 - n_driver_rows} and must be non-negative. When
+\code{NULL} (default), \code{n_background_traits} is used directly.}
 
 \item{effect_size}{Mean absolute z-score of driver effects inside their
 module. Either a single number applied to every module, or a numeric
@@ -162,11 +182,14 @@ A list with:
 \item trait_object: simulated trait result usable by
 \code{run_univariate_clustering()}
 \item ground_truth: list with \code{module_of_snp} (named vector, \code{0} =
-background; shared SNPs take their earlier module), \code{multi_module_snps}
-(shared-SNP names), \code{module_memberships} (SNP index list, shared SNPs
-appear in both), \code{driver_traits} (per-module trait names),
-\code{molecular_traits} (trait names designated molecular), \code{planted_annotations},
-\code{seed}, and \code{parameters}
+background; each SNP is labelled by its most specific module),
+\code{multi_module_snps} (SNP names shared by more than one module; empty
+for \code{overlap = "disjoint"}), \code{module_memberships} (SNP index list),
+\code{driver_traits} (per-module trait names, including shared traits),
+\code{driver_overlap} (K x K matrix of the fraction of each module's driver
+traits shared with every other module), \code{molecular_traits} (trait
+names designated molecular), \code{planted_annotations}, \code{seed}, and
+\code{parameters}
 }
 }
 \description{
@@ -178,29 +201,36 @@ the accompanying ground truth supports recovery scoring via
 \code{evaluate_univariate_simulation()}.
 
 Structure: \code{n_coloc_groups} SNPs (one coloc group / locus each) define the
-total number of SNPs (trait x SNP matrix columns). \code{K} contiguous module
-regions are laid out left-to-right; adjacent regions share \code{overlap} SNPs
-(shared SNPs have driver traits from both modules). SNPs not covered by any
-module are unstructured background: sparse random pleiotropic profiles with
-no shared latent structure.
+total number of SNPs (trait x SNP matrix columns). \code{K} module regions are
+laid out left-to-right as \strong{disjoint} (non-overlapping) SNP sets by default,
+or, with \code{overlap = "nested"}, as a parent module (module 1) containing every
+other module's SNPs as correlated subsets. SNPs not covered by any module
+are unstructured background: sparse random pleiotropic profiles with no
+shared latent structure.
 
-Effects: each module has \code{drivers_per_module} driver traits with
-\code{effect_size}-scale effects on their module's SNPs. Driver support is thinned
-by \code{p_structural_zero} (structural zeros inside true support). Cells outside
+Effects: each module has \code{n_traits_per_module} driver traits with
+\code{effect_size}-scale effects on their module's SNPs. A fraction
+\code{trait_overlap} of each module's driver traits is \strong{shared with the other
+modules}: a shared trait drives every module that draws it, with per-module
+effects that are correlated across modules (\code{trait_effect_corr}) but not
+identical. This creates modules with distinct SNP sets but overlapping,
+correlated trait signatures. Driver support is thinned by
+\code{p_structural_zero} (structural zeros inside true support). Cells outside
 true support receive small noise effects with probability \code{p_spurious}.
 Background traits activate on each SNP independently with probability
 \code{p_active_background}, giving realistic marginal sparsity without structure.
 
 Trait composition: the total number of traits (rows) is
-\code{1} (target) + \code{sum(drivers_per_module)} (drivers) + \code{n_background_traits},
-or is fixed directly via \code{n_traits}. A fraction \code{p_molecular} of the
-non-target traits is designated molecular: these carry a gene annotation
-(\code{gene_id} non-missing) and are observed much more sparsely, with per-SNP
-probability \code{p_active_molecular} instead of \code{p_active_background}
-(background) or \code{1 - p_structural_zero} (within-module drivers). This
-emulates eQTL-like traits whose signal is confined to a small subset of
-SNPs. The remaining traits are phenotype traits (no gene annotation) at
-normal density.
+\code{1} (target) + \code{n_driver_rows} (unique driver traits; fewer than
+\code{sum(n_traits_per_module)} when \code{trait_overlap > 0} because shared traits
+are counted once) + \code{n_background_traits}, or is fixed directly via
+\code{n_traits}. A fraction \code{p_molecular} of the non-target traits is designated
+molecular: these carry a gene annotation (\code{gene_id} non-missing) and are
+observed much more sparsely, with per-SNP probability \code{p_active_molecular}
+instead of \code{p_active_background} (background) or \code{1 - p_structural_zero}
+(within-module drivers). This emulates eQTL-like traits whose signal is
+confined to a small subset of SNPs. The remaining traits are phenotype
+traits (no gene annotation) at normal density.
 
 Annotations: \code{module_annotations} optionally plants genes / tissues /
 trait categories on each module's driver traits so enrichment machinery can

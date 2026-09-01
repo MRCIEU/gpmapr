@@ -6,7 +6,7 @@ make_ebmf_result <- function() {
     K = 2,
     module_sizes = c(10, 10),
     n_background_snps = 20,
-    drivers_per_module = 4,
+    n_traits_per_module = 4,
     n_background_traits = 12,
     log_se_sd = 0.5,
     seed = 11

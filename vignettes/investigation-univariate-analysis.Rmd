@@ -9,7 +9,7 @@ vignette: >
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 params:
-  api: "production"
+  api: "local"
   trait_subset: "phenotypic"
   min_snp_signals: 2
   min_module_size: 3
@@ -17,7 +17,7 @@ params:
   louvain_gamma: 1.5
   compress_method: "asinh"
   compress_scale: 5
-  include_trans: false
+  include_trans: true 
   include_situated_gene: false 
   similarity_threshold: 0.2
   ebmf_se_mode: "unit"
