@@ -8,7 +8,7 @@ params:
   cluster_type: ebmf
   K: 3
   module_sizes: [5, 20, 50]
-  drivers_per_module: [12, 12, 12]
+  drivers_per_module: [12, 5, 50]
   n_traits: 600
   n_snps: 300
   p_molecular: 0.8
@@ -18,14 +18,14 @@ params:
   trait_subset: all
   min_module_size: 3
   compress_method: asinh
-  compress_scale: 2
+  compress_scale: 5
   similarity_threshold: 0.2
   ebmf_se_mode: unit
   ebmf_beta_scale: trait
   ebmf_lfsr_threshold: 0.05
   ebmf_magnitude_threshold: 0.2
   ebmf_drop_global: true
-  ebmf_prior: point_normal
+  ebmf_prior: point_laplace
   ebmf_backfit: true
   ebmf_hard_assignment: false
   min_mean_internal: 0.3
@@ -77,8 +77,8 @@ library(dplyr)
 library(ggplot2)
 
 low_noise_sd <- 0.5
-moderate_noise_sd <- 0.9
-high_noise_sd <- 1.5
+moderate_noise_sd <- 1
+high_noise_sd <- 2
 
 n_reps <- as.integer(params$n_reps)
 set.seed(1)
@@ -327,9 +327,37 @@ tier_specs <- list(
     drivers_per_module = params$drivers_per_module,
     snp_driver_groups = params$snp_driver_groups
   ),
-  noisy = make_tier_spec(
+  moderate_w_overlap = make_tier_spec(
+    n_coloc_groups = params$n_snps,
+    overlap = "moderate",
+    sign_pattern = "coherent",
+    noise_sd = moderate_noise_sd,
+    p_structural_zero = params$p_structural_zero,
+    p_spurious = params$p_spurious,
+    p_molecular = params$p_molecular,
+    p_active_molecular = params$p_active_molecular,
+    p_active_background = params$p_active_background,
+    driver_sharing = params$driver_sharing,
+    drivers_per_module = params$drivers_per_module,
+    snp_driver_groups = params$snp_driver_groups
+  ),
+  moderate_w_strong_overlap = make_tier_spec(
     n_coloc_groups = params$n_snps,
     overlap = "strong",
+    sign_pattern = "coherent",
+    noise_sd = moderate_noise_sd,
+    p_structural_zero = params$p_structural_zero,
+    p_spurious = params$p_spurious,
+    p_molecular = params$p_molecular,
+    p_active_molecular = params$p_active_molecular,
+    p_active_background = params$p_active_background,
+    driver_sharing = params$driver_sharing,
+    drivers_per_module = params$drivers_per_module,
+    snp_driver_groups = params$snp_driver_groups
+  ),
+  noisy = make_tier_spec(
+    n_coloc_groups = params$n_snps,
+    overlap = "disjoint",
     sign_pattern = "random",
     noise_sd = high_noise_sd,
     p_structural_zero = params$p_structural_zero,
@@ -355,6 +383,8 @@ tier_labels <- c(
   easy = "easy / clean modules",
   easy_flipped = "easy / clean modules (flipped signs)",
   moderate = "moderate / slightly noisy",
+  moderate_w_overlap = "moderate / with overlap",
+  moderate_w_strong_overlap = "moderate / with strong overlap",
   noisy = "very noisy",
   null = "null / no modules"
 )
@@ -546,6 +576,27 @@ if (is.null(moderate_checks)) {
   moderate_checks
 }
 ```
+
+### Moderate / with overlap
+```{r moderate-w-overlap-checks}
+moderate_w_overlap_checks <- check_table("moderate_w_overlap")
+if (is.null(moderate_w_overlap_checks)) {
+  "No EBMF programs were produced for the moderate with overlap version."
+} else {
+  moderate_w_overlap_checks
+}
+```
+
+### Moderate / with strong overlap
+```{r moderate-w-strong-overlap-checks}
+moderate_w_strong_overlap_checks <- check_table("moderate_w_strong_overlap")
+if (is.null(moderate_w_strong_overlap_checks)) {
+  "No EBMF programs were produced for the moderate with strong overlap version."
+} else {
+  moderate_w_strong_overlap_checks
+}
+```
+
 
 ### Very noisy
 

@@ -27,9 +27,10 @@ Defaults to 5.}
 
 \item{snp_key}{Column used to match SNP ids in \code{coloc_groups}.}
 
-\item{sources}{Pathway sources; see \code{enrich_trait_pathways()}. Non-HP sources
-(e.g. KEGG, Reactome) are summarised as pathways; HP (Human Phenotype
-Ontology) hits are summarised separately as phenotypes.}
+\item{sources}{Pathway sources; see \code{enrich_trait_pathways()}. Reactome and
+KEGG hits are summarised separately (and together as \code{top_enriched_pathway}
+for backwards compatibility); HP (Human Phenotype Ontology) hits are
+summarised separately as phenotypes.}
 
 \item{p_value_threshold}{FDR threshold passed to \code{pathway_enrichment()}.}
 
@@ -44,7 +45,9 @@ A list with:
 \item by_group: list of per-group results (\code{group}, \code{n_snps}, \code{genes},
 \code{snp_genes}, \code{pathways})
 \item summary: one row per enriched group. \code{n_enriched_pathways} /
-\code{top_enriched_pathway} refer to non-HP sources only;
+\code{top_enriched_pathway} combine the non-HP sources (KEGG + Reactome);
+\code{n_enriched_reactome} / \code{top_enriched_reactome} and
+\code{n_enriched_kegg} / \code{top_enriched_kegg} report each source separately;
 \code{n_enriched_phenotypes} / \code{top_enriched_phenotype} refer to HP terms
 only (NA / 0 when \code{sources} has no HP).
 }

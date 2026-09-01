@@ -240,9 +240,10 @@ enrich_trait_pathways <- function(trait_id,
 #' @param snp_key Column used to match SNP ids in `coloc_groups`.
 #' @param include_situated_gene Include situated-gene links in addition to
 #'   ordinary gene links. Defaults to `FALSE`.
-#' @param sources Pathway sources; see `enrich_trait_pathways()`. Non-HP sources
-#'   (e.g. KEGG, Reactome) are summarised as pathways; HP (Human Phenotype
-#'   Ontology) hits are summarised separately as phenotypes.
+#' @param sources Pathway sources; see `enrich_trait_pathways()`. Reactome and
+#'   KEGG hits are summarised separately (and together as `top_enriched_pathway`
+#'   for backwards compatibility); HP (Human Phenotype Ontology) hits are
+#'   summarised separately as phenotypes.
 #' @param p_value_threshold FDR threshold passed to `pathway_enrichment()`.
 #' @param minimum_count_in_network Minimum overlap passed to `pathway_enrichment()`.
 #' @return A list with:
@@ -250,7 +251,9 @@ enrich_trait_pathways <- function(trait_id,
 #'     \item by_group: list of per-group results (`group`, `n_snps`, `genes`,
 #'       `snp_genes`, `pathways`)
 #'     \item summary: one row per enriched group. `n_enriched_pathways` /
-#'       `top_enriched_pathway` refer to non-HP sources only;
+#'       `top_enriched_pathway` combine the non-HP sources (KEGG + Reactome);
+#'       `n_enriched_reactome` / `top_enriched_reactome` and
+#'       `n_enriched_kegg` / `top_enriched_kegg` report each source separately;
 #'       `n_enriched_phenotypes` / `top_enriched_phenotype` refer to HP terms
 #'       only (NA / 0 when `sources` has no HP).
 #'   }
@@ -281,6 +284,10 @@ enrich_snp_group_pathways <- function(groups,
     n_genes = integer(0),
     n_enriched_pathways = integer(0),
     top_enriched_pathway = character(0),
+    n_enriched_reactome = integer(0),
+    top_enriched_reactome = character(0),
+    n_enriched_kegg = integer(0),
+    top_enriched_kegg = character(0),
     n_enriched_phenotypes = integer(0),
     top_enriched_phenotype = character(0),
     stringsAsFactors = FALSE
@@ -326,8 +333,14 @@ enrich_snp_group_pathways <- function(groups,
       group = x$group,
       n_snps = x$n_snps,
       n_genes = nrow(x$genes),
-      n_enriched_pathways = nrow(subsets$mechanism),
-      top_enriched_pathway = .top_pathway_label(subsets$mechanism),
+      n_enriched_pathways = nrow(subsets$reactome) + nrow(subsets$kegg),
+      top_enriched_pathway = .top_pathway_label(
+        rbind(subsets$reactome, subsets$kegg)
+      ),
+      n_enriched_reactome = nrow(subsets$reactome),
+      top_enriched_reactome = .top_pathway_label(subsets$reactome),
+      n_enriched_kegg = nrow(subsets$kegg),
+      top_enriched_kegg = .top_pathway_label(subsets$kegg),
       n_enriched_phenotypes = nrow(subsets$phenotype),
       top_enriched_phenotype = .top_pathway_label(subsets$phenotype),
       stringsAsFactors = FALSE
@@ -571,10 +584,11 @@ compare_group_pathways <- function(trait_enrichment, group_enrichment) {
 .pathway_source_subsets <- function(pathways) {
   if (is.null(pathways) || nrow(pathways) == 0) {
     empty <- .empty_pathway_results()
-    return(list(mechanism = empty, phenotype = empty))
+    return(list(reactome = empty, kegg = empty, phenotype = empty))
   }
   list(
-    mechanism = pathways[pathways$source != "HP", , drop = FALSE],
+    reactome = pathways[pathways$source == "Reactome", , drop = FALSE],
+    kegg = pathways[pathways$source == "KEGG", , drop = FALSE],
     phenotype = pathways[pathways$source == "HP", , drop = FALSE]
   )
 }

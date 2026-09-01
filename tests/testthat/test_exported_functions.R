@@ -840,7 +840,7 @@ test_that("compare_snp_group_modules() returns pairwise tests with global FDR", 
   expect_equal(nrow(out_empty$pairwise), 0L)
 })
 
-test_that("enrich_snp_group_pathways() separates pathway and HP phenotype hits", {
+test_that("enrich_snp_group_pathways() separates Reactome, KEGG and HP hits", {
   genes <- all_genes()
   gene_ids <- genes[genes$gene %in% c("TREM2", "APOE", "FTO", "MC4R", "LPL"), c("id", "gene")]
   coloc_groups <- data.frame(
@@ -863,12 +863,18 @@ test_that("enrich_snp_group_pathways() separates pathway and HP phenotype hits",
   expect_true(all(
     c(
       "n_enriched_pathways", "top_enriched_pathway",
+      "n_enriched_reactome", "top_enriched_reactome",
+      "n_enriched_kegg", "top_enriched_kegg",
       "n_enriched_phenotypes", "top_enriched_phenotype"
     ) %in% names(s)
   ))
   expect_type(s$n_enriched_phenotypes, "integer")
+  expect_type(s$n_enriched_reactome, "integer")
+  expect_type(s$n_enriched_kegg, "integer")
   expect_true(all(s$n_enriched_phenotypes >= 0))
   expect_true(all(is.na(s$top_enriched_phenotype) | grepl("^HP:", s$top_enriched_phenotype)))
+  expect_true(all(is.na(s$top_enriched_reactome) | grepl("^Reactome:", s$top_enriched_reactome)))
+  expect_true(all(is.na(s$top_enriched_kegg) | grepl("^KEGG:", s$top_enriched_kegg)))
   expect_true(all(is.na(s$top_enriched_pathway) | !grepl("^HP:", s$top_enriched_pathway)))
 
   out2 <- enrich_snp_group_pathways(

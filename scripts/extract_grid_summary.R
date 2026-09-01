@@ -150,7 +150,10 @@ for (cb in combo_list) {
 
     n_cat <- sum(!is.na(group_categories$summary$top_enriched_category_any))
     n_tis <- sum(!is.na(group_tissues$summary$top_enriched_tissue_any))
-    n_pw <- sum(!is.na(module_enrichment$summary$top_enriched_pathway))
+    n_pw <- sum(
+      !is.na(module_enrichment$summary$top_enriched_reactome) |
+        !is.na(module_enrichment$summary$top_enriched_kegg)
+    )
     n_ph <- sum(!is.na(module_enrichment$summary$top_enriched_phenotype))
 
     detail <- reliable_q |>
@@ -170,7 +173,10 @@ for (cb in combo_list) {
       dplyr::full_join(
         module_enrichment$summary |>
           dplyr::mutate(group = as.character(group)) |>
-          dplyr::select(group, top_enriched_pathway, top_enriched_phenotype),
+          dplyr::select(
+            group, top_enriched_reactome, top_enriched_kegg,
+            top_enriched_phenotype
+          ),
         by = "group"
       ) |>
       dplyr::mutate(n_snps = as.integer(n_snps))
@@ -196,7 +202,7 @@ for (cb in combo_list) {
 
 cat("\n### DETAIL ###\n")
 detail_all <- dplyr::bind_rows(detail_rows)
-cat("run\tgroup\tn_snps\ttop_category\ttop_tissue\ttop_pathway\ttop_phenotype\n")
+cat("run\tgroup\tn_snps\ttop_category\ttop_tissue\ttop_reactome\ttop_kegg\ttop_phenotype\n")
 for (i in seq_len(nrow(detail_all))) {
   d <- detail_all[i, ]
   fmt <- function(x) ifelse(is.na(x), "", x)
@@ -204,7 +210,8 @@ for (i in seq_len(nrow(detail_all))) {
     d$run, d$group, d$n_snps,
     fmt(d$top_enriched_category_any),
     fmt(d$top_enriched_tissue_any),
-    fmt(d$top_enriched_pathway),
+    fmt(d$top_enriched_reactome),
+    fmt(d$top_enriched_kegg),
     fmt(d$top_enriched_phenotype),
     sep = "\t"
   )
