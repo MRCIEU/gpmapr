@@ -84,7 +84,10 @@ ebmf_posterior_table <- function(clustering_result) {
 #'   `cluster_type = "ebmf"`. Its recorded parameters are reused verbatim for
 #'   every null replicate.
 #' @param n_null Number of permutation replicates. More replicates sharpen the
-#'   empirical quantiles; 20 is a reasonable minimum.
+#'   empirical quantiles; 20 is a reasonable minimum. Null replicates are fit
+#'   greedy-only (no backfit): they only feed the descriptive membership
+#'   calibration and never gate program validity, so skipping backfit makes
+#'   them much cheaper at no cost to any downstream result.
 #' @param alpha_membership Membership FDR level for `core` cells.
 #' @param n_candidate_tier Per program, how many non-core cells to label as the
 #'   uncertified "candidate" tier (top-loaded first).
@@ -145,7 +148,9 @@ calibrate_ebmf_programs <- function(clustering_result,
         magnitude_threshold = params$ebmf_magnitude_threshold,
         drop_global = FALSE,
         prior = params$ebmf_prior,
-        backfit = params$ebmf_backfit,
+        # Null refits only feed the descriptive membership calibration, so
+        # greedy-only fits are enough and much cheaper than backfitting.
+        backfit = FALSE,
         observed_se_matrix = se_input
       )
     } else {
@@ -168,7 +173,9 @@ calibrate_ebmf_programs <- function(clustering_result,
         magnitude_threshold = params$ebmf_magnitude_threshold,
         drop_global = FALSE,
         prior = params$ebmf_prior,
-        backfit = params$ebmf_backfit
+        # Null refits only feed the descriptive membership calibration, so
+        # greedy-only fits are enough and much cheaper than backfitting.
+        backfit = FALSE
       )
     }
   }

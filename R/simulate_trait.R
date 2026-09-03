@@ -6,6 +6,19 @@
 #' the accompanying ground truth supports recovery scoring via
 #' `evaluate_univariate_simulation()`.
 #'
+#' By default the generative parameters are calibrated to the messy marginals
+#' of a real pleiotropy matrix: every observed cell is a significant hit
+#' (`min_abs_z = 4.5`), driver effects are heavy-tailed across traits
+#' (`effect_tail = 0.4`) with a minority of cells disagreeing with the target
+#' orientation (`p_negative = 0.05`), background densities are heavy-tailed
+#' per trait (`background_sparsity_sd = 1.2`), a proportion of pleiotropic
+#' **hub** traits is planted automatically (`n_hub_traits = NULL`), and the
+#' target row is dense and significant at every SNP (`target_pattern =
+#' "dense"`). Simulations built this way are genuinely hard — recovery is
+#' partial and noisy rather than trivially perfect, so the validation gates
+#' and parameter trade-offs can actually be tested. Each realism knob can be
+#' turned off individually (e.g. `min_abs_z = 0`, `n_hub_traits = 0L`).
+#'
 #' Structure: `n_coloc_groups` SNPs (one coloc group / locus each) define the
 #' total number of SNPs (trait x SNP matrix columns). `K` module regions are
 #' laid out left-to-right as **disjoint** (non-overlapping) SNP sets by default,
@@ -56,7 +69,9 @@
 #'   overlapping SNP set; `"nested"` makes the largest module (module 1) the
 #'   parent and samples every other module's SNPs as a subset of it, so the
 #'   smaller modules are contained inside the parent and may overlap one
-#'   another.
+#'   another; `"partial"` keeps disjoint cores but lets each module borrow a
+#'   fraction (`overlap_fraction`) of the previous module's SNPs, so adjacent
+#'   modules share boundary SNPs.
 #' @param nested_effect_corr Correlation between a nested module's effects and
 #'   the parent module's effects at SNPs shared by both, used when
 #'   `overlap = "nested"`. Effects are generated as
@@ -92,6 +107,8 @@
 #'   vector of length `K` giving one value per module. Varying effect sizes
 #'   across modules breaks the exchangeability of same-signature modules so
 #'   that methods which operate in trait space (e.g. EBMF) can separate them.
+#'   Defaults to `6`, matching the median observed |z| of real coloc cells and
+#'   keeping driver signal above the `min_abs_z` floor.
 #' @param noise_sd Standard deviation of noise effects added to target,
 #'   driver, and background trait observations.
 #' @param sign_pattern Driver-sign regime: `"coherent"` (all drivers positive),
@@ -104,6 +121,55 @@
 #'   small noise effect rather than being absent.
 #' @param p_active_background Per-SNP activation probability for background
 #'   trait profiles.
+#' @param background_sparsity_sd Standard deviation (on the log scale) of
+#'   per-trait multipliers on the background activation probabilities. Zero
+#'   gives every background trait the same density; positive values
+#'   draw heavy-tailed per-trait rates so most background traits are observed
+#'   at only a couple of SNPs while a tail is much denser, matching the
+#'   per-trait sparsity distribution of real pleiotropy matrices.
+#'   Default 1.2.
+#' @param min_abs_z Significance floor for observed cells. When positive
+#'   (`4.5` by default, the approximate floor of real coloc z-scores), every
+#'   *observed* cell is a significant hit: background and spurious cells are
+#'   drawn as `sign * (min_abs_z + Exp)` and all other observed cells are
+#'   floored at `min_abs_z`, so noise is encoded as absence (NA) rather than
+#'   as small observed values — the way real colocalisation data behaves.
+#'   Set to `0` to keep the classic behaviour where background and spurious
+#'   cells carry small `N(0, noise_sd)` values.
+#' @param effect_tail Standard deviation (on the log scale) of a per-*trait*
+#'   lognormal multiplier applied to a driver trait's effects across all of its
+#'   module's SNPs. Zero keeps every driver trait at (approximately)
+#'   the same `effect_size`; positive values give the heavy-tailed
+#'   across-trait heterogeneity of real modules (different driver traits have
+#'   different typical effect sizes) while preserving the correlation of a
+#'   trait's values across the SNPs it drives. Default 0.4.
+#' @param n_hub_traits Number of background traits planted as pleiotropic
+#'   **hubs**: dense rows (observed at a fraction of SNPs drawn from
+#'   `hub_snp_fraction`) whose cells are significant and mostly positive in
+#'   the oriented frame (sign flips follow `p_negative`), creating the global
+#'   baseline similarity and mega-factor structure that competes with the
+#'   planted modules — the way real pleiotropy matrices contain a core of
+#'   highly pleiotropic traits hitting most loci with target-aligned effects.
+#'   Hubs are drawn from the non-molecular background so they stay gene-free.
+#'   `NULL` (default) auto-plants ~3% of background traits (clamped to the
+#'   number of non-molecular background traits available); set to `0L` to
+#'   disable.
+#' @param hub_snp_fraction Range `c(min, max)` of the fraction of SNPs at
+#'   which each hub trait is observed. Defaults to `c(0.3, 1)`.
+#' @param target_pattern Target-trait row regime: `"dense"` (default) gives
+#'   the target trait a significant, heavy-tailed positive z-score at **every**
+#'   SNP (magnitude `effect_size[1] * lognormal(0, 0.5)`, floored at
+#'   `min_abs_z` when set), matching a real target-trait row in the oriented
+#'   frame — informative about nothing but its own strength; `"module"` gives
+#'   the target trait elevated signal at module SNPs and noise elsewhere.
+#' @param p_negative Probability that an individual driver cell within module
+#'   support has its sign flipped, emulating the minority of cells that
+#'   disagree with the target-trait orientation in real data. Default 0.05.
+#'   Set to `NULL` to keep the `sign_pattern` regime untouched.
+#' @param overlap_fraction Fraction of each module's SNPs (for `overlap =
+#'   "partial"`) borrowed from the previous module's core, giving modules
+#'   soft SNP boundaries and non-empty `multi_module_snps` without full
+#'   nesting. Defaults to `0.2`; only used when `overlap = "partial"`.
 #' @param p_molecular Fraction (0–1) of background traits designated
 #'   molecular, and — when `p_molecular_drivers = NULL` (default) — also the
 #'   fraction of each module's drivers designated molecular. Molecular traits
@@ -181,12 +247,20 @@ simulate_trait <- function(n_coloc_groups = 100,
                            driver_sharing = 0,
                            n_background_traits = 40L,
                            n_traits = NULL,
-                           effect_size = 3,
+                           effect_size = 6,
                            noise_sd = 0.5,
                            sign_pattern = c("coherent", "flipped", "random"),
                            p_structural_zero = 0.4,
                            p_spurious = 0.05,
                            p_active_background = 0.08,
+                           background_sparsity_sd = 1.2,
+                           min_abs_z = 4.5,
+                           effect_tail = 0.4,
+                           n_hub_traits = NULL,
+                           hub_snp_fraction = c(0.3, 1),
+                           target_pattern = c("dense", "module"),
+                           p_negative = 0.05,
+                           overlap_fraction = 0.2,
                            p_molecular = 0,
                            p_molecular_drivers = NULL,
                            p_active_molecular = 0.01,
@@ -198,7 +272,8 @@ simulate_trait <- function(n_coloc_groups = 100,
                            snp_driver_groups = 1,
                            seed = NULL) {
   sign_pattern <- match.arg(sign_pattern)
-  overlap <- match.arg(overlap, c("disjoint", "nested"))
+  overlap <- match.arg(overlap, c("disjoint", "nested", "partial"))
+  target_pattern <- match.arg(target_pattern)
 
   if (!is.numeric(n_coloc_groups) || length(n_coloc_groups) != 1 ||
         n_coloc_groups < 2 || n_coloc_groups != floor(n_coloc_groups)) {
@@ -289,6 +364,39 @@ simulate_trait <- function(n_coloc_groups = 100,
       !is.finite(log_se_sd) || log_se_sd < 0) {
     stop("log_se_sd must be a non-negative finite number")
   }
+  scalar_nonneg <- function(x, name) {
+    if (!is.numeric(x) || length(x) != 1L || !is.finite(x) || x < 0) {
+      stop(name, " must be a non-negative finite number")
+    }
+  }
+  scalar_nonneg(min_abs_z, "min_abs_z")
+  scalar_nonneg(effect_tail, "effect_tail")
+  scalar_nonneg(background_sparsity_sd, "background_sparsity_sd")
+  n_hub_traits_auto <- is.null(n_hub_traits)
+  if (!n_hub_traits_auto) {
+    if (!is.numeric(n_hub_traits) || length(n_hub_traits) != 1L ||
+        !is.finite(n_hub_traits) || n_hub_traits < 0 ||
+        n_hub_traits != floor(n_hub_traits)) {
+      stop("n_hub_traits must be NULL or a non-negative integer")
+    }
+    n_hub_traits <- as.integer(n_hub_traits)
+  }
+  if (!is.numeric(hub_snp_fraction) || length(hub_snp_fraction) != 2L ||
+      any(!is.finite(hub_snp_fraction)) || any(hub_snp_fraction < 0) ||
+      any(hub_snp_fraction > 1) || hub_snp_fraction[1] > hub_snp_fraction[2]) {
+    stop("hub_snp_fraction must be c(min, max) within [0, 1] with min <= max")
+  }
+  if (!is.null(p_negative)) {
+    if (!is.numeric(p_negative) || length(p_negative) != 1L ||
+        !is.finite(p_negative) || p_negative < 0 || p_negative > 1) {
+      stop("p_negative must be NULL or a number between 0 and 1")
+    }
+  }
+  if (!is.numeric(overlap_fraction) || length(overlap_fraction) != 1L ||
+      !is.finite(overlap_fraction) || overlap_fraction < 0 ||
+      overlap_fraction > 1) {
+    stop("overlap_fraction must be a number between 0 and 1")
+  }
   probabilities <- c(
     p_spurious, p_active_background, annotation_noise,
     p_molecular, p_active_molecular
@@ -337,7 +445,8 @@ simulate_trait <- function(n_coloc_groups = 100,
     K = K,
     module_sizes = module_sizes,
     n_background_snps = n_background_snps,
-    overlap = overlap
+    overlap = overlap,
+    overlap_fraction = overlap_fraction
   )
 
   module_of <- rep(0L, n_snps)
@@ -396,13 +505,24 @@ simulate_trait <- function(n_coloc_groups = 100,
               dimnames = list(as.character(trait_ids), .sim_variant_ids(n_snps)))
   snp_module <- module_of
 
-  target_signal <- ifelse(
-    snp_module > 0,
-    effect_size[pmax(snp_module, 1)] * ifelse(snp_module %% 2 == 1, 1, -1),
-    0
-  )
-  M[as.character(target_tid), ] <- target_signal +
-    stats::rnorm(n_snps, 0, noise_sd)
+  if (identical(target_pattern, "module")) {
+    target_signal <- ifelse(
+      snp_module > 0,
+      effect_size[pmax(snp_module, 1)] * ifelse(snp_module %% 2 == 1, 1, -1),
+      0
+    )
+    M[as.character(target_tid), ] <- target_signal +
+      stats::rnorm(n_snps, 0, noise_sd)
+  } else {
+    # Dense target: significant, heavy-tailed z at every SNP, positive in the
+    # oriented frame (matching a real target-trait row after orientation).
+    target_vals <- effect_size[1] * stats::rlnorm(n_snps, 0, 0.5) +
+      stats::rnorm(n_snps, 0, noise_sd)
+    if (min_abs_z > 0) {
+      target_vals <- sign(target_vals) * pmax(min_abs_z, abs(target_vals))
+    }
+    M[as.character(target_tid), ] <- target_vals
+  }
 
   trait_signs <- switch(sign_pattern,
     coherent = rep(1L, n_driver_rows),
@@ -478,34 +598,137 @@ simulate_trait <- function(n_coloc_groups = 100,
           } else {
             rep(1, length(in_module))
           }
-          M[row, in_module] <- ifelse(
-            stats::runif(length(in_module)) < fill_prob,
-            effect_size[m] * roster$effect_mult[pos[k]] * effect_z +
-              stats::rnorm(length(in_module), 0, noise_sd),
-            NA_real_
-          )
+          n_fill <- length(in_module)
+          active <- stats::runif(n_fill) < fill_prob
+          # effect_tail is a per-TRAIT-ROW scale (shared across the module's
+          # SNPs) so that a driver trait's values stay correlated across the
+          # SNPs it drives — an independent per-cell multiplier would destroy
+          # that shared signal. Per-cell noise_sd keeps within-module spread.
+          trait_scale <- if (effect_tail > 0) {
+            stats::rlnorm(1, 0, effect_tail)
+          } else {
+            1
+          }
+          vals <- effect_size[m] * roster$effect_mult[pos[k]] * effect_z *
+            trait_scale + stats::rnorm(n_fill, 0, noise_sd)
+          if (!is.null(p_negative)) {
+            vals <- ifelse(stats::runif(n_fill) < p_negative, -vals, vals)
+          }
+          if (min_abs_z > 0) {
+            vals <- sign(vals) * pmax(min_abs_z, abs(vals))
+          }
+          M[row, in_module] <- ifelse(active, vals, NA_real_)
           filled <- c(filled, in_module)
         }
       }
       off_module <- setdiff(seq_len(n_snps), filled)
       spur <- stats::runif(length(off_module)) < p_spurious
       vals <- rep(NA_real_, length(off_module))
-      vals[spur] <- stats::rnorm(sum(spur), 0, noise_sd)
+      if (any(spur)) {
+        if (min_abs_z > 0) {
+          # Spurious associations are significant hits too, with random sign.
+          vals[spur] <- sign(stats::rnorm(sum(spur))) *
+            (min_abs_z + stats::rexp(sum(spur), rate = 1 / 3))
+        } else {
+          vals[spur] <- stats::rnorm(sum(spur), 0, noise_sd)
+        }
+      }
       M[row, off_module] <- vals
     }
   }
   if (n_bg_traits > 0) {
+    bg_rate_mult <- if (background_sparsity_sd > 0) {
+      stats::rlnorm(n_bg_traits, 0, background_sparsity_sd)
+    } else {
+      NULL
+    }
+    hub_idx <- integer(0)
+    hub_scale <- NULL
+    hub_latent <- NULL
+    if (n_hub_traits_auto) {
+      # Realism default: plant ~3% of background traits as pleiotropic hubs.
+      n_hub_traits <- as.integer(round(0.03 * n_bg_traits))
+    }
+    if (n_hub_traits > 0) {
+      bg_positions <- seq_len(n_bg_traits)
+      hub_candidates <- bg_positions[
+        !is_molecular[n_driver_rows + bg_positions]
+      ]
+      if (length(hub_candidates) < n_hub_traits) {
+        if (n_hub_traits_auto) {
+          n_hub_traits <- length(hub_candidates)
+        } else {
+          stop(
+            "n_hub_traits (", n_hub_traits, ") exceeds the non-molecular ",
+            "background traits available (", length(hub_candidates), ")"
+          )
+        }
+      }
+      if (n_hub_traits > 0) {
+        hub_idx <- sample(hub_candidates, n_hub_traits)
+      # Per-hub magnitude scale and a shared per-SNP strength latent: dense,
+      # mostly-positive (in the oriented frame) rows that are also mutually
+      # correlated through the shared latent, so they read as one global
+      # factor competing with the modules — the way real pleiotropy matrices
+      # contain a core of traits hitting most loci with target-aligned effects.
+        hub_scale <- stats::rlnorm(n_hub_traits, 0, 0.25)
+        # Wide shared per-SNP latent so hub rows are strongly mutually
+        # correlated despite per-cell sign flips.
+        hub_latent <- stats::rlnorm(n_snps, 0, 0.9)
+      }
+    }
     for (t in seq_along(bg_tids)) {
       row <- as.character(bg_tids[t])
-      act_prob <- if (is_molecular[n_driver_rows + t]) {
-        p_active_molecular
+      if (n_hub_traits > 0 && t %in% hub_idx) {
+        h <- match(t, hub_idx)
+        hub_frac <- stats::runif(
+          1,
+          min = hub_snp_fraction[1],
+          max = hub_snp_fraction[2]
+        )
+        act <- stats::runif(n_snps) < hub_frac
+        vals <- rep(NA_real_, n_snps)
+        # Magnitude rides the shared per-SNP latent (hub rows correlate) on a
+        # significant floor; the per-hub scale sets each trait's typical size.
+        hub_mag <- hub_scale[h] * hub_latent * pmax(min_abs_z, 3)
+        hub_sign <- if (!is.null(p_negative)) {
+          ifelse(stats::runif(n_snps) < p_negative, -1, 1)
+        } else {
+          rep(1, n_snps)
+        }
+        vals[act] <- hub_sign[act] * hub_mag[act] +
+          stats::rnorm(sum(act), 0, noise_sd)
+        if (min_abs_z > 0) {
+          vals[act] <- sign(vals[act]) * pmax(min_abs_z, abs(vals[act]))
+        }
+        M[row, ] <- vals
       } else {
-        p_active_background
+        base_prob <- if (is_molecular[n_driver_rows + t]) {
+          p_active_molecular
+        } else {
+          p_active_background
+        }
+        act_prob <- if (!is.null(bg_rate_mult)) {
+          min(1, base_prob * bg_rate_mult[t])
+        } else {
+          base_prob
+        }
+        act <- stats::runif(n_snps) < act_prob
+        vals <- rep(NA_real_, n_snps)
+        if (min_abs_z > 0) {
+          # Every observed background cell is a significant hit; noise is
+          # absence (NA), never a small observed value.
+          n_act <- sum(act)
+          if (n_act > 0) {
+            hit_sign <- sign(stats::rnorm(n_act))
+            vals[act] <- hit_sign *
+              (min_abs_z + stats::rexp(n_act, rate = 1 / 3))
+          }
+        } else {
+          vals[act] <- stats::rnorm(sum(act), 0, noise_sd)
+        }
+        M[row, ] <- vals
       }
-      act <- stats::runif(n_snps) < act_prob
-      vals <- rep(NA_real_, n_snps)
-      vals[act] <- stats::rnorm(sum(act), 0, noise_sd)
-      M[row, ] <- vals
     }
   }
 
@@ -594,6 +817,14 @@ simulate_trait <- function(n_coloc_groups = 100,
         p_structural_zero = p_structural_zero,
         p_spurious = p_spurious,
         p_active_background = p_active_background,
+        background_sparsity_sd = background_sparsity_sd,
+        min_abs_z = min_abs_z,
+        effect_tail = effect_tail,
+        n_hub_traits = n_hub_traits,
+        hub_snp_fraction = hub_snp_fraction,
+        target_pattern = target_pattern,
+        p_negative = p_negative,
+        overlap_fraction = overlap_fraction,
         p_molecular = p_molecular,
         p_molecular_drivers = p_molecular_drivers,
         p_active_molecular = p_active_molecular,
@@ -747,7 +978,7 @@ simulate_trait <- function(n_coloc_groups = 100,
 
 
 .plant_module_regions <- function(n_snps, K, module_sizes, n_background_snps,
-                                  overlap = "disjoint") {
+                                  overlap = "disjoint", overlap_fraction = 0.2) {
   if (K == 0) {
     return(list(regions = list(), memberships = list(), sizes = integer(0),
                 overlap = overlap))
@@ -792,21 +1023,44 @@ simulate_trait <- function(n_coloc_groups = 100,
     ))
   }
 
-  consumed <- sum(sizes)
+    consumed <- sum(sizes)
   if (consumed > n_snps) {
     stop("modules need ", consumed, " SNPs but only ", n_snps, " available")
   }
 
   regions <- vector("list", K)
-  memberships <- vector("list", K)
   start <- 1L
   for (m in seq_len(K)) {
     end <- start + sizes[m] - 1L
     regions[[m]] <- start:end
-    memberships[[m]] <- start:end
     start <- end + 1L
   }
 
+  if (identical(overlap, "partial")) {
+    # Disjoint cores, but each module m > 1 additionally claims a fraction of
+    # the previous module's core, so adjacent modules share boundary SNPs.
+    memberships <- vector("list", K)
+    memberships[[1]] <- regions[[1]]
+    for (m in seq_len(K)[-1]) {
+      n_borrow <- as.integer(round(overlap_fraction * sizes[m]))
+      borrowed <- integer(0)
+      if (n_borrow > 0) {
+        borrowed <- sample(
+          regions[[m - 1]],
+          min(n_borrow, length(regions[[m - 1]]))
+        )
+      }
+      memberships[[m]] <- sort(union(regions[[m]], borrowed))
+    }
+    return(list(
+      regions = regions,
+      memberships = memberships,
+      sizes = sizes,
+      overlap = overlap
+    ))
+  }
+
+  memberships <- regions
   return(list(
     regions = regions,
     memberships = memberships,

@@ -21,6 +21,7 @@ summarise_ebmf_programs(
   posterior_stat = c("median", "mean"),
   posterior_evidence_cap = 50,
   redundancy_threshold = 0.9,
+  snp_redundancy_threshold = 0.9,
   seed = 1,
   cores = 1,
   verbose = TRUE
@@ -76,6 +77,9 @@ preserving the ordering. Defaults to \code{50}.}
 \item{redundancy_threshold}{Maximum absolute factor-loading correlation with
 another program before \code{redundant} is flagged.}
 
+\item{snp_redundancy_threshold}{Maximum reciprocal SNP-containment
+(\code{max_pair_redundancy}) before \code{redundancy_pass} fails. Defaults to \code{0.9}.}
+
 \item{seed}{RNG seed.}
 
 \item{cores}{Number of cores for the parallel trait-subsample refits (passed
@@ -104,7 +108,7 @@ descriptive \strong{additional scores} (factor strength, aggregate posterior
 evidence and factor distinctiveness) into a single per-program table with
 pass/fail flags and an overall \code{status}.
 
-Filters applied (a program must pass all three to get \code{status == "valid"}):
+Filters applied (a program must pass all four to get \code{status == "valid"}):
 \itemize{
 \item \strong{Size / internal coherence} — at least \code{min_module_size}
 EBMF-supported SNPs (\code{n_snps}), mean internal SNP similarity
@@ -123,6 +127,12 @@ of the traits are held out and flashier is refit. Because this refits
 flashier \code{n_rep} times, it is only run for programs that pass the
 internal-coherence checks; programs failing coherence are already rejected
 and are not re-checked.
+\item \strong{Factor distinctiveness} — for each program, compare its assigned
+(lFSR/magnitude-filtered) SNP membership set to every other program via the
+reciprocal containment score \code{pair_redundancy(A,B) = min(shared / n_snps_A, shared / n_snps_B)}; \code{max_pair_redundancy} is the maximum such score across
+all other programs and \code{most_redundant_program} is the partner that
+achieves it. The program fails (\code{redundancy_pass == FALSE}) when
+\code{max_pair_redundancy >= snp_redundancy_threshold}.
 }
 
 Additional scores (reported, but not used to gate \code{status}):
@@ -140,5 +150,8 @@ memberships carry much stronger posterior sign evidence.
 correlation of the program's SNP loading vector (\code{F_pm}) with any other
 program; \code{redundant} flags programs whose maximum correlation exceeds
 \code{redundancy_threshold}.
+\item \code{max_pair_redundancy} / \code{most_redundant_program} — the reciprocal
+SNP-containment redundancy score and its partner program; reported for
+context alongside the gating \code{redundancy_pass} described above.
 }
 }

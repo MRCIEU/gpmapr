@@ -17,12 +17,20 @@ simulate_trait(
   driver_sharing = 0,
   n_background_traits = 40L,
   n_traits = NULL,
-  effect_size = 3,
+  effect_size = 6,
   noise_sd = 0.5,
   sign_pattern = c("coherent", "flipped", "random"),
   p_structural_zero = 0.4,
   p_spurious = 0.05,
   p_active_background = 0.08,
+  background_sparsity_sd = 1.2,
+  min_abs_z = 4.5,
+  effect_tail = 0.4,
+  n_hub_traits = NULL,
+  hub_snp_fraction = c(0.3, 1),
+  target_pattern = c("dense", "module"),
+  p_negative = 0.05,
+  overlap_fraction = 0.2,
   p_molecular = 0,
   p_molecular_drivers = NULL,
   p_active_molecular = 0.01,
@@ -54,7 +62,9 @@ unstructured background.}
 overlapping SNP set; \code{"nested"} makes the largest module (module 1) the
 parent and samples every other module's SNPs as a subset of it, so the
 smaller modules are contained inside the parent and may overlap one
-another.}
+another; \code{"partial"} keeps disjoint cores but lets each module borrow a
+fraction (\code{overlap_fraction}) of the previous module's SNPs, so adjacent
+modules share boundary SNPs.}
 
 \item{nested_effect_corr}{Correlation between a nested module's effects and
 the parent module's effects at SNPs shared by both, used when
@@ -97,7 +107,9 @@ matrix, including the target trait. When provided,
 module. Either a single number applied to every module, or a numeric
 vector of length \code{K} giving one value per module. Varying effect sizes
 across modules breaks the exchangeability of same-signature modules so
-that methods which operate in trait space (e.g. EBMF) can separate them.}
+that methods which operate in trait space (e.g. EBMF) can separate them.
+Defaults to \code{6}, matching the median observed |z| of real coloc cells and
+keeping driver signal above the \code{min_abs_z} floor.}
 
 \item{noise_sd}{Standard deviation of noise effects added to target,
 driver, and background trait observations.}
@@ -115,6 +127,62 @@ small noise effect rather than being absent.}
 
 \item{p_active_background}{Per-SNP activation probability for background
 trait profiles.}
+
+\item{background_sparsity_sd}{Standard deviation (on the log scale) of
+per-trait multipliers on the background activation probabilities. Zero
+gives every background trait the same density; positive values
+draw heavy-tailed per-trait rates so most background traits are observed
+at only a couple of SNPs while a tail is much denser, matching the
+per-trait sparsity distribution of real pleiotropy matrices.
+Default 1.2.}
+
+\item{min_abs_z}{Significance floor for observed cells. When positive
+(\code{4.5} by default, the approximate floor of real coloc z-scores), every
+\emph{observed} cell is a significant hit: background and spurious cells are
+drawn as \code{sign * (min_abs_z + Exp)} and all other observed cells are
+floored at \code{min_abs_z}, so noise is encoded as absence (NA) rather than
+as small observed values — the way real colocalisation data behaves.
+Set to \code{0} to keep the classic behaviour where background and spurious
+cells carry small \code{N(0, noise_sd)} values.}
+
+\item{effect_tail}{Standard deviation (on the log scale) of a per-\emph{trait}
+lognormal multiplier applied to a driver trait's effects across all of its
+module's SNPs. Zero keeps every driver trait at (approximately)
+the same \code{effect_size}; positive values give the heavy-tailed
+across-trait heterogeneity of real modules (different driver traits have
+different typical effect sizes) while preserving the correlation of a
+trait's values across the SNPs it drives. Default 0.4.}
+
+\item{n_hub_traits}{Number of background traits planted as pleiotropic
+\strong{hubs}: dense rows (observed at a fraction of SNPs drawn from
+\code{hub_snp_fraction}) whose cells are significant and mostly positive in
+the oriented frame (sign flips follow \code{p_negative}), creating the global
+baseline similarity and mega-factor structure that competes with the
+planted modules — the way real pleiotropy matrices contain a core of
+highly pleiotropic traits hitting most loci with target-aligned effects.
+Hubs are drawn from the non-molecular background so they stay gene-free.
+\code{NULL} (default) auto-plants ~3\% of background traits (clamped to the
+number of non-molecular background traits available); set to \code{0L} to
+disable.}
+
+\item{hub_snp_fraction}{Range \code{c(min, max)} of the fraction of SNPs at
+which each hub trait is observed. Defaults to \code{c(0.3, 1)}.}
+
+\item{target_pattern}{Target-trait row regime: \code{"dense"} (default) gives
+the target trait a significant, heavy-tailed positive z-score at \strong{every}
+SNP (magnitude \code{effect_size[1] * lognormal(0, 0.5)}, floored at
+\code{min_abs_z} when set), matching a real target-trait row in the oriented
+frame — informative about nothing but its own strength; \code{"module"} gives
+the target trait elevated signal at module SNPs and noise elsewhere.}
+
+\item{p_negative}{Probability that an individual driver cell within module
+support has its sign flipped, emulating the minority of cells that
+disagree with the target-trait orientation in real data. Default 0.05.
+Set to \code{NULL} to keep the \code{sign_pattern} regime untouched.}
+
+\item{overlap_fraction}{Fraction of each module's SNPs (for \code{overlap = "partial"}) borrowed from the previous module's core, giving modules
+soft SNP boundaries and non-empty \code{multi_module_snps} without full
+nesting. Defaults to \code{0.2}; only used when \code{overlap = "partial"}.}
 
 \item{p_molecular}{Fraction (0–1) of background traits designated
 molecular, and — when \code{p_molecular_drivers = NULL} (default) — also the
@@ -199,6 +267,18 @@ module structure over SNPs, for testing the univariate clustering pipeline.
 The returned object feeds directly into \code{run_univariate_clustering()}, and
 the accompanying ground truth supports recovery scoring via
 \code{evaluate_univariate_simulation()}.
+
+By default the generative parameters are calibrated to the messy marginals
+of a real pleiotropy matrix: every observed cell is a significant hit
+(\code{min_abs_z = 4.5}), driver effects are heavy-tailed across traits
+(\code{effect_tail = 0.4}) with a minority of cells disagreeing with the target
+orientation (\code{p_negative = 0.05}), background densities are heavy-tailed
+per trait (\code{background_sparsity_sd = 1.2}), a proportion of pleiotropic
+\strong{hub} traits is planted automatically (\code{n_hub_traits = NULL}), and the
+target row is dense and significant at every SNP (\code{target_pattern = "dense"}). Simulations built this way are genuinely hard — recovery is
+partial and noisy rather than trivially perfect, so the validation gates
+and parameter trade-offs can actually be tested. Each realism knob can be
+turned off individually (e.g. \code{min_abs_z = 0}, \code{n_hub_traits = 0L}).
 
 Structure: \code{n_coloc_groups} SNPs (one coloc group / locus each) define the
 total number of SNPs (trait x SNP matrix columns). \code{K} module regions are

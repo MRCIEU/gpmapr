@@ -7,17 +7,17 @@ output:
 params:
   cluster_type: ebmf
   K: 3
-  module_sizes: [5, 20, 50]
+  module_sizes: [60, 25, 8]
   overlap: disjoint
   nested_effect_corr: 0.8
-  n_traits_per_module: [12, 5, 50]
+  n_traits_per_module: [20, 15, 10]
   trait_overlap: 0
   trait_effect_corr: 0.8
   n_traits: 600
   n_snps: 300
   p_molecular: 0.8
   p_molecular_drivers: 0.1
-  p_active_molecular: 0.02
+  p_active_molecular: 0.01
   min_snp_signals: 2
   trait_subset: all
   min_module_size: 3
@@ -34,10 +34,10 @@ params:
   ebmf_hard_assignment: false
   min_mean_internal: 0.3
   min_connectedness: 0.25
-  n_null: 10
+  n_null: 2
   alpha_membership: 0.05
   n_candidate_tier: 25
-  n_rep: 5
+  n_rep: 1
   frac_traits: 0.8
   stability_top_n: 20
   stability_threshold: 0.5
@@ -45,13 +45,20 @@ params:
   posterior_evidence_cap: 50
   redundancy_threshold: 0.9
   cores: 5
-  effect_size: 3
-  p_structural_zero: 0.05
-  p_spurious: 0.1
-  p_active_background: 0.2
+  effect_size: 6
+  effect_tail: 0.4
+  p_structural_zero: 0.2
+  p_spurious: 0.005
+  p_active_background: 0.006
+  background_sparsity_sd: 1.2
+  min_abs_z: 4.5
+  n_hub_traits: 15
+  hub_snp_fraction: [0.3, 1.0]
+  target_pattern: dense
+  p_negative: 0.05
   driver_sharing: 0
   snp_driver_groups: 1
-  n_reps: 5
+  n_reps: 2
 vignette: >
   %\VignetteIndexEntry{Simulation study of EBMF programs}
   %\VignetteEngine{knitr::rmarkdown}
@@ -146,9 +153,16 @@ simulation_defaults <- list(
   p_molecular_drivers = params$p_molecular_drivers,
   p_active_molecular = params$p_active_molecular,
   effect_size = params$effect_size,
+  effect_tail = params$effect_tail,
   p_structural_zero = params$p_structural_zero,
   p_spurious = params$p_spurious,
   p_active_background = params$p_active_background,
+  background_sparsity_sd = params$background_sparsity_sd,
+  min_abs_z = params$min_abs_z,
+  n_hub_traits = params$n_hub_traits,
+  hub_snp_fraction = params$hub_snp_fraction,
+  target_pattern = params$target_pattern,
+  p_negative = params$p_negative,
   driver_sharing = params$driver_sharing,
   snp_driver_groups = params$snp_driver_groups
 )
@@ -171,6 +185,28 @@ drives (`trait_effect_corr`), but not identical unless `trait_effect_corr = 1`.
 Increasing `trait_overlap` should therefore make EBMF programs increasingly
 overlap and the planted modules harder to tell apart.
 
+The generative parameters are **calibrated to the messy marginals of a real
+pleiotropy matrix** so the simulations are not trivially easy:
+
+- Every *observed* cell is a significant hit: background and spurious cells
+  are drawn as `sign * (min_abs_z + Exp)` with `min_abs_z = 4.5` (the
+  approximate floor of real coloc z-scores), and noise is encoded as absence
+  (`NA`) rather than as small observed values.
+- Driver effects are heavy-tailed across traits (`effect_tail`), with a
+  minority of cells disagreeing with the target-trait orientation
+  (`p_negative = 0.05`), matching the ~20% of negative cells seen in real
+  oriented matrices.
+- Background trait densities are heavy-tailed per trait
+  (`background_sparsity_sd`), so most background traits are observed at only a
+  handful of SNPs while a tail is dense — reproducing the real per-trait
+  sparsity distribution.
+- `n_hub_traits` pleiotropic **hub** traits are planted as dense, mostly
+  positive rows observed at a large fraction of SNPs, creating the global
+  baseline similarity and mega-factor structure that competes with the planted
+  modules (real matrices contain a core of such highly pleiotropic traits).
+- The target-trait row is dense and significant at **every** SNP
+  (`target_pattern = "dense"`), as real target rows are after orientation.
+
 A fraction `p_molecular` of the background traits is molecular
 (gene-annotated eQTL-like traits) and observed with per-SNP probability
 `p_active_molecular`, which is much sparser than the phenotype traits' density.
@@ -192,8 +228,13 @@ is immediately visible which check failed for each program:
 - `stability` — top-loading SNPs recovered with replication
   `>= stability_threshold` under trait subsampling.
 
-A program is `valid` only when every check passes. The analysis settings below
-are fixed across versions; only the generative input changes.
+A program is `valid` only when every check passes. Because the input now has
+realistic marginals, **recovery is expected to be partial and noisy**: the
+validation gates sit at the same levels that separate real modules from
+background, so only a subset of the discovered programs should be `valid`, and
+the pass rates below are the meaningful output for comparing input versions.
+The analysis settings below are fixed across versions; only the generative
+input changes.
 
 ```{r settings-table}
 settings_to_show <- c(
@@ -201,6 +242,9 @@ settings_to_show <- c(
   "overlap", "nested_effect_corr",
   "n_traits_per_module", "trait_overlap", "trait_effect_corr",
   "n_traits", "p_molecular", "p_molecular_drivers", "p_active_molecular",
+  "effect_size", "effect_tail", "p_structural_zero", "p_spurious",
+  "p_active_background", "background_sparsity_sd", "min_abs_z",
+  "n_hub_traits", "hub_snp_fraction", "target_pattern", "p_negative",
   "ebmf_lfsr_threshold", "ebmf_magnitude_threshold",
   "min_mean_internal", "min_connectedness", "n_rep",
   "frac_traits", "stability_top_n", "stability_threshold"
@@ -216,12 +260,23 @@ settings_values$n_traits <- params$n_traits
 settings_values$p_molecular <- params$p_molecular
 settings_values$p_molecular_drivers <- params$p_molecular_drivers
 settings_values$p_active_molecular <- params$p_active_molecular
+settings_values$effect_size <- params$effect_size
+settings_values$effect_tail <- params$effect_tail
+settings_values$p_structural_zero <- params$p_structural_zero
+settings_values$p_spurious <- params$p_spurious
+settings_values$p_active_background <- params$p_active_background
+settings_values$background_sparsity_sd <- params$background_sparsity_sd
+settings_values$min_abs_z <- params$min_abs_z
+settings_values$n_hub_traits <- params$n_hub_traits
+settings_values$hub_snp_fraction <- params$hub_snp_fraction
+settings_values$target_pattern <- params$target_pattern
+settings_values$p_negative <- params$p_negative
 settings_values$stability_top_n <- validation_settings$top_n
 knitr::kable(
   data.frame(
     parameter = settings_to_show,
     value = vapply(settings_to_show, function(nm) {
-      if (nm %in% c("module_sizes", "n_traits_per_module")) {
+      if (nm %in% c("module_sizes", "n_traits_per_module", "hub_snp_fraction")) {
         return(paste(settings_values[[nm]], collapse = ", "))
       }
       if (nm == "p_molecular_drivers" && is.null(settings_values[[nm]])) {
@@ -299,7 +354,16 @@ run_tier_one <- function(spec, rep) {
 }
 
 run_tier <- function(name, label, spec, n_reps) {
-  out <- lapply(seq_len(n_reps), function(i) run_tier_one(spec, i))
+  n_jobs <- 6L
+  out <- if (n_reps > 1 && .Platform$OS.type != "windows") {
+    parallel::mclapply(
+      seq_len(n_reps),
+      function(i) run_tier_one(spec, i),
+      mc.cores = min(n_jobs, n_reps)
+    )
+  } else {
+    lapply(seq_len(n_reps), function(i) run_tier_one(spec, i))
+  }
   list(
     summary = dplyr::bind_rows(lapply(out, `[[`, "summary")) |>
       dplyr::mutate(tier = label),
@@ -315,7 +379,8 @@ run_tier <- function(name, label, spec, n_reps) {
 The versions differ only in `trait_overlap` (and `trait_effect_corr`, which is
 inactive at zero overlap); every other generative parameter is identical. The
 **null** version keeps only `n_coloc_groups` (SNPs) and `n_traits`; `K = 0`
-means no modules are planted and the driver/module parameters are unused.
+means no modules are planted and the driver/module parameters are unused (it
+also turns the hub traits off, keeping it a pure structural null).
 
 ```{r tiers}
 tier_base <- list(
@@ -328,6 +393,14 @@ tier_base <- list(
   p_molecular_drivers = params$p_molecular_drivers,
   p_active_molecular = params$p_active_molecular,
   p_active_background = params$p_active_background,
+  background_sparsity_sd = params$background_sparsity_sd,
+  min_abs_z = params$min_abs_z,
+  effect_size = params$effect_size,
+  effect_tail = params$effect_tail,
+  n_hub_traits = params$n_hub_traits,
+  hub_snp_fraction = params$hub_snp_fraction,
+  target_pattern = params$target_pattern,
+  p_negative = params$p_negative,
   driver_sharing = params$driver_sharing,
   n_traits_per_module = params$n_traits_per_module,
   snp_driver_groups = params$snp_driver_groups
@@ -364,7 +437,11 @@ tier_specs <- list(
     noise_sd = moderate_noise_sd,
     p_molecular = params$p_molecular,
     p_active_molecular = params$p_active_molecular,
-    p_active_background = params$p_active_background
+    p_active_background = params$p_active_background,
+    background_sparsity_sd = params$background_sparsity_sd,
+    min_abs_z = params$min_abs_z,
+    p_negative = params$p_negative,
+    n_hub_traits = 0L
   )
 )
 
@@ -401,10 +478,22 @@ tier_param_table <- do.call(rbind, lapply(names(tier_specs), function(nm) {
     noise_sd = s$noise_sd,
     p_structural_zero = if (s$K > 0) s$p_structural_zero else "-",
     p_spurious = s$p_spurious,
+    effect_size = if (s$K > 0) s$effect_size else "-",
+    effect_tail = if (s$K > 0) s$effect_tail else "-",
+    min_abs_z = s$min_abs_z,
+    p_negative = s$p_negative,
+    p_active_background = s$p_active_background,
+    background_sparsity_sd = s$background_sparsity_sd,
+    n_hub_traits = s$n_hub_traits,
+    hub_snp_fraction = if (s$n_hub_traits > 0) {
+      paste(s$hub_snp_fraction, collapse = "-")
+    } else {
+      "-"
+    },
+    target_pattern = if (s$K > 0) s$target_pattern else "-",
     p_molecular = s$p_molecular,
     p_molecular_drivers = if (s$K > 0) s$p_molecular_drivers else "-",
     p_active_molecular = s$p_active_molecular,
-    p_active_background = s$p_active_background,
     driver_sharing = s$driver_sharing,
     sign_pattern = if (s$K > 0) s$sign_pattern else "-",
     snp_driver_groups = if (s$K > 0) s$snp_driver_groups else "-",
@@ -551,8 +640,11 @@ check_table <- function(which_tier) {
 ### Clean (no trait overlap)
 
 `trait_overlap = 0`: every module has its own exclusive driver set, so the
-planted modules have independent trait signatures and disjoint SNPs. Recovery
-should be near-perfect.
+planted modules have independent trait signatures and disjoint SNPs. Even here
+recovery should be **partial rather than near-perfect**: the realistic
+marginals (hub traits, significant-hit cells, sign disagreement, heavy-tailed
+effects) sit at the same difficulty level as real data, so only a subset of
+the discovered programs should pass the validation checks.
 
 ```{r clean-checks}
 clean_checks <- check_table("clean")
@@ -659,6 +751,14 @@ if (is.null(null_checks)) {
   simulations comes from shared trait drivers (`trait_overlap`), with
   correlated (`trait_effect_corr`) but non-identical effects, so the modules
   read as "different SNPs + overlapping trait signatures".
+- The generative marginals are calibrated to a real pleiotropy matrix: every
+  observed cell is a significant hit (`min_abs_z`), driver effects are
+  heavy-tailed across traits (`effect_tail`), a minority of cells disagree
+  with the target orientation (`p_negative`), background densities are
+  heavy-tailed per trait (`background_sparsity_sd`), and `n_hub_traits`
+  pleiotropic hubs create a global baseline factor. With this difficulty
+  level, recovery is expected to be partial and noisy — that is what makes the
+  per-check pass rates informative.
 - `ari_all` and `ari_structured` use each SNP's strongest assigned program as a
   hard projection, so they remain conventional partition metrics.
 - `factor_strength` and `factor_strength_per_snp` are reported scores only;
@@ -672,3 +772,6 @@ if (is.null(null_checks)) {
   Sparse molecular background traits frequently fall below `min_snp_signals`
   and are dropped before matrix construction, so `n_traits` is a nominal
   matrix size rather than the number of traits that survive to clustering.
+- The null version keeps `n_hub_traits = 0` so it remains a pure structural
+  null (no global factor to latch onto); the hub structure of the module
+  tiers is the thing being tested against.

@@ -13,7 +13,6 @@ enrich_snp_group_tissues(
   background = c("trait", "rest", "pooled"),
   baseline_snp_ids = NULL,
   bootstrap = TRUE,
-  permutations = 1000L,
   seed = 1L
 )
 }
@@ -39,21 +38,15 @@ large groups, including the tested group).}
 \item{bootstrap}{Compute bootstrap 95\% confidence intervals for the fold
 enrichment (\code{fe_ci_lower}/\code{fe_ci_upper}). Defaults to \code{TRUE}.}
 
-\item{permutations}{Number of link-label permutations for the empirical
-p-values (\code{p_perm}). Set to \code{0} to skip. Defaults to \code{1000L}.}
-
-\item{seed}{RNG seed for the bootstrap FE confidence intervals and the
-permutation p-values. Defaults to \code{1L}.}
+\item{seed}{RNG seed for the bootstrap FE confidence intervals. Defaults to
+\code{1L}.}
 }
 \value{
 A list with \code{by_group} (each with \code{tissues}, \code{comparison},
-\code{enriched}, \code{enriched_any}), \code{summary}, and \code{background} (baseline tissue
-counts). \code{comparison} adds three alternative significance summaries
-alongside the hypergeometric \code{fdr}: \code{fe_ci_lower}/\code{fe_ci_upper} (bootstrap
-95\% CI for \code{fold_enrichment}), \code{p_perm}/\code{fdr_perm} (permutation p and BH
-FDR), and \code{p_modules}/\code{fdr_modules} (one-sided Fisher against the pooled
-other modules). \code{sig_any} marks rows significant by any method; \code{enriched}
-is the FDR-only subset and \code{enriched_any} the any-method subset.
+\code{enriched}), \code{summary}, and \code{background} (baseline tissue counts).
+\code{comparison} adds a bootstrap \code{fe_ci_lower}/\code{fe_ci_upper} 95\% CI for
+\code{fold_enrichment} alongside the hypergeometric \code{fdr}. \code{enriched} is the
+FDR-only subset.
 }
 \description{
 For each SNP group of size at least \code{min_group_size}, count

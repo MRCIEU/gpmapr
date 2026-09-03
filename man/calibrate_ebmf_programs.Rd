@@ -19,7 +19,10 @@ calibrate_ebmf_programs(
 every null replicate.}
 
 \item{n_null}{Number of permutation replicates. More replicates sharpen the
-empirical quantiles; 20 is a reasonable minimum.}
+empirical quantiles; 20 is a reasonable minimum. Null replicates are fit
+greedy-only (no backfit): they only feed the descriptive membership
+calibration and never gate program validity, so skipping backfit makes
+them much cheaper at no cost to any downstream result.}
 
 \item{alpha_membership}{Membership FDR level for \code{core} cells.}
 

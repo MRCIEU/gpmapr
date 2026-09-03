@@ -739,7 +739,7 @@ test_that("summarise_snp_module_quality() does not gate on silhouette", {
   expect_true(all(out$mean_silhouette < 0))
 })
 
-test_that("enrichment reports bootstrap CI, permutation FDR, and module-vs-modules Fisher", {
+test_that("enrichment reports bootstrap CI and BH FDR", {
   coloc_groups <- data.frame(
     variant_id = c("s1", "s1", "s1", "s2", "s2", "s3", "s3", "s4", "s4", "s5", "s6"),
     gene_id = 1:11,
@@ -760,29 +760,24 @@ test_that("enrichment reports bootstrap CI, permutation FDR, and module-vs-modul
     coloc_groups = coloc_groups,
     min_group_size = 1,
     baseline_snp_ids = names(groups),
-    permutations = 50L,
     seed = 1L
   )
   cmp <- out$by_group[[1]]$comparison
   expect_true(all(
-    c(
-      "fe_ci_lower", "fe_ci_upper", "p_perm", "fdr_perm",
-      "p_modules", "fdr_modules", "sig_any"
-    ) %in% names(cmp)
+    c("fe_ci_lower", "fe_ci_upper", "fdr") %in% names(cmp)
   ))
-  expect_true("enriched_any" %in% names(out$by_group[[1]]))
-  expect_true("n_enriched_categories_any" %in% names(out$summary))
-  expect_true("top_enriched_category_any" %in% names(out$summary))
+  expect_true("enriched" %in% names(out$by_group[[1]]))
+  expect_true("n_enriched_categories" %in% names(out$summary))
+  expect_true("top_enriched_category" %in% names(out$summary))
 
   out_tis <- enrich_snp_group_tissues(
     groups = groups,
     coloc_groups = coloc_groups,
     min_group_size = 1,
     background = "rest",
-    permutations = 50L,
     seed = 1L
   )
-  expect_true("fdr_perm" %in% names(out_tis$by_group[[1]]$comparison))
+  expect_true("fdr" %in% names(out_tis$by_group[[1]]$comparison))
 })
 
 test_that("genes_at_snps can include situated genes", {

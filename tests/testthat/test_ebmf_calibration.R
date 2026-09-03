@@ -131,9 +131,16 @@ test_that("summarise_ebmf_programs folds filters and additional scores", {
   expect_true(all(is.na(ps$programs$factor_strength_per_snp) |
                     ps$programs$factor_strength_per_snp >= 0))
   expect_true(all(ps$programs$status == "valid" |
-                    grepl("^(size|internal_similarity|connectedness|stability)",
+                    grepl("^(size|internal_similarity|connectedness|stability|redundancy)",
                           ps$programs$status)))
   expect_true(is.null(ps$factor_correlation) || is.matrix(ps$factor_correlation))
+  expect_true(all(c(
+    "max_pair_redundancy", "most_redundant_program", "redundancy_pass"
+  ) %in% names(ps$programs)))
+  expect_true(all(ps$programs$redundancy_pass %in% c(TRUE, FALSE)))
+  expect_true(all(is.na(ps$programs$max_pair_redundancy) |
+                    (ps$programs$max_pair_redundancy >= 0 &
+                       ps$programs$max_pair_redundancy <= 1)))
   expect_setequal(
     names(ps),
     c("programs", "memberships", "assigned", "factor_correlation",
@@ -161,8 +168,47 @@ test_that("factor strength is reported but does not gate status", {
                           ps$programs$factor_strength /
                             sqrt(ps$programs$n_snps_filtered)) < tol))
   expect_true(all(ps$programs$status == "valid" |
-                    grepl("^(size|internal_similarity|connectedness|stability)",
+                    grepl("^(size|internal_similarity|connectedness|stability|redundancy)",
                           ps$programs$status)))
+})
+
+test_that("reciprocal SNP-containment redundancy flags near-duplicate programs", {
+  # A = {s1..s10}, B = {s1..s9}: shared = 9, pair = min(9/10, 9/9) = 0.9
+  assigned <- data.frame(
+    snp_id = c(paste0("s", 1:10), paste0("s", 1:9)),
+    program = c(rep(1L, 10), rep(2L, 9))
+  )
+  red <- .program_membership_redundancy(assigned)
+  expect_equal(red$program, 1:2)
+  expect_equal(round(red$max_pair_redundancy, 3), c(0.9, 0.9))
+  expect_equal(red$most_redundant_program, c(2L, 1L))
+
+  # Disjoint programs -> pair redundancy 0
+  assigned2 <- data.frame(
+    snp_id = c(paste0("s", 1:10), paste0("t", 1:10)),
+    program = c(rep(1L, 10), rep(2L, 10))
+  )
+  red2 <- .program_membership_redundancy(assigned2)
+  expect_equal(red2$max_pair_redundancy, c(0, 0))
+  expect_true(all(red2$max_pair_redundancy < 0.9))
+
+  # Disjoint programs -> pair redundancy 0 (not NA), partner still reported
+  assigned3 <- data.frame(
+    snp_id = c("s1", "s2", "s3"),
+    program = c(1L, 1L, 2L)
+  )
+  red3 <- .program_membership_redundancy(assigned3)
+  expect_equal(red3$program, 1:2)
+  expect_equal(red3$max_pair_redundancy, c(0, 0))
+  expect_equal(red3$most_redundant_program, c(2L, 1L))
+
+  # A single program (no partner) reports NA redundancy
+  red4 <- .program_membership_redundancy(
+    data.frame(snp_id = c("s1", "s2"), program = c(1L, 1L))
+  )
+  expect_equal(red4$program, 1L)
+  expect_true(is.na(red4$max_pair_redundancy[1]))
+  expect_true(is.na(red4$most_redundant_program[1]))
 })
 
 test_that("summarise_ebmf_programs checks stability only for programs passing coherence", {

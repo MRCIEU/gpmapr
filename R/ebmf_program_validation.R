@@ -6,7 +6,7 @@
 #' evidence and factor distinctiveness) into a single per-program table with
 #' pass/fail flags and an overall `status`.
 #'
-#' Filters applied (a program must pass all three to get `status == "valid"`):
+#' Filters applied (a program must pass all four to get `status == "valid"`):
 #' \itemize{
 #'   \item **Size / internal coherence** — at least `min_module_size`
 #'   EBMF-supported SNPs (`n_snps`), mean internal SNP similarity
@@ -25,6 +25,13 @@
 #'   flashier `n_rep` times, it is only run for programs that pass the
 #'   internal-coherence checks; programs failing coherence are already rejected
 #'   and are not re-checked.
+#'   \item **Factor distinctiveness** — for each program, compare its assigned
+#'   (lFSR/magnitude-filtered) SNP membership set to every other program via the
+#'   reciprocal containment score `pair_redundancy(A,B) = min(shared / n_snps_A,
+#'   shared / n_snps_B)`; `max_pair_redundancy` is the maximum such score across
+#'   all other programs and `most_redundant_program` is the partner that
+#'   achieves it. The program fails (`redundancy_pass == FALSE`) when
+#'   `max_pair_redundancy >= snp_redundancy_threshold`.
 #' }
 #'
 #' Additional scores (reported, but not used to gate `status`):
@@ -42,6 +49,9 @@
 #'   correlation of the program's SNP loading vector (`F_pm`) with any other
 #'   program; `redundant` flags programs whose maximum correlation exceeds
 #'   `redundancy_threshold`.
+#'   \item `max_pair_redundancy` / `most_redundant_program` — the reciprocal
+#'   SNP-containment redundancy score and its partner program; reported for
+#'   context alongside the gating `redundancy_pass` described above.
 #' }
 #' @param clustering_result Result of `run_univariate_clustering()` with
 #'   `cluster_type = "ebmf"`.
@@ -76,6 +86,8 @@
 #'   preserving the ordering. Defaults to `50`.
 #' @param redundancy_threshold Maximum absolute factor-loading correlation with
 #'   another program before `redundant` is flagged.
+#' @param snp_redundancy_threshold Maximum reciprocal SNP-containment
+#'   (`max_pair_redundancy`) before `redundancy_pass` fails. Defaults to `0.9`.
 #' @param seed RNG seed.
 #' @param cores Number of cores for the parallel trait-subsample refits (passed
 #'   to `stability_ebmf_programs()`). Defaults to `1` (serial).
@@ -108,6 +120,7 @@ summarise_ebmf_programs <- function(clustering_result,
                                     posterior_stat = c("median", "mean"),
                                     posterior_evidence_cap = 50,
                                     redundancy_threshold = 0.9,
+                                    snp_redundancy_threshold = 0.9,
                                     seed = 1,
                                     cores = 1,
                                     verbose = TRUE) {
@@ -290,11 +303,24 @@ summarise_ebmf_programs <- function(clustering_result,
     }
   }
 
+  redundancy_by_program <- .program_membership_redundancy(assigned)
+  out <- out |>
+    dplyr::left_join(redundancy_by_program, by = "program") |>
+    dplyr::mutate(
+      max_pair_redundancy = tidyr::replace_na(max_pair_redundancy, NA_real_),
+      most_redundant_program = as.integer(
+        tidyr::replace_na(most_redundant_program, NA_integer_)
+      ),
+      redundancy_pass = is.na(max_pair_redundancy) |
+        max_pair_redundancy < snp_redundancy_threshold
+    )
+
   pass_cols <- cbind(
     size = out$size_pass,
     internal_similarity = out$internal_similarity_pass,
     connectedness = out$connectedness_pass,
-    stability = out$stability_pass
+    stability = out$stability_pass,
+    redundancy = out$redundancy_pass
   )
   fail_reason <- apply(!pass_cols, 1, function(f) {
     f[is.na(f)] <- TRUE
@@ -337,6 +363,7 @@ summarise_ebmf_programs <- function(clustering_result,
       posterior_stat = posterior_stat,
       posterior_evidence_cap = posterior_evidence_cap,
       redundancy_threshold = redundancy_threshold,
+      snp_redundancy_threshold = snp_redundancy_threshold,
       seed = seed,
       cores = cores
     )
@@ -385,6 +412,69 @@ summarise_ebmf_programs <- function(clustering_result,
     separation = mean_int - mean_ext,
     connectedness = connectedness,
     n_internal_pairs = n_pairs,
+    stringsAsFactors = FALSE
+  ))
+}
+
+
+# Reciprocal SNP-containment redundancy between programs, computed on the
+# assigned (lFSR/magnitude-gated) membership set. For every pair:
+#   pair_redundancy(A, B) = min(|A n B| / |A|, |A n B| / |B|)
+# and each program reports its maximum pair score plus the partner that
+# achieves it. Programs with no assigned SNPs (or only one program) have no
+# comparable partner and get NA / NA_integer_.
+.program_membership_redundancy <- function(assigned) {
+  empty <- data.frame(
+    program = integer(0),
+    max_pair_redundancy = numeric(0),
+    most_redundant_program = integer(0),
+    stringsAsFactors = FALSE
+  )
+  if (is.null(assigned) || nrow(assigned) == 0) {
+    return(empty)
+  }
+
+  membership_wide <- as.matrix(table(assigned$snp_id, assigned$program))
+  program_ids <- as.integer(colnames(membership_wide))
+  if (length(program_ids) == 0) {
+    return(empty)
+  }
+  if (length(program_ids) == 1) {
+    return(data.frame(
+      program = program_ids,
+      max_pair_redundancy = NA_real_,
+      most_redundant_program = NA_integer_,
+      stringsAsFactors = FALSE
+    ))
+  }
+
+  M <- membership_wide
+  sizes <- colSums(M)
+  shared <- as.matrix(crossprod(M))
+
+  n_prog <- ncol(M)
+  max_pair_redundancy <- rep(NA_real_, n_prog)
+  most_redundant_program <- rep(NA_integer_, n_prog)
+  if (n_prog >= 2) {
+    for (i in seq_len(n_prog)) {
+      if (sizes[i] == 0) next
+      row_vals <- rep(NA_real_, n_prog)
+      for (j in seq_len(n_prog)) {
+        if (i == j || sizes[j] == 0) next
+        s <- shared[i, j]
+        row_vals[j] <- min(s / sizes[i], s / sizes[j])
+      }
+      if (all(!is.finite(row_vals))) next
+      best <- which.max(row_vals)
+      max_pair_redundancy[i] <- row_vals[best]
+      most_redundant_program[i] <- program_ids[best]
+    }
+  }
+
+  return(data.frame(
+    program = program_ids,
+    max_pair_redundancy = max_pair_redundancy,
+    most_redundant_program = most_redundant_program,
     stringsAsFactors = FALSE
   ))
 }

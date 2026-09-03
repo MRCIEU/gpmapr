@@ -80,10 +80,10 @@ and trait-subsampling stability —
 plus descriptive evidence scores (aggregate posterior evidence and factor
 distinctiveness) before interpretation.
 
-We use **BMI** (trait id `1992`).
+We use **Type 2 Diabetes** (trait id `114`).
 
 ```{r params}
-target_trait_id <- 1992
+target_trait_id <- 114
 min_group_size <- 5
 max_snp_fraction <- 0.8
 top_n_traits <- 10L
@@ -230,6 +230,7 @@ drop_trait_ids <- setdiff(
 )
 
 X <- X[!rownames(X) %in% drop_trait_ids, , drop = FALSE]
+data.table::fwrite(X, file = "pleiotropy_matrix_filtered.csv", row.names = TRUE)
 pleiotropy$trait_info <- pleiotropy$trait_info |>
   dplyr::filter(!as.character(trait_id) %in% drop_trait_ids)
 
@@ -377,9 +378,15 @@ an overall `status`:
 - **max_abs_factor_corr / redundant** — maximum absolute correlation of the
   program's SNP loading vector with any other program; programs exceeding
   `redundancy_threshold` are flagged `redundant`.
+- **max_pair_redundancy / most_redundant_program / redundancy_pass** —
+  factor distinctiveness: for each program, the reciprocal SNP containment
+  with every other program (`pair_redundancy = min(shared / n_snps_A,
+  shared / n_snps_B)` on the assigned membership sets). The program fails
+  (`redundancy_pass = FALSE`) when `max_pair_redundancy >= 0.9`, i.e. it
+  captures essentially the same SNP set as another program.
 
-A program is `valid` if it passes all three filters (`size`, `internal`,
-`stability`); the failure reason is recorded in `status`.
+A program is `valid` if it passes all four filters (`size`, `internal`,
+`stability`, `redundancy`); the failure reason is recorded in `status`.
 
 ```{r step4-quality, results='asis'}
 # if (cluster_type == "louvain") {
@@ -449,6 +456,7 @@ A program is `valid` if it passes all three filters (`size`, `internal`,
           mean_internal_similarity, connectedness,
           factor_strength, factor_strength_per_snp, replication,
           posterior_evidence, max_abs_factor_corr, redundant,
+          max_pair_redundancy, most_redundant_program, redundancy_pass,
           size_pass, internal_pass,
           stability_pass, stability_checked, status
         ) |>
@@ -460,12 +468,18 @@ A program is `valid` if it passes all three filters (`size`, `internal`,
           replication = round(replication, 3),
           posterior_evidence = round(posterior_evidence, 2),
           max_abs_factor_corr = round(max_abs_factor_corr, 3),
+          max_pair_redundancy = round(max_pair_redundancy, 3),
           replication = dplyr::if_else(
             is.na(replication), "--", as.character(replication)
           ),
           redundant = dplyr::if_else(redundant, "yes", "no"),
+          most_redundant_program = dplyr::if_else(
+            is.na(most_redundant_program), "--",
+            as.character(most_redundant_program)
+          ),
           size_pass = dplyr::if_else(size_pass, "pass", "fail"),
           internal_pass = dplyr::if_else(internal_pass, "pass", "fail"),
+          redundancy_pass = dplyr::if_else(redundancy_pass, "pass", "fail"),
           stability_pass = dplyr::case_when(
             !stability_checked ~ "n/a (not checked)",
             stability_pass ~ "pass",
@@ -477,6 +491,7 @@ A program is `valid` if it passes all three filters (`size`, `internal`,
           mean_internal_similarity, connectedness,
           factor_strength_pct, factor_strength_per_snp_pct, replication, posterior_evidence,
           max_abs_factor_corr, redundant,
+          max_pair_redundancy, most_redundant_program, redundancy_pass,
           size_pass, internal_pass, stability_pass, status
         ),
       row.names = FALSE,
@@ -487,10 +502,20 @@ A program is `valid` if it passes all three filters (`size`, `internal`,
         "factor_strength (as % of observed matrix signal) and ",
         "factor_strength/sqrt(n_snps_filtered) are reported for context but do not gate ",
         "status; replication is only checked for programs passing internal ",
-        "coherence (otherwise --); status is 'valid' or lists the failed checks ",
-        "(size; internal; stability)."
+        "coherence (otherwise --); max_pair_redundancy is the reciprocal SNP ",
+        "containment with the most overlapping program (most_redundant_program), ",
+        "and redundancy_pass fails at >= 0.9; status is 'valid' or lists the ",
+        "failed checks (size; internal; stability; redundancy)."
       )
     )
+  )
+
+  n_snps_total <- ncol(X)
+  n_unique_snps_all <- dplyr::n_distinct(program_summary$assigned$snp_id)
+  n_unique_snps_valid <- dplyr::n_distinct(
+    program_summary$assigned$snp_id[
+      program_summary$assigned$program %in% valid_ids
+    ]
   )
 
   print(
@@ -502,10 +527,21 @@ A program is `valid` if it passes all three filters (`size`, `internal`,
           n_fail_size = sum(!size_pass),
           n_fail_internal = sum(!internal_pass),
           n_fail_stability = sum(!stability_pass),
-          n_redundant = sum(redundant, na.rm = TRUE)
+          n_fail_redundancy = sum(!redundancy_pass, na.rm = TRUE),
+          n_redundant = sum(redundant, na.rm = TRUE),
+          n_unique_snps_all = n_unique_snps_all,
+          n_unique_snps_valid = n_unique_snps_valid,
+          pct_of_total_snps_all = round(100 * n_unique_snps_all / n_snps_total, 1),
+          pct_of_total_snps_valid = round(100 * n_unique_snps_valid / n_snps_total, 1)
         ),
       row.names = FALSE,
-      caption = "EBMF program validation summary (factor strength is reported but does not gate status)"
+      caption = paste0(
+        "EBMF program validation summary (factor strength is reported but does not gate ",
+        "status). n_unique_snps counts each SNP once even when it belongs to multiple ",
+        "programs (all = across all programs, valid = across valid programs only); ",
+        "n_fail_redundancy counts programs with reciprocal SNP containment >= 0.9; ",
+        "pct_of_total_snps is relative to the trait's ", n_snps_total, " SNPs."
+      )
     )
   )
 
@@ -556,12 +592,12 @@ if (is.data.frame(clusters_analysis) && nrow(clusters_analysis) >= 2) {
 ### Program overlap
 
 Because EBMF programs are soft, the same SNP can belong to several programs.
-The UpSet plot below shows, for every observed intersection of programs, how
-many SNPs are shared by exactly that combination (a Venn diagram generalised to
-any number of programs). The left-hand bar chart is each program's size; the
-dot matrix marks which programs each intersection involves.
+The UpSet plot below shows all valid programs, and for every observed
+intersection how many SNPs are shared by exactly that combination (a Venn
+diagram generalised to any number of programs). The left-hand bar chart is each
+program's size; the dot matrix marks which programs each intersection involves.
 
-```{r step4-overlap, fig.height = 5.5, fig.width = 9}
+```{r step4-overlap, fig.height = 8, fig.width = 9}
 if (is.data.frame(clusters_analysis) && nrow(clusters_analysis) >= 2) {
   members_df <- if (is.data.frame(clusters_analysis)) {
     clusters_analysis |>
@@ -587,9 +623,9 @@ if (is.data.frame(clusters_analysis) && nrow(clusters_analysis) >= 2) {
       )
     set_order <- names(sort(colSums(membership[, -1, drop = FALSE]),
                             decreasing = TRUE))
-    if (n_programs > 12) {
-      cat("More than 12 programs; showing the 12 largest only.\n")
-      set_order <- set_order[seq_len(12)]
+    if (n_programs > 40) {
+      cat("More than 40 programs; showing the 40 largest only.\n")
+      set_order <- set_order[seq_len(40)]
     }
     plot_ok <- tryCatch({
       membership_plot <- as.data.frame(membership[, c("snp_id", set_order), drop = FALSE])
@@ -600,7 +636,7 @@ if (is.data.frame(clusters_analysis) && nrow(clusters_analysis) >= 2) {
         sets = set_order,
         order.by = "freq",
         nsets = length(set_order),
-        nintersects = 40,
+        nintersects = 100,
         empty.intersections = "off",
         main.bar.color = "#1b9e77",
         sets.bar.color = "#7570b3",
@@ -656,20 +692,14 @@ the whole GPMap universe. Each module is compared to the **rest of the trait**
 (leave-one-out): observed link share vs expected share, with fold enrichment.
 
 Annotation tables show the top elevated categories/tissues even when FDR is not
-significant; FDR is reported when it passes 0.05. Hits that are significant by
-any of the three methods at 0.05 are shown in **bold**.
+significant; FDR is reported when it passes 0.05.
 
-Each hit is scored with three BH-corrected significance summaries, all
-thresholded at 0.05:
+Each hit is scored with a BH-corrected significance summary, thresholded at
+0.05:
 
 - **FDR** — hypergeometric test of the module vs the rest of the trait.
-- **perm** — permutation p-values from shuffling link labels across the
-  baseline, BH-corrected within the module (`fdr_perm`).
-- **vsmod** — one-sided Fisher test of the module against the pooled links of
-  the *other* modules, BH-corrected within the module (`fdr_modules`).
 
-They agree on strong signal and differ only on marginal, low-count calls. The
-bootstrap `CI` for the fold enrichment shows how precisely the ratio is
+The bootstrap `CI` for the fold enrichment shows how precisely the ratio is
 estimated; because modules are small, a big ratio built on a few links carries
 a wide interval that includes 1 (the null), so read the CI together with the
 FDR rather than alone.
@@ -746,7 +776,8 @@ if (!has_analysis_groups) {
   }
   top <- utils::head(elevated, max_n)
   labels <- vapply(seq_len(nrow(top)), function(i) {
-    tag <- .method_tag(top$fdr[i], top$fdr_perm[i], top$fdr_modules[i])
+    sig <- is.finite(top$fdr[i]) && top$fdr[i] <= 0.05
+    fdr_txt <- if (sig) paste0(", FDR=", signif(top$fdr[i], 3)) else ""
     ci <- if (is.finite(top$fe_ci_lower[i]) && is.finite(top$fe_ci_upper[i])) {
       paste0(
         ", CI=[", signif(top$fe_ci_lower[i], 2),
@@ -755,9 +786,8 @@ if (!has_analysis_groups) {
     } else {
       ""
     }
-    fdr_txt <- if (nzchar(tag)) paste0(", ", tag) else ""
     label <- top[[label_col]][i]
-    if (nzchar(tag)) {
+    if (sig) {
       label <- paste0("<b>", label, "</b>")
     }
     paste0(
@@ -795,7 +825,7 @@ if (!is.null(group_traits) && length(group_traits$by_group) > 0) {
   specific_traits <- dplyr::bind_rows(lapply(group_traits$by_group, function(x) {
     passing <- x$traits |>
       dplyr::filter(passes_min_specificity) |>
-      utils::head(3L)
+      utils::head(6L)
     data.frame(
       group = x$group,
       module_specific_traits = if (nrow(passing) == 0) {
@@ -831,37 +861,76 @@ if (!is.null(group_traits) && length(group_traits$by_group) > 0) {
     ) |>
     dplyr::count(group, name = "n_unique_snps")
 
+  # All significant hits per module, not just the top one.
+  .format_enriched_all <- function(by_group_list, value_col) {
+    vapply(by_group_list, function(x) {
+      if (is.null(x$enriched) || nrow(x$enriched) == 0) {
+        return("none")
+      }
+      hits <- x$enriched |>
+        dplyr::filter(is.finite(fold_enrichment), is.finite(fdr)) |>
+        dplyr::arrange(fdr, dplyr::desc(fold_enrichment))
+      if (nrow(hits) == 0) {
+        return("none")
+      }
+      paste0(
+        hits[[value_col]],
+        " (FE=", signif(hits$fold_enrichment, 2),
+        ", FDR=", signif(hits$fdr, 3), ")",
+        collapse = "<br>"
+      )
+    }, character(1))
+  }
+  .format_pathways_all <- function(by_group_list, source) {
+    vapply(by_group_list, function(x) {
+      if (is.null(x$pathways) || nrow(x$pathways) == 0) {
+        return("none")
+      }
+      hits <- x$pathways[
+        x$pathways$source == source &
+          !is.na(x$pathways$fdr) & x$pathways$fdr <= 0.05,
+        ,
+        drop = FALSE
+      ]
+      if (nrow(hits) == 0) {
+        return("none")
+      }
+      hits <- hits[order(hits$fdr), , drop = FALSE]
+      paste0(
+        hits$description, " (FDR=", signif(hits$fdr, 3), ")",
+        collapse = "<br>"
+      )
+    }, character(1))
+  }
+
+  enrichment_overview <- data.frame(
+    group = vapply(
+      group_categories$by_group,
+      function(x) as.character(x$group),
+      character(1)
+    ),
+    top_enriched_category = .format_enriched_all(
+      group_categories$by_group, "trait_category"
+    ),
+    top_enriched_tissue = .format_enriched_all(group_tissues$by_group, "tissue"),
+    top_enriched_reactome = .format_pathways_all(module_enrichment$by_group, "Reactome"),
+    top_enriched_kegg = .format_pathways_all(module_enrichment$by_group, "KEGG"),
+    top_enriched_phenotype = .format_pathways_all(module_enrichment$by_group, "HP"),
+    stringsAsFactors = FALSE
+  )
+
   overview <- dplyr::full_join(
     group_traits$summary |>
       dplyr::select(group, n_snps),
     unique_by_group,
     by = "group"
   ) |>
-    dplyr::full_join(
-      group_categories$summary |>
-        dplyr::select(group, top_enriched_category_any),
-      by = "group"
-    ) |>
-    dplyr::full_join(
-    group_tissues$summary |>
-      dplyr::select(group, top_enriched_tissue_any),
-    by = "group"
-  ) |>
-    dplyr::full_join(
-      module_enrichment$summary |>
-        dplyr::select(group, top_enriched_reactome, top_enriched_kegg),
-      by = "group"
-    ) |>
-    dplyr::full_join(
-      module_enrichment$summary |>
-        dplyr::select(group, top_enriched_phenotype),
-      by = "group"
-    ) |>
+    dplyr::full_join(enrichment_overview, by = "group") |>
     dplyr::left_join(specific_traits, by = "group") |>
     dplyr::mutate(
       n_unique_snps = as.integer(tidyr::replace_na(n_unique_snps, 0L)),
-      top_enriched_category_any = tidyr::replace_na(top_enriched_category_any, "none"),
-      top_enriched_tissue_any = tidyr::replace_na(top_enriched_tissue_any, "none"),
+      top_enriched_category = tidyr::replace_na(top_enriched_category, "none"),
+      top_enriched_tissue = tidyr::replace_na(top_enriched_tissue, "none"),
       top_enriched_reactome = tidyr::replace_na(top_enriched_reactome, "none"),
       top_enriched_kegg = tidyr::replace_na(top_enriched_kegg, "none"),
       top_enriched_phenotype = tidyr::replace_na(top_enriched_phenotype, "none")
@@ -874,7 +943,7 @@ if (!is.null(group_traits) && length(group_traits$by_group) > 0) {
   cat("\n\n### Overview of significant annotations across modules\n\n")
   print(knitr::kable(
     overview,
-    caption = "Top module-specific traits and significant category, tissue, pathway (Reactome and KEGG separately) and phenotype (HP) annotations; n_snps = SNPs in the program, n_unique_snps = SNPs not present in any other program; trait values are specificity scores, and enrichment method tags are shown when FDR, permutation FDR, or module-vs-modules Fisher passes 0.05",
+    caption = "Top 6 module-specific traits and all significant category, tissue, pathway (Reactome and KEGG separately) and phenotype (HP) hits; n_snps = SNPs in the program, n_unique_snps = SNPs not present in any other program; trait values are specificity scores, and FDR is the BH-corrected hypergeometric enrichment (threshold 0.05)",
     row.names = FALSE,
     escape = FALSE
   ))
@@ -970,120 +1039,103 @@ if (!is.null(group_traits) && length(group_traits$by_group) > 0) {
 }
 ```
 
-## Step 6: Module typology by SNP pleiotropy
+## Step 6: Pleiotropy of program-unique vs shared SNPs
 
-Each SNP in GPMap carries a pleiotropy score: the number of distinct trait
-categories and the number of distinct protein-coding genes it is associated
-with via coloc groups (`get_all_variant_pleiotropies()`). These describe how
-**broad** a SNP's biology is, independent of its effect profile. They give
-modules a second axis of description:
+Because EBMF programs are soft, a SNP can be assigned to exactly one valid
+program (**unique**) or to several (**shared**). If programs capture distinct
+biological programmes, SNPs that uniquely define a single program should be
+more specific — i.e. carry a lower pleiotropy score (fewer distinct trait
+categories and protein-coding genes via coloc groups) than SNPs whose signal is
+shared across programs. We test that here with
+`get_all_variant_pleiotropies()`.
 
-- **Breadth** — the mean per-SNP pleiotropy within the module (trait-category
-  pleiotropy and gene pleiotropy).
-- **Tightness** — separation (internal minus external similarity).
+```{r step6-unique-vs-shared-pleiotropy, fig.width=7, fig.height=5, out.width="100%"}
+if (is.data.frame(clusters_analysis) && nrow(clusters_analysis) > 0) {
+  members_df <- clusters_analysis |>
+    dplyr::select(snp_id, group) |>
+    dplyr::distinct()
 
-Plotting the two yields a descriptive module typology (not a filter, and not a
-reliability criterion):
-
-- **tight + narrow** — a specific biological program (e.g. a tissue module);
-- **tight + broad** — a regulatory hub affecting many categories or genes;
-- **loose + broad** — generic background shared across the trait;
-- **loose + narrow** — a private, low-signal module.
-
-```{r step6-pleiotropy-typology, fig.width=7, fig.height=5, out.width="100%"}
-variant_pleiotropy <- get_all_variant_pleiotropies()
-module_pleiotropy <- summarise_snp_group_pleiotropy(
-  groups = clusters_analysis,
-  variant_pleiotropies = variant_pleiotropy,
-  min_group_size = min_module_size
-)
-
-module_annotation_status <- group_categories$summary |>
-  dplyr::select(group, top_enriched_category_any) |>
-  dplyr::full_join(
-    group_tissues$summary |>
-      dplyr::select(group, top_enriched_tissue_any),
-    by = "group"
-  ) |>
-  dplyr::full_join(
-    module_enrichment$summary |>
-      dplyr::select(
-        group, top_enriched_reactome, top_enriched_kegg, top_enriched_phenotype
-      ),
-    by = "group"
-  ) |>
-  dplyr::mutate(
-    annotated = !(is.na(top_enriched_category_any) &
-      is.na(top_enriched_tissue_any) &
-      is.na(top_enriched_reactome) &
-      is.na(top_enriched_kegg) &
-      is.na(top_enriched_phenotype))
-  ) |>
-  dplyr::select(group, annotated)
-
-quality_for_typology <- if (cluster_type == "louvain") {
-  module_quality |>
-    dplyr::mutate(cluster = as.character(cluster)) |>
-    dplyr::select(cluster, separation, mean_internal_similarity, connectedness)
-} else {
-  program_summary$programs |>
-    dplyr::mutate(cluster = as.character(program)) |>
-    dplyr::select(cluster, separation, mean_internal_similarity, connectedness)
-}
-
-typology <- module_pleiotropy |>
-  dplyr::left_join(quality_for_typology, by = c("group" = "cluster")) |>
-  dplyr::left_join(module_annotation_status, by = "group")
-
-typology_long <- typology |>
-  tidyr::pivot_longer(
-    c(mean_trait_category_pleiotropy, mean_gene_pleiotropy),
-    names_to = "metric",
-    values_to = "pleiotropy"
-  ) |>
-  dplyr::mutate(
-    metric = dplyr::if_else(
-      metric == "mean_trait_category_pleiotropy",
-      "trait-category pleiotropy (distinct categories per SNP)",
-      "gene pleiotropy (distinct genes per SNP)"
+  snp_class <- members_df |>
+    dplyr::count(snp_id, name = "n_programs") |>
+    dplyr::mutate(
+      membership_class = dplyr::if_else(n_programs == 1, "unique", "shared")
     )
-  )
 
-if (nrow(typology_long) >= 2) {
-  medians <- typology_long |>
-    dplyr::group_by(metric) |>
-    dplyr::summarise(mx = stats::median(separation), my = stats::median(pleiotropy))
+  variant_pleiotropy <- get_all_variant_pleiotropies() |>
+    dplyr::mutate(variant_id = as.character(variant_id)) |>
+    dplyr::select(
+      variant_id, distinct_trait_categories, distinct_protein_coding_genes
+    )
 
-  print(ggplot2::ggplot(
-    typology_long,
-    ggplot2::aes(x = separation, y = pleiotropy, size = n_snps, color = annotated)
-  ) +
-    ggplot2::geom_vline(
-      data = medians,
-      ggplot2::aes(xintercept = mx),
-      linetype = "dashed",
-      alpha = 0.5
+  pleio <- snp_class |>
+    dplyr::left_join(
+      variant_pleiotropy,
+      by = c("snp_id" = "variant_id")
+    ) |>
+    tidyr::pivot_longer(
+      c(distinct_trait_categories, distinct_protein_coding_genes),
+      names_to = "metric",
+      values_to = "pleiotropy"
+    ) |>
+    dplyr::mutate(
+      metric = dplyr::if_else(
+        metric == "distinct_trait_categories",
+        "trait-category pleiotropy (distinct categories per SNP)",
+        "gene pleiotropy (distinct genes per SNP)"
+      ),
+      membership_class = factor(membership_class, levels = c("unique", "shared"))
+    )
+
+  print(knitr::kable(
+    pleio |>
+      dplyr::group_by(membership_class, metric) |>
+      dplyr::summarise(
+        n_snps = sum(!is.na(pleiotropy)),
+        mean_pleiotropy = round(mean(pleiotropy, na.rm = TRUE), 2),
+        median_pleiotropy = round(stats::median(pleiotropy, na.rm = TRUE), 2),
+        .groups = "drop"
+      ),
+    row.names = FALSE,
+    caption = paste0(
+      "Pleiotropy of program-unique vs shared SNPs across valid programs (n = ",
+      dplyr::n_distinct(snp_class$snp_id), " SNPs)"
+    )
+  ))
+
+  test_tbl <- lapply(unique(pleio$metric), function(m) {
+    sub <- pleio[pleio$metric == m, ]
+    p <- tryCatch(
+      stats::wilcox.test(pleiotropy ~ membership_class, data = sub)$p.value,
+      error = function(e) NA_real_
+    )
+    data.frame(metric = m, wilcoxon_p = signif(p, 3), stringsAsFactors = FALSE)
+  }) |>
+    dplyr::bind_rows()
+  print(knitr::kable(
+    test_tbl,
+    row.names = FALSE,
+    caption = "Wilcoxon rank-sum test comparing pleiotropy of unique vs shared SNPs"
+  ))
+
+  if (nrow(pleio) > 0) {
+    print(ggplot2::ggplot(
+      pleio,
+      ggplot2::aes(x = membership_class, y = pleiotropy, fill = membership_class)
     ) +
-    ggplot2::geom_hline(
-      data = medians,
-      ggplot2::aes(yintercept = my),
-      linetype = "dashed",
-      alpha = 0.5
-    ) +
-    ggplot2::geom_point(alpha = 0.75) +
-    ggplot2::scale_size_area(max_size = 8) +
-    ggplot2::facet_wrap(~metric, scales = "free_y") +
-    ggplot2::scale_color_manual(
-      values = c(`FALSE` = "grey60", `TRUE` = "#c2571b")
-    ) +
-    ggplot2::labs(
-      title = "Module typology: separation vs SNP pleiotropy breadth",
-      subtitle = "Dashed lines at medians; colour = module has a significant annotation",
-      x = "separation (internal minus external similarity)",
-      y = "mean per-SNP pleiotropy",
-      size = "SNPs in module",
-      color = "annotated"
-    ) +
-    ggplot2::theme_minimal())
+      ggplot2::geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+      ggplot2::geom_jitter(width = 0.15, alpha = 0.35, size = 0.8) +
+      ggplot2::facet_wrap(~metric, scales = "free_y") +
+      ggplot2::scale_fill_manual(values = c(unique = "#1b9e77", shared = "#7570b3")) +
+      ggplot2::labs(
+        title = "Pleiotropy of program-unique vs shared SNPs",
+        subtitle = "unique = assigned to exactly one valid program; shared = assigned to >= 2",
+        x = NULL,
+        y = "pleiotropy score"
+      ) +
+      ggplot2::theme_minimal() +
+      ggplot2::theme(legend.position = "none"))
+  }
+} else {
+  cat("No valid programs to classify SNPs.\n")
 }
 ```

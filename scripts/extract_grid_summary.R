@@ -148,8 +148,8 @@ for (cb in combo_list) {
       sources = c("KEGG", "Reactome", "HP")
     )
 
-    n_cat <- sum(!is.na(group_categories$summary$top_enriched_category_any))
-    n_tis <- sum(!is.na(group_tissues$summary$top_enriched_tissue_any))
+    n_cat <- sum(!is.na(group_categories$summary$top_enriched_category))
+    n_tis <- sum(!is.na(group_tissues$summary$top_enriched_tissue))
     n_pw <- sum(
       !is.na(module_enrichment$summary$top_enriched_reactome) |
         !is.na(module_enrichment$summary$top_enriched_kegg)
@@ -161,13 +161,13 @@ for (cb in combo_list) {
       dplyr::full_join(
         group_categories$summary |>
           dplyr::mutate(group = as.character(group)) |>
-          dplyr::select(group, top_enriched_category_any),
+          dplyr::select(group, top_enriched_category),
         by = "group"
       ) |>
       dplyr::full_join(
         group_tissues$summary |>
           dplyr::mutate(group = as.character(group)) |>
-          dplyr::select(group, top_enriched_tissue_any),
+          dplyr::select(group, top_enriched_tissue),
         by = "group"
       ) |>
       dplyr::full_join(
@@ -208,8 +208,8 @@ for (i in seq_len(nrow(detail_all))) {
   fmt <- function(x) ifelse(is.na(x), "", x)
   cat(
     d$run, d$group, d$n_snps,
-    fmt(d$top_enriched_category_any),
-    fmt(d$top_enriched_tissue_any),
+    fmt(d$top_enriched_category),
+    fmt(d$top_enriched_tissue),
     fmt(d$top_enriched_reactome),
     fmt(d$top_enriched_kegg),
     fmt(d$top_enriched_phenotype),

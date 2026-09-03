@@ -305,7 +305,7 @@ The univariate vignette interprets **valid** EBMF programs as:
 
 Each valid program is tested against **every** trait category and **every**
 tissue for over-representation relative to the trait baseline (leave-one-out
-hypergeometric test, plus the permutation and program-vs-programs summaries). A
+hypergeometric test). A
 single program therefore produces dozens of hypothesis tests — one per category
 or tissue — and across all programs in a run the pipeline performs hundreds. If
 we declared everything with raw p < 0.05 significant, we would expect ~5% of
@@ -325,9 +325,8 @@ significant calls for that program to be false positives.
 Note: **Correction is per-program, not global.** Each program's FDR is computed
 over the categories/tissues tested for that program alone. Running many
 programs still multiplies the opportunities for false positives across the whole
-analysis, which is why the vignette insists on agreement between the three
-methods (`FDR` hypergeometric, `perm` permutation, `vsmod` program-vs-programs
-Fisher) and on replication across runs before treating a hit as real.
+analysis, which is why the vignette insists on replication across runs before
+treating a hit as real.
 
 ## Variables to consider
 
@@ -404,3 +403,45 @@ overlapping modules with correlated shared-trait effects, molecular/QTL-like
 sparsity, per-cell noise, and SNP sub-structure; the validation battery is
 applied and scored per program; and the null condition directly tests the
 false-discovery behaviour of the EBMF + validation pipeline.
+
+## Structure of Results
+
+The aim is not produce a definitive biological truth for every SNP.  Indead, the method produces a structured, evidence-based decomposition of a trait's genetic architecture, with results that can be assessed at several levels:
+
+For practical use, the framework should provide results at the overall, program, and SNP level.
+
+| Level       | Primary question                                                                         | Main output                                                             |
+| ----------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **Trait**   | How much of this trait's genetic architecture can be decomposed into distinct structure? | Number of programs, SNP coverage, overlap, overall signal captured      |
+| **Program** | Is this structure reliable, and what biology does it represent?                          | Reliability metrics plus trait, tissue, gene and pathway interpretation |
+| **SNP**     | Which program or programs does this variant contribute to?                               | Soft memberships, posterior evidence, rank and molecular annotations    |
+
+This standard report would be returned by gpmapr and as a framework for the Results section of the paper. It should keep the distinction clear between statistical evidence, which establishes whether a program is reliable, and biological annotation, which provides its interpretation.
+
+#### Overall trait-level metrics
+- Number of SNPs analysed
+- Number of validated programs discovered (maybe also report candidate programs that fail validation)
+- Proportion of SNPs assigned to at least one validated program
+- Proportion of SNPs unassigned
+- Degree of overlapping membership, for example the proportion of assigned SNPs belonging to more than one program
+- Overall matrix signal explained by validated programs, if this can be meaningfully derived from the EBMF fit
+- Number/proportion of programs with some evidence of biological interpretation
+
+#### Program Level metrics
+- Number of member SNPs (maybe also report number of SNPs that were filtered out by the lFSR/magnitude gate)
+- Membership overlap with other programs
+- Top SNPs by posterior loading or membership evidence
+- Various statistical reliability metrics, including mean internal similarity, connectedness, stability, factor strength, stability 
+- Biological interpretation metrics, including top traits, trait categories, tissues, genes, pathways, and pleiotropy typology
+
+#### SNP Level metrics
+- Program membership(s)
+- Posterior loading in each program
+- Membership lFSR
+- Magnitude of membership/loading
+- Core versus candidate membership status
+- Rank within each program, if useful
+- Whether the SNP belongs to multiple programs
+- Similarity to other SNPs within its assigned program
+- Variant-level pleiotropic profile, for example breadth of associated trait categories
+- Molecular annotations, including associated genes and tissues where available
