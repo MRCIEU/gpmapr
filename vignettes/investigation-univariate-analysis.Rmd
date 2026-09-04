@@ -637,7 +637,6 @@ if (is.data.frame(clusters_analysis) && nrow(clusters_analysis) >= 2) {
         order.by = "freq",
         nsets = length(set_order),
         nintersects = 100,
-        empty.intersections = "off",
         main.bar.color = "#1b9e77",
         sets.bar.color = "#7570b3",
         point.size = 2.6,

@@ -31,9 +31,6 @@ simulate_trait(
   target_pattern = c("dense", "module"),
   p_negative = 0.05,
   overlap_fraction = 0.2,
-  p_molecular = 0,
-  p_molecular_drivers = NULL,
-  p_active_molecular = 0.01,
   snps_per_trait = NULL,
   traits_per_snp = NULL,
   module_annotations = NULL,
@@ -160,10 +157,8 @@ the oriented frame (sign flips follow \code{p_negative}), creating the global
 baseline similarity and mega-factor structure that competes with the
 planted modules — the way real pleiotropy matrices contain a core of
 highly pleiotropic traits hitting most loci with target-aligned effects.
-Hubs are drawn from the non-molecular background so they stay gene-free.
 \code{NULL} (default) auto-plants ~3\% of background traits (clamped to the
-number of non-molecular background traits available); set to \code{0L} to
-disable.}
+number of background traits available); set to \code{0L} to disable.}
 
 \item{hub_snp_fraction}{Range \code{c(min, max)} of the fraction of SNPs at
 which each hub trait is observed. Defaults to \code{c(0.3, 1)}.}
@@ -184,30 +179,6 @@ Set to \code{NULL} to keep the \code{sign_pattern} regime untouched.}
 soft SNP boundaries and non-empty \code{multi_module_snps} without full
 nesting. Defaults to \code{0.2}; only used when \code{overlap = "partial"}.}
 
-\item{p_molecular}{Fraction (0–1) of background traits designated
-molecular, and — when \code{p_molecular_drivers = NULL} (default) — also the
-fraction of each module's drivers designated molecular. Molecular traits
-carry a gene annotation (\code{gene_id} non-missing) and are observed much more
-sparsely: drivers fill within-module support with probability
-\code{p_active_molecular} instead of \code{1 - p_structural_zero}, and background
-traits activate per SNP with probability \code{p_active_molecular} instead of
-\code{p_active_background}. Traits whose module annotation explicitly plants
-\code{genes} are always molecular. Default 0 = every non-target trait is a
-phenotype trait (no gene annotation, normal density).}
-
-\item{p_molecular_drivers}{Optional fraction (0–1) of each module's driver
-traits that are molecular, decoupled from \code{p_molecular} (which then
-governs background traits only). Either a single number applied to every
-module, or a numeric vector of length \code{K}. Useful when \code{p_molecular} is
-high but the modules must keep a dense (phenotype) driver core — if every
-driver in a module is a sparse molecular trait the module becomes
-unrecoverable. \code{NULL} (default) makes drivers follow \code{p_molecular}.}
-
-\item{p_active_molecular}{Per-SNP observation probability for molecular
-traits. Set much lower than \code{p_active_background} to emulate eQTL-like
-sparsity, where a molecular trait is observed at only a small subset of
-SNPs. Default 0.01.}
-
 \item{snps_per_trait}{Optional range \code{c(min, max)}; trait rows exceeding the
 maximum have excess observations randomly removed (approximate caps;
 minima are not enforced).}
@@ -218,8 +189,7 @@ maximum have excess observations randomly removed.}
 \item{module_annotations}{Optional list of length \code{K} (shorter lists are
 padded with \code{NULL}). Each element is a list with any of \code{genes},
 \code{tissues}, \code{trait_categories}; these are planted on the module's driver
-trait rows (\code{NULL} elements draw randomly). Planted genes make the driver
-traits molecular (non-missing \code{gene_id}).}
+trait rows (\code{NULL} elements draw randomly).}
 
 \item{annotation_noise}{Probability that any single planted annotation is
 replaced by a random draw from the corresponding pool.}
@@ -255,9 +225,8 @@ background; each SNP is labelled by its most specific module),
 for \code{overlap = "disjoint"}), \code{module_memberships} (SNP index list),
 \code{driver_traits} (per-module trait names, including shared traits),
 \code{driver_overlap} (K x K matrix of the fraction of each module's driver
-traits shared with every other module), \code{molecular_traits} (trait
-names designated molecular), \code{planted_annotations}, \code{seed}, and
-\code{parameters}
+traits shared with every other module), \code{planted_annotations}, \code{seed},
+and \code{parameters}
 }
 }
 \description{
@@ -304,13 +273,7 @@ Trait composition: the total number of traits (rows) is
 \code{1} (target) + \code{n_driver_rows} (unique driver traits; fewer than
 \code{sum(n_traits_per_module)} when \code{trait_overlap > 0} because shared traits
 are counted once) + \code{n_background_traits}, or is fixed directly via
-\code{n_traits}. A fraction \code{p_molecular} of the non-target traits is designated
-molecular: these carry a gene annotation (\code{gene_id} non-missing) and are
-observed much more sparsely, with per-SNP probability \code{p_active_molecular}
-instead of \code{p_active_background} (background) or \code{1 - p_structural_zero}
-(within-module drivers). This emulates eQTL-like traits whose signal is
-confined to a small subset of SNPs. The remaining traits are phenotype
-traits (no gene annotation) at normal density.
+\code{n_traits}. All non-target traits are phenotype traits at normal density.
 
 Annotations: \code{module_annotations} optionally plants genes / tissues /
 trait categories on each module's driver traits so enrichment machinery can

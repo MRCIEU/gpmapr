@@ -7,6 +7,7 @@ output:
 params:
   cluster_type: ebmf
   K: 3
+  noise_sd: 6
   module_sizes: [60, 25, 8]
   overlap: disjoint
   nested_effect_corr: 0.8
@@ -15,11 +16,8 @@ params:
   trait_effect_corr: 0.8
   n_traits: 600
   n_snps: 300
-  p_molecular: 0.8
-  p_molecular_drivers: 0.1
-  p_active_molecular: 0.01
   min_snp_signals: 2
-  trait_subset: all
+  trait_subset: "phenotypic"
   min_module_size: 3
   compress_method: asinh
   compress_scale: 5
@@ -27,17 +25,17 @@ params:
   ebmf_se_mode: unit
   ebmf_beta_scale: trait
   ebmf_lfsr_threshold: 0.05
-  ebmf_magnitude_threshold: 0.2
+  ebmf_magnitude_threshold: 0.3
   ebmf_drop_global: true
-  ebmf_prior: point_laplace
+  ebmf_prior: point_normal
   ebmf_backfit: true
   ebmf_hard_assignment: false
   min_mean_internal: 0.3
   min_connectedness: 0.25
-  n_null: 2
+  n_null: 5
   alpha_membership: 0.05
   n_candidate_tier: 25
-  n_rep: 1
+  n_rep: 5
   frac_traits: 0.8
   stability_top_n: 20
   stability_threshold: 0.5
@@ -46,19 +44,19 @@ params:
   redundancy_threshold: 0.9
   cores: 5
   effect_size: 6
-  effect_tail: 0.4
-  p_structural_zero: 0.2
-  p_spurious: 0.005
-  p_active_background: 0.006
+  effect_tail: 0
+  p_structural_zero: 0
+  p_spurious: 0
+  p_active_background: 0
   background_sparsity_sd: 1.2
-  min_abs_z: 4.5
-  n_hub_traits: 15
+  min_abs_z: 0
+  n_hub_traits: 0
   hub_snp_fraction: [0.3, 1.0]
-  target_pattern: dense
-  p_negative: 0.05
+  target_pattern: module
+  p_negative: 0
   driver_sharing: 0
   snp_driver_groups: 1
-  n_reps: 2
+  n_reps: 5
 vignette: >
   %\VignetteIndexEntry{Simulation study of EBMF programs}
   %\VignetteEngine{knitr::rmarkdown}
@@ -86,11 +84,6 @@ if (requireNamespace("devtools", quietly = TRUE)) {
 }
 library(dplyr)
 library(ggplot2)
-
-
-low_noise_sd <- 0.5
-moderate_noise_sd <- 1
-extreme_noise_sd <- 6
 
 n_reps <- as.integer(params$n_reps)
 set.seed(1)
@@ -149,9 +142,6 @@ simulation_defaults <- list(
   trait_overlap = params$trait_overlap,
   trait_effect_corr = params$trait_effect_corr,
   n_traits = params$n_traits,
-  p_molecular = params$p_molecular,
-  p_molecular_drivers = params$p_molecular_drivers,
-  p_active_molecular = params$p_active_molecular,
   effect_size = params$effect_size,
   effect_tail = params$effect_tail,
   p_structural_zero = params$p_structural_zero,
@@ -207,14 +197,6 @@ pleiotropy matrix** so the simulations are not trivially easy:
 - The target-trait row is dense and significant at **every** SNP
   (`target_pattern = "dense"`), as real target rows are after orientation.
 
-A fraction `p_molecular` of the background traits is molecular
-(gene-annotated eQTL-like traits) and observed with per-SNP probability
-`p_active_molecular`, which is much sparser than the phenotype traits' density.
-The molecular fraction of each module's *drivers* is set separately by
-`p_molecular_drivers`, so a module can keep a dense phenotype driver core even
-when the background is almost entirely molecular — if every driver in a module
-were a sparse molecular trait the module would be unrecoverable.
-
 For every version, the identical battery is run: `run_univariate_clustering()`
 fits EBMF and keeps overlapping soft programs, and
 `summarise_ebmf_programs()` filters programs by lFSR, loading magnitude,
@@ -241,7 +223,7 @@ settings_to_show <- c(
   "cluster_type", "trait_subset", "min_snp_signals", "min_module_size", "module_sizes",
   "overlap", "nested_effect_corr",
   "n_traits_per_module", "trait_overlap", "trait_effect_corr",
-  "n_traits", "p_molecular", "p_molecular_drivers", "p_active_molecular",
+  "n_traits",
   "effect_size", "effect_tail", "p_structural_zero", "p_spurious",
   "p_active_background", "background_sparsity_sd", "min_abs_z",
   "n_hub_traits", "hub_snp_fraction", "target_pattern", "p_negative",
@@ -257,9 +239,6 @@ settings_values$n_traits_per_module <- params$n_traits_per_module
 settings_values$trait_overlap <- params$trait_overlap
 settings_values$trait_effect_corr <- params$trait_effect_corr
 settings_values$n_traits <- params$n_traits
-settings_values$p_molecular <- params$p_molecular
-settings_values$p_molecular_drivers <- params$p_molecular_drivers
-settings_values$p_active_molecular <- params$p_active_molecular
 settings_values$effect_size <- params$effect_size
 settings_values$effect_tail <- params$effect_tail
 settings_values$p_structural_zero <- params$p_structural_zero
@@ -278,9 +257,6 @@ knitr::kable(
     value = vapply(settings_to_show, function(nm) {
       if (nm %in% c("module_sizes", "n_traits_per_module", "hub_snp_fraction")) {
         return(paste(settings_values[[nm]], collapse = ", "))
-      }
-      if (nm == "p_molecular_drivers" && is.null(settings_values[[nm]])) {
-        return("NULL (drivers follow p_molecular)")
       }
       as.character(settings_values[[nm]])
     }, character(1))
@@ -386,12 +362,9 @@ also turns the hub traits off, keeping it a pure structural null).
 tier_base <- list(
   n_coloc_groups = params$n_snps,
   sign_pattern = "coherent",
-  noise_sd = moderate_noise_sd,
+  noise_sd = params$noise_sd,
   p_structural_zero = params$p_structural_zero,
   p_spurious = params$p_spurious,
-  p_molecular = params$p_molecular,
-  p_molecular_drivers = params$p_molecular_drivers,
-  p_active_molecular = params$p_active_molecular,
   p_active_background = params$p_active_background,
   background_sparsity_sd = params$background_sparsity_sd,
   min_abs_z = params$min_abs_z,
@@ -419,24 +392,14 @@ tier_specs <- list(
     make_tier_spec,
     c(tier_base, list(trait_overlap = 0.75, trait_effect_corr = 0.8))
   ),
-  very_strong_trait_overlap = do.call(
-    make_tier_spec,
-    c(tier_base, list(trait_overlap = 0.9, trait_effect_corr = 0.8))
-  ),
   full_trait_overlap = do.call(
     make_tier_spec,
     c(tier_base, list(trait_overlap = 1, trait_effect_corr = 0.8))
   ),
-  full_trait_overlap_very_noisy = do.call(
-    make_tier_spec,
-    c(tier_base, list(trait_overlap = 1, trait_effect_corr = 0.8, noise_sd = extreme_noise_sd))
-  ),
   null = make_tier_spec(
     n_coloc_groups = params$n_snps,
     K = 0,
-    noise_sd = moderate_noise_sd,
-    p_molecular = params$p_molecular,
-    p_active_molecular = params$p_active_molecular,
+    noise_sd = params$noise_sd,
     p_active_background = params$p_active_background,
     background_sparsity_sd = params$background_sparsity_sd,
     min_abs_z = params$min_abs_z,
@@ -451,7 +414,6 @@ tier_labels <- c(
   strong_trait_overlap = "strong trait overlap",
   very_strong_trait_overlap = "very strong trait overlap",
   full_trait_overlap = "full trait overlap",
-  full_trait_overlap_very_noisy = "full trait overlap, very noisy",
   null = "null / no modules"
 )
 
@@ -491,9 +453,6 @@ tier_param_table <- do.call(rbind, lapply(names(tier_specs), function(nm) {
       "-"
     },
     target_pattern = if (s$K > 0) s$target_pattern else "-",
-    p_molecular = s$p_molecular,
-    p_molecular_drivers = if (s$K > 0) s$p_molecular_drivers else "-",
-    p_active_molecular = s$p_active_molecular,
     driver_sharing = s$driver_sharing,
     sign_pattern = if (s$K > 0) s$sign_pattern else "-",
     snp_driver_groups = if (s$K > 0) s$snp_driver_groups else "-",
@@ -717,18 +676,6 @@ if (is.null(full_trait_overlap_checks)) {
 }
 ```
 
-### Full trait overlap, very noisy
-
-Same as the previous version, but with `noise_sd = 6` instead of `1`
-```{r full-trait-very-noisy-overlap-checks}
-full_trait_overlap_checks <- check_table("full_trait_overlap_very_noisy")
-if (is.null(full_trait_overlap_checks)) {
-  "No EBMF programs were produced for the full trait overlap version."
-} else {
-  full_trait_overlap_checks
-}
-```
-
 ### Null / no modules
 
 `K = 0`: only the number of SNPs (`n_coloc_groups`) and traits (`n_traits`)
@@ -768,10 +715,6 @@ if (is.null(null_checks)) {
 - Stability is run only for programs that pass the size and internal-coherence
   checks; the `stability` column shows `n/a` for programs that were not
   re-checked.
-- Molecular traits are gene-annotated and much sparser than phenotype traits.
-  Sparse molecular background traits frequently fall below `min_snp_signals`
-  and are dropped before matrix construction, so `n_traits` is a nominal
-  matrix size rather than the number of traits that survive to clustering.
 - The null version keeps `n_hub_traits = 0` so it remains a pure structural
   null (no global factor to latch onto); the hub structure of the module
   tiers is the thing being tested against.

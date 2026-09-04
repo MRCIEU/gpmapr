@@ -349,15 +349,12 @@ test_that("n_traits_per_module can vary per module", {
   )
 })
 
-test_that("trait_subset = 'phenotypic' drops molecular trait rows", {
+test_that("trait_subset = 'phenotypic' keeps all rows when nothing is molecular", {
   sim <- simulate_trait(
     n_coloc_groups = 100,
     K = 2,
     module_sizes = c(20, 20),
     n_traits_per_module = 4,
-    p_molecular = 0.5,
-    p_molecular_drivers = 0.2,
-    p_active_molecular = 0.05,
     p_active_background = 0.1,
     seed = 50
   )
@@ -369,8 +366,8 @@ test_that("trait_subset = 'phenotypic' drops molecular trait rows", {
   )
   expect_equal(res_all$parameters$trait_subset, "all")
   expect_equal(res_ph$parameters$trait_subset, "phenotypic")
-  expect_true(any(res_all$trait_info$feature_type == "molecular"))
-  expect_lt(nrow(res_ph$x_matrix), nrow(res_all$x_matrix))
+  expect_false(any(res_all$trait_info$feature_type == "molecular"))
+  expect_identical(nrow(res_ph$x_matrix), nrow(res_all$x_matrix))
   expect_true(all(res_ph$trait_info$feature_type %in% c("phenotypic", NA)))
   expect_true(as.character(sim$trait_object$trait$id) %in% rownames(res_ph$x_matrix))
   expect_error(
@@ -379,87 +376,7 @@ test_that("trait_subset = 'phenotypic' drops molecular trait rows", {
   )
 })
 
-test_that("p_molecular_drivers caps the molecular fraction of module drivers", {
-  sim <- simulate_trait(
-    n_coloc_groups = 90,
-    K = 3,
-    module_sizes = c(10, 20, 30),
-    n_traits_per_module = c(2, 5, 8),
-    p_molecular = 1,
-    p_molecular_drivers = 0.2,
-    seed = 45
-  )
-  gt <- sim$ground_truth
-  for (m in seq_along(gt$driver_traits)) {
-    drv <- gt$driver_traits[[m]]
-    n_mol <- sum(drv %in% gt$molecular_traits)
-    expect_lte(n_mol, round(0.2 * length(drv)) + 1L)
-    expect_lt(n_mol, length(drv))
-  }
-  n_bg_mol <- sum(grepl("^background", gt$molecular_traits))
-  expect_equal(n_bg_mol, gt$parameters$n_background_traits)
-  expect_error(
-    simulate_trait(n_coloc_groups = 60, K = 2, module_sizes = c(10, 10),
-                   p_molecular_drivers = 1.5),
-    "p_molecular_drivers"
-  )
-})
-
-test_that("molecular traits are gene-annotated and much sparser", {
-  sim <- simulate_trait(
-    n_coloc_groups = 200,
-    K = 0,
-    n_background_traits = 20,
-    p_molecular = 1,
-    p_active_molecular = 0.02,
-    p_active_background = 0.5,
-    background_sparsity_sd = 0,
-    n_hub_traits = 0L,
-    seed = 17
-  )
-  cg <- sim$trait_object$coloc_groups
-  bg <- cg[cg$trait_id > 1, ]
-  expect_false(any(is.na(bg$gene)))
-  expect_false(any(is.na(bg$gene_id)))
-  expect_equal(length(sim$ground_truth$molecular_traits), 20)
-  counts <- table(bg$trait_id)
-  expect_lte(max(counts), 15)
-
-  sim_dense <- simulate_trait(
-    n_coloc_groups = 200,
-    K = 0,
-    n_background_traits = 20,
-    p_molecular = 0,
-    p_active_background = 0.5,
-    background_sparsity_sd = 0,
-    n_hub_traits = 0L,
-    seed = 18
-  )
-  cg_dense <- sim_dense$trait_object$coloc_groups
-  bg_dense <- cg_dense[cg_dense$trait_id > 1, ]
-  expect_true(all(is.na(bg_dense$gene)))
-  expect_true(all(is.na(bg_dense$gene_id)))
-  expect_gt(mean(table(bg_dense$trait_id)), 5 * mean(counts))
-})
-
-test_that("molecular drivers are observed at a fraction of module SNPs", {
-  sim <- simulate_trait(
-    n_coloc_groups = 200,
-    K = 2,
-    module_sizes = c(50, 50),
-    n_traits_per_module = 4,
-    p_molecular = 1,
-    p_active_molecular = 0.05,
-    p_structural_zero = 0,
-    seed = 1
-  )
-  cg <- sim$trait_object$coloc_groups
-  d1 <- sim$ground_truth$driver_traits$module_1
-  counts <- table(cg$trait_id[cg$trait_name %in% d1])
-  expect_lt(mean(counts), 25)
-})
-
-test_that("planted module genes force driver traits molecular", {
+test_that("planted module genes are annotated on driver traits", {
   sim <- simulate_trait(
     n_coloc_groups = 40,
     K = 1,
@@ -467,22 +384,19 @@ test_that("planted module genes force driver traits molecular", {
     n_traits_per_module = 4,
     module_annotations = list(list(genes = "HFE")),
     annotation_noise = 0,
-    p_molecular = 0,
     seed = 23
   )
   cg <- sim$trait_object$coloc_groups
   drv <- sim$ground_truth$driver_traits$module_1
   expect_true(all(cg$gene[cg$trait_name %in% drv] == "HFE"))
   expect_false(any(is.na(cg$gene_id[cg$trait_name %in% drv])))
-  expect_equal(length(sim$ground_truth$molecular_traits), length(drv))
 })
-
 
 test_that("min_abs_z floors every observed background cell at the hit threshold", {
   sim <- simulate_trait(
     n_coloc_groups = 100, K = 1, module_sizes = 20,
     n_traits_per_module = 5, n_background_traits = 40,
-    p_molecular = 0, min_abs_z = 4.5, p_active_background = 0.05,
+    min_abs_z = 4.5, p_active_background = 0.05,
     seed = 3
   )
   cg <- sim$trait_object$coloc_groups
@@ -494,7 +408,7 @@ test_that("min_abs_z floors every observed background cell at the hit threshold"
   sim0 <- simulate_trait(
     n_coloc_groups = 100, K = 1, module_sizes = 20,
     n_traits_per_module = 5, n_background_traits = 40,
-    p_molecular = 0, p_active_background = 0.05,
+    p_active_background = 0.05,
     min_abs_z = 0, seed = 3
   )
   bg0 <- sim0$trait_object$coloc_groups[
@@ -507,13 +421,13 @@ test_that("effect_tail adds per-trait magnitude heterogeneity without breaking s
   flat <- simulate_trait(
     n_coloc_groups = 100, K = 1, module_sizes = 50,
     n_traits_per_module = 10, n_background_traits = 10,
-    p_molecular = 0, effect_size = 6, noise_sd = 0.1,
+    effect_size = 6, noise_sd = 0.1,
     p_structural_zero = 0, effect_tail = 0, seed = 5
   )
   tailed <- simulate_trait(
     n_coloc_groups = 100, K = 1, module_sizes = 50,
     n_traits_per_module = 10, n_background_traits = 10,
-    p_molecular = 0, effect_size = 6, noise_sd = 0.1,
+    effect_size = 6, noise_sd = 0.1,
     p_structural_zero = 0, effect_tail = 0.8, seed = 5
   )
   drv <- flat$ground_truth$driver_traits$module_1
@@ -535,7 +449,7 @@ test_that("effect_tail adds per-trait magnitude heterogeneity without breaking s
 test_that("background_sparsity_sd gives heavy-tailed per-trait observation counts", {
   s <- simulate_trait(
     n_coloc_groups = 200, K = 0, n_background_traits = 100,
-    p_molecular = 0, p_active_background = 0.03,
+    p_active_background = 0.03,
     background_sparsity_sd = 1.2, seed = 7
   )
   cnt <- table(s$trait_object$coloc_groups$trait_id)
@@ -546,7 +460,7 @@ test_that("n_hub_traits plants dense, mutually correlated background traits", {
   s <- simulate_trait(
     n_coloc_groups = 200, K = 1, module_sizes = 30,
     n_traits_per_module = 10, n_background_traits = 60,
-    p_molecular = 0, n_hub_traits = 10, hub_snp_fraction = c(0.3, 1),
+    n_hub_traits = 10, hub_snp_fraction = c(0.3, 1),
     p_active_background = 0.03, effect_size = 6,
     background_sparsity_sd = 0, seed = 9
   )
@@ -568,7 +482,7 @@ test_that("target_pattern = 'dense' gives a positive significant target row at e
   s <- simulate_trait(
     n_coloc_groups = 100, K = 1, module_sizes = 20,
     n_traits_per_module = 5, n_background_traits = 20,
-    p_molecular = 0, target_pattern = "dense", min_abs_z = 4.5, seed = 11
+    target_pattern = "dense", min_abs_z = 4.5, seed = 11
   )
   trow <- s$trait_object$coloc_groups[
     s$trait_object$coloc_groups$trait_name == "Simulated target trait", ]
@@ -580,7 +494,7 @@ test_that("p_negative flips an approximate fraction of driver cell signs", {
   s <- simulate_trait(
     n_coloc_groups = 100, K = 1, module_sizes = 40,
     n_traits_per_module = 10, n_background_traits = 10,
-    p_molecular = 0, p_structural_zero = 0, noise_sd = 0.1,
+    p_structural_zero = 0, noise_sd = 0.1,
     p_negative = 0.2, seed = 13
   )
   cg <- s$trait_object$coloc_groups
@@ -592,7 +506,7 @@ test_that("overlap = 'partial' shares boundary SNPs between adjacent modules", {
   s <- simulate_trait(
     n_coloc_groups = 100, K = 3, module_sizes = c(20, 20, 20),
     n_traits_per_module = c(5, 5, 5), n_background_traits = 10,
-    p_molecular = 0, overlap = "partial", overlap_fraction = 0.25, seed = 15
+    overlap = "partial", overlap_fraction = 0.25, seed = 15
   )
   gt <- s$ground_truth
   expect_gt(length(gt$multi_module_snps), 0)
@@ -603,7 +517,7 @@ test_that("overlap = 'partial' shares boundary SNPs between adjacent modules", {
 test_that("simulate_trait defaults are deterministic and realistic", {
   args <- list(n_coloc_groups = 60, K = 2, module_sizes = c(10, 10),
                n_traits_per_module = c(4, 4), n_background_traits = 12,
-               p_molecular = 0, seed = 11)
+               seed = 11)
   s1 <- do.call(simulate_trait, args)
   s2 <- do.call(simulate_trait, args)
   expect_identical(s1$trait_object$coloc_groups$beta,

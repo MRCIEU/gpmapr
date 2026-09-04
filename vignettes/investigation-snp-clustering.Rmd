@@ -377,11 +377,8 @@ over SNPs:
   versions from `0` (clean) to `1` (full overlap), plus a **null** version
   (`K = 0`, no modules) that checks for false structure.
 - **Realistic noise and sparsity** — structural zeros inside true support
-  (`p_structural_zero`), spurious off-support noise (`p_spurious`), sparse
-  unstructured background traits (`p_active_background`), and a
-  `p_molecular` fraction of gene-annotated molecular (eQTL-like) traits that
-  are observed much more sparsely (`p_active_molecular`, with driver molecular
-  fraction set separately by `p_molecular_drivers`). Optional per-cell SE
+  (`p_structural_zero`), spurious off-support noise (`p_spurious`), and sparse
+  unstructured background traits (`p_active_background`). Optional per-cell SE
   heterogeneity (`log_se_sd`) and within-module SNP sub-patterns
   (`snp_driver_groups`) break the exchangeability that would make modules
   trivially separable.
@@ -399,8 +396,8 @@ The simulation is scored against ground truth by
   planted partition, using each SNP's strongest program as a hard projection.
 
 These improvements over the earlier grid sweep: the simulation now plants
-overlapping modules with correlated shared-trait effects, molecular/QTL-like
-sparsity, per-cell noise, and SNP sub-structure; the validation battery is
+overlapping modules with correlated shared-trait effects, per-cell noise, and
+SNP sub-structure; the validation battery is
 applied and scored per program; and the null condition directly tests the
 false-discovery behaviour of the EBMF + validation pipeline.
 
