@@ -24,7 +24,7 @@ simulate_trait(
   p_spurious = 0.05,
   p_active_background = 0.08,
   background_sparsity_sd = 1.2,
-  min_abs_z = 4.5,
+  background_effect_scale = 0.75,
   effect_tail = 0.4,
   n_hub_traits = NULL,
   hub_snp_fraction = c(0.3, 1),
@@ -105,8 +105,7 @@ module. Either a single number applied to every module, or a numeric
 vector of length \code{K} giving one value per module. Varying effect sizes
 across modules breaks the exchangeability of same-signature modules so
 that methods which operate in trait space (e.g. EBMF) can separate them.
-Defaults to \code{6}, matching the median observed |z| of real coloc cells and
-keeping driver signal above the \code{min_abs_z} floor.}
+Defaults to \code{6}, matching the median observed |z| of real coloc cells.}
 
 \item{noise_sd}{Standard deviation of noise effects added to target,
 driver, and background trait observations.}
@@ -133,14 +132,16 @@ at only a couple of SNPs while a tail is much denser, matching the
 per-trait sparsity distribution of real pleiotropy matrices.
 Default 1.2.}
 
-\item{min_abs_z}{Significance floor for observed cells. When positive
-(\code{4.5} by default, the approximate floor of real coloc z-scores), every
-\emph{observed} cell is a significant hit: background and spurious cells are
-drawn as \code{sign * (min_abs_z + Exp)} and all other observed cells are
-floored at \code{min_abs_z}, so noise is encoded as absence (NA) rather than
-as small observed values — the way real colocalisation data behaves.
-Set to \code{0} to keep the classic behaviour where background and spurious
-cells carry small \code{N(0, noise_sd)} values.}
+\item{background_effect_scale}{Relative magnitude of unstructured
+background (and spurious off-support) associations compared with the
+planted module effect size. Background magnitudes are drawn from a
+standardised heavy-tailed distribution with typical magnitude ~1 and
+scaled by \code{background_effect_scale * effect_size}, so e.g. with
+\code{effect_size = 6}, \code{background_effect_scale = 0.75} gives background hits
+with typical magnitude ~4.5, some below and some above. This is a
+relative effect-size parameter, not a significance threshold: it changes
+the \emph{distribution} of background magnitudes without clipping or
+guaranteeing significance. Default 0.75.}
 
 \item{effect_tail}{Standard deviation (on the log scale) of a per-\emph{trait}
 lognormal multiplier applied to a driver trait's effects across all of its
@@ -165,10 +166,10 @@ which each hub trait is observed. Defaults to \code{c(0.3, 1)}.}
 
 \item{target_pattern}{Target-trait row regime: \code{"dense"} (default) gives
 the target trait a significant, heavy-tailed positive z-score at \strong{every}
-SNP (magnitude \code{effect_size[1] * lognormal(0, 0.5)}, floored at
-\code{min_abs_z} when set), matching a real target-trait row in the oriented
-frame — informative about nothing but its own strength; \code{"module"} gives
-the target trait elevated signal at module SNPs and noise elsewhere.}
+SNP (magnitude \code{effect_size[1] * lognormal(0, 0.5)}), matching a real
+target-trait row in the oriented frame — informative about nothing but its
+own strength; \code{"module"} gives the target trait elevated signal at module
+SNPs and noise elsewhere.}
 
 \item{p_negative}{Probability that an individual driver cell within module
 support has its sign flipped, emulating the minority of cells that
@@ -238,16 +239,18 @@ the accompanying ground truth supports recovery scoring via
 \code{evaluate_univariate_simulation()}.
 
 By default the generative parameters are calibrated to the messy marginals
-of a real pleiotropy matrix: every observed cell is a significant hit
-(\code{min_abs_z = 4.5}), driver effects are heavy-tailed across traits
+of a real pleiotropy matrix: driver effects are heavy-tailed across traits
 (\code{effect_tail = 0.4}) with a minority of cells disagreeing with the target
 orientation (\code{p_negative = 0.05}), background densities are heavy-tailed
 per trait (\code{background_sparsity_sd = 1.2}), a proportion of pleiotropic
 \strong{hub} traits is planted automatically (\code{n_hub_traits = NULL}), and the
-target row is dense and significant at every SNP (\code{target_pattern = "dense"}). Simulations built this way are genuinely hard — recovery is
-partial and noisy rather than trivially perfect, so the validation gates
-and parameter trade-offs can actually be tested. Each realism knob can be
-turned off individually (e.g. \code{min_abs_z = 0}, \code{n_hub_traits = 0L}).
+target row is dense and significant at every SNP (\code{target_pattern = "dense"}). Unstructured background associations are drawn from a
+standardised heavy-tailed distribution scaled relative to the planted
+modules by \code{background_effect_scale} (a relative effect-size parameter, not
+a significance threshold). Simulations built this way are genuinely hard —
+recovery is partial and noisy rather than trivially perfect, so the
+validation gates and parameter trade-offs can actually be tested. Each
+realism knob can be turned off individually (e.g. \code{background_effect_scale = 0}, \code{n_hub_traits = 0L}).
 
 Structure: \code{n_coloc_groups} SNPs (one coloc group / locus each) define the
 total number of SNPs (trait x SNP matrix columns). \code{K} module regions are
@@ -265,9 +268,10 @@ effects that are correlated across modules (\code{trait_effect_corr}) but not
 identical. This creates modules with distinct SNP sets but overlapping,
 correlated trait signatures. Driver support is thinned by
 \code{p_structural_zero} (structural zeros inside true support). Cells outside
-true support receive small noise effects with probability \code{p_spurious}.
-Background traits activate on each SNP independently with probability
-\code{p_active_background}, giving realistic marginal sparsity without structure.
+true support receive background-scale noise effects with probability
+\code{p_spurious}. Background traits activate on each SNP independently with
+probability \code{p_active_background}, giving realistic marginal sparsity
+without structure.
 
 Trait composition: the total number of traits (rows) is
 \code{1} (target) + \code{n_driver_rows} (unique driver traits; fewer than

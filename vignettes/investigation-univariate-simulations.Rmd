@@ -7,7 +7,7 @@ output:
 params:
   cluster_type: ebmf
   K: 3
-  noise_sd: 6
+  noise_sd: 1
   module_sizes: [60, 25, 8]
   overlap: disjoint
   nested_effect_corr: 0.8
@@ -47,9 +47,9 @@ params:
   effect_tail: 0
   p_structural_zero: 0
   p_spurious: 0
-  p_active_background: 0
+  p_active_background: 0.1
   background_sparsity_sd: 1.2
-  min_abs_z: 0
+  background_effect_scale: 0.75
   n_hub_traits: 0
   hub_snp_fraction: [0.3, 1.0]
   target_pattern: module
@@ -148,7 +148,7 @@ simulation_defaults <- list(
   p_spurious = params$p_spurious,
   p_active_background = params$p_active_background,
   background_sparsity_sd = params$background_sparsity_sd,
-  min_abs_z = params$min_abs_z,
+  background_effect_scale = params$background_effect_scale,
   n_hub_traits = params$n_hub_traits,
   hub_snp_fraction = params$hub_snp_fraction,
   target_pattern = params$target_pattern,
@@ -178,10 +178,13 @@ overlap and the planted modules harder to tell apart.
 The generative parameters are **calibrated to the messy marginals of a real
 pleiotropy matrix** so the simulations are not trivially easy:
 
-- Every *observed* cell is a significant hit: background and spurious cells
-  are drawn as `sign * (min_abs_z + Exp)` with `min_abs_z = 4.5` (the
-  approximate floor of real coloc z-scores), and noise is encoded as absence
-  (`NA`) rather than as small observed values.
+- Background association magnitudes are drawn from a standardised
+  heavy-tailed distribution and scaled relative to the planted module effects
+  by `background_effect_scale` (a relative effect-size parameter, not a
+  significance threshold), so e.g. `background_effect_scale = 0.75` with
+  `effect_size = 6` gives background hits with typical magnitude ~4.5, some
+  below and some above. Noise is encoded as absence (`NA`), not as a hard
+  z-score floor.
 - Driver effects are heavy-tailed across traits (`effect_tail`), with a
   minority of cells disagreeing with the target-trait orientation
   (`p_negative = 0.05`), matching the ~20% of negative cells seen in real
@@ -225,7 +228,7 @@ settings_to_show <- c(
   "n_traits_per_module", "trait_overlap", "trait_effect_corr",
   "n_traits",
   "effect_size", "effect_tail", "p_structural_zero", "p_spurious",
-  "p_active_background", "background_sparsity_sd", "min_abs_z",
+  "p_active_background", "background_sparsity_sd", "background_effect_scale",
   "n_hub_traits", "hub_snp_fraction", "target_pattern", "p_negative",
   "ebmf_lfsr_threshold", "ebmf_magnitude_threshold",
   "min_mean_internal", "min_connectedness", "n_rep",
@@ -245,7 +248,7 @@ settings_values$p_structural_zero <- params$p_structural_zero
 settings_values$p_spurious <- params$p_spurious
 settings_values$p_active_background <- params$p_active_background
 settings_values$background_sparsity_sd <- params$background_sparsity_sd
-settings_values$min_abs_z <- params$min_abs_z
+settings_values$background_effect_scale <- params$background_effect_scale
 settings_values$n_hub_traits <- params$n_hub_traits
 settings_values$hub_snp_fraction <- params$hub_snp_fraction
 settings_values$target_pattern <- params$target_pattern
@@ -367,7 +370,7 @@ tier_base <- list(
   p_spurious = params$p_spurious,
   p_active_background = params$p_active_background,
   background_sparsity_sd = params$background_sparsity_sd,
-  min_abs_z = params$min_abs_z,
+  background_effect_scale = params$background_effect_scale,
   effect_size = params$effect_size,
   effect_tail = params$effect_tail,
   n_hub_traits = params$n_hub_traits,
@@ -402,7 +405,7 @@ tier_specs <- list(
     noise_sd = params$noise_sd,
     p_active_background = params$p_active_background,
     background_sparsity_sd = params$background_sparsity_sd,
-    min_abs_z = params$min_abs_z,
+    background_effect_scale = params$background_effect_scale,
     p_negative = params$p_negative,
     n_hub_traits = 0L
   )
@@ -442,7 +445,7 @@ tier_param_table <- do.call(rbind, lapply(names(tier_specs), function(nm) {
     p_spurious = s$p_spurious,
     effect_size = if (s$K > 0) s$effect_size else "-",
     effect_tail = if (s$K > 0) s$effect_tail else "-",
-    min_abs_z = s$min_abs_z,
+    background_effect_scale = if (s$K > 0) s$background_effect_scale else "-",
     p_negative = s$p_negative,
     p_active_background = s$p_active_background,
     background_sparsity_sd = s$background_sparsity_sd,
@@ -698,14 +701,14 @@ if (is.null(null_checks)) {
   simulations comes from shared trait drivers (`trait_overlap`), with
   correlated (`trait_effect_corr`) but non-identical effects, so the modules
   read as "different SNPs + overlapping trait signatures".
-- The generative marginals are calibrated to a real pleiotropy matrix: every
-  observed cell is a significant hit (`min_abs_z`), driver effects are
-  heavy-tailed across traits (`effect_tail`), a minority of cells disagree
-  with the target orientation (`p_negative`), background densities are
-  heavy-tailed per trait (`background_sparsity_sd`), and `n_hub_traits`
-  pleiotropic hubs create a global baseline factor. With this difficulty
-  level, recovery is expected to be partial and noisy — that is what makes the
-  per-check pass rates informative.
+- The generative marginals are calibrated to a real pleiotropy matrix: driver
+  effects are heavy-tailed across traits (`effect_tail`), a minority of cells
+  disagree with the target orientation (`p_negative`), background densities
+  are heavy-tailed per trait (`background_sparsity_sd`), background magnitudes
+  are scaled relative to the modules by `background_effect_scale`, and
+  `n_hub_traits` pleiotropic hubs create a global baseline factor. With this
+  difficulty level, recovery is expected to be partial and noisy — that is what
+  makes the per-check pass rates informative.
 - `ari_all` and `ari_structured` use each SNP's strongest assigned program as a
   hard projection, so they remain conventional partition metrics.
 - `factor_strength` and `factor_strength_per_snp` are reported scores only;

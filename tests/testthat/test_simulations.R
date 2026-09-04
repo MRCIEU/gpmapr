@@ -55,7 +55,6 @@ test_that("planted modules are recovered by the pipeline (disjoint)", {
     p_spurious = 0.02,
     p_active_background = 0.05,
     noise_sd = 0.3,
-    min_abs_z = 0,
     effect_tail = 0,
     background_sparsity_sd = 0,
     n_hub_traits = 0L,
@@ -74,7 +73,6 @@ test_that("null simulation produces limited structure", {
     n_coloc_groups = 80,
     K = 0,
     p_active_background = 0.05,
-    min_abs_z = 0,
     background_sparsity_sd = 0,
     n_hub_traits = 0L,
     target_pattern = "module",
@@ -392,29 +390,41 @@ test_that("planted module genes are annotated on driver traits", {
   expect_false(any(is.na(cg$gene_id[cg$trait_name %in% drv])))
 })
 
-test_that("min_abs_z floors every observed background cell at the hit threshold", {
+test_that("background_effect_scale scales background magnitude relative to effect_size", {
+  bg_beta <- function(scale, effect_size, seed) {
+    sim <- simulate_trait(
+      n_coloc_groups = 200, K = 1, module_sizes = 40,
+      n_traits_per_module = 5, n_background_traits = 60,
+      background_effect_scale = scale, effect_size = effect_size,
+      p_active_background = 0.05, background_sparsity_sd = 0,
+      n_hub_traits = 0L, seed = seed
+    )
+    cg <- sim$trait_object$coloc_groups
+    b <- cg[!cg$trait_name %in% unlist(sim$ground_truth$driver_traits) &
+              cg$trait_name != "Simulated target trait", ]
+    abs(b$beta)
+  }
+  weak <- bg_beta(0.25, 6, seed = 3)
+  strong <- bg_beta(1, 6, seed = 3)
+  # same RNG draws at 4x scale difference -> median ratio ~4
+  expect_gt(median(strong) / median(weak), 3)
+  # no hard floor: background hits include small magnitudes
+  expect_lt(quantile(weak, 0.25), 0.75 * 6)
+  expect_lt(quantile(strong, 0.25), 4.5)
+  # relative to effect_size: doubling effect_size doubles background magnitude
+  low_es <- bg_beta(1, 4, seed = 3)
+  high_es <- bg_beta(1, 8, seed = 3)
+  expect_gt(median(high_es) / median(low_es), 1.5)
+  # module driver effects stay on the effect_size scale
   sim <- simulate_trait(
-    n_coloc_groups = 100, K = 1, module_sizes = 20,
-    n_traits_per_module = 5, n_background_traits = 40,
-    min_abs_z = 4.5, p_active_background = 0.05,
-    seed = 3
+    n_coloc_groups = 200, K = 1, module_sizes = 40,
+    n_traits_per_module = 5, n_background_traits = 60,
+    effect_size = 6, p_structural_zero = 0, effect_tail = 0,
+    background_sparsity_sd = 0, n_hub_traits = 0L, seed = 4
   )
   cg <- sim$trait_object$coloc_groups
-  bg <- cg[
-    !cg$trait_name %in% unlist(sim$ground_truth$driver_traits) &
-      cg$trait_name != "Simulated target trait", ]
-  expect_true(all(abs(bg$beta) >= 4.5))
-  # with the floor explicitly disabled, classic small-noise cells reappear
-  sim0 <- simulate_trait(
-    n_coloc_groups = 100, K = 1, module_sizes = 20,
-    n_traits_per_module = 5, n_background_traits = 40,
-    p_active_background = 0.05,
-    min_abs_z = 0, seed = 3
-  )
-  bg0 <- sim0$trait_object$coloc_groups[
-    !sim0$trait_object$coloc_groups$trait_name %in%
-      unlist(sim0$ground_truth$driver_traits), ]
-  expect_true(any(abs(bg0$beta) < 4.5))
+  drv <- cg[cg$trait_name %in% unlist(sim$ground_truth$driver_traits), ]
+  expect_gt(mean(abs(drv$beta)), 4)
 })
 
 test_that("effect_tail adds per-trait magnitude heterogeneity without breaking sign agreement", {
@@ -482,7 +492,7 @@ test_that("target_pattern = 'dense' gives a positive significant target row at e
   s <- simulate_trait(
     n_coloc_groups = 100, K = 1, module_sizes = 20,
     n_traits_per_module = 5, n_background_traits = 20,
-    target_pattern = "dense", min_abs_z = 4.5, seed = 11
+    target_pattern = "dense", seed = 11
   )
   trow <- s$trait_object$coloc_groups[
     s$trait_object$coloc_groups$trait_name == "Simulated target trait", ]
@@ -522,9 +532,18 @@ test_that("simulate_trait defaults are deterministic and realistic", {
   s2 <- do.call(simulate_trait, args)
   expect_identical(s1$trait_object$coloc_groups$beta,
                    s2$trait_object$coloc_groups$beta)
-  # realism is on by default: every observed cell is a significant hit
-  expect_true(all(abs(s1$trait_object$coloc_groups$beta) >= 4.5))
-  expect_equal(s1$ground_truth$parameters$min_abs_z, 4.5)
+  # realism is on by default: driver effects sit near effect_size = 6
+  drv <- unlist(s1$ground_truth$driver_traits)
+  drv_beta <- abs(s1$trait_object$coloc_groups$beta[
+    s1$trait_object$coloc_groups$trait_name %in% drv])
+  expect_gt(mean(drv_beta), 4)
+  # background hits are scaled relative to the modules, with no hard floor
+  bg_beta <- abs(s1$trait_object$coloc_groups$beta[
+    !s1$trait_object$coloc_groups$trait_name %in% drv &
+      s1$trait_object$coloc_groups$trait_name != "Simulated target trait"])
+  expect_gt(median(bg_beta), 0.5 * 0.75 * 6)
+  expect_lt(quantile(bg_beta, 0.25), 4.5)
+  expect_equal(s1$ground_truth$parameters$background_effect_scale, 0.75)
   expect_equal(s1$ground_truth$parameters$target_pattern, "dense")
   expect_equal(s1$ground_truth$parameters$p_negative, 0.05)
 })

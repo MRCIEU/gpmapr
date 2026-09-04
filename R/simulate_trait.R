@@ -7,17 +7,20 @@
 #' `evaluate_univariate_simulation()`.
 #'
 #' By default the generative parameters are calibrated to the messy marginals
-#' of a real pleiotropy matrix: every observed cell is a significant hit
-#' (`min_abs_z = 4.5`), driver effects are heavy-tailed across traits
+#' of a real pleiotropy matrix: driver effects are heavy-tailed across traits
 #' (`effect_tail = 0.4`) with a minority of cells disagreeing with the target
 #' orientation (`p_negative = 0.05`), background densities are heavy-tailed
 #' per trait (`background_sparsity_sd = 1.2`), a proportion of pleiotropic
 #' **hub** traits is planted automatically (`n_hub_traits = NULL`), and the
 #' target row is dense and significant at every SNP (`target_pattern =
-#' "dense"`). Simulations built this way are genuinely hard — recovery is
-#' partial and noisy rather than trivially perfect, so the validation gates
-#' and parameter trade-offs can actually be tested. Each realism knob can be
-#' turned off individually (e.g. `min_abs_z = 0`, `n_hub_traits = 0L`).
+#' "dense"`). Unstructured background associations are drawn from a
+#' standardised heavy-tailed distribution scaled relative to the planted
+#' modules by `background_effect_scale` (a relative effect-size parameter, not
+#' a significance threshold). Simulations built this way are genuinely hard —
+#' recovery is partial and noisy rather than trivially perfect, so the
+#' validation gates and parameter trade-offs can actually be tested. Each
+#' realism knob can be turned off individually (e.g. `background_effect_scale =
+#' 0`, `n_hub_traits = 0L`).
 #'
 #' Structure: `n_coloc_groups` SNPs (one coloc group / locus each) define the
 #' total number of SNPs (trait x SNP matrix columns). `K` module regions are
@@ -35,9 +38,10 @@
 #' identical. This creates modules with distinct SNP sets but overlapping,
 #' correlated trait signatures. Driver support is thinned by
 #' `p_structural_zero` (structural zeros inside true support). Cells outside
-#' true support receive small noise effects with probability `p_spurious`.
-#' Background traits activate on each SNP independently with probability
-#' `p_active_background`, giving realistic marginal sparsity without structure.
+#' true support receive background-scale noise effects with probability
+#' `p_spurious`. Background traits activate on each SNP independently with
+#' probability `p_active_background`, giving realistic marginal sparsity
+#' without structure.
 #'
 #' Trait composition: the total number of traits (rows) is
 #' `1` (target) + `n_driver_rows` (unique driver traits; fewer than
@@ -101,8 +105,7 @@
 #'   vector of length `K` giving one value per module. Varying effect sizes
 #'   across modules breaks the exchangeability of same-signature modules so
 #'   that methods which operate in trait space (e.g. EBMF) can separate them.
-#'   Defaults to `6`, matching the median observed |z| of real coloc cells and
-#'   keeping driver signal above the `min_abs_z` floor.
+#'   Defaults to `6`, matching the median observed |z| of real coloc cells.
 #' @param noise_sd Standard deviation of noise effects added to target,
 #'   driver, and background trait observations.
 #' @param sign_pattern Driver-sign regime: `"coherent"` (all drivers positive),
@@ -122,14 +125,16 @@
 #'   at only a couple of SNPs while a tail is much denser, matching the
 #'   per-trait sparsity distribution of real pleiotropy matrices.
 #'   Default 1.2.
-#' @param min_abs_z Significance floor for observed cells. When positive
-#'   (`4.5` by default, the approximate floor of real coloc z-scores), every
-#'   *observed* cell is a significant hit: background and spurious cells are
-#'   drawn as `sign * (min_abs_z + Exp)` and all other observed cells are
-#'   floored at `min_abs_z`, so noise is encoded as absence (NA) rather than
-#'   as small observed values — the way real colocalisation data behaves.
-#'   Set to `0` to keep the classic behaviour where background and spurious
-#'   cells carry small `N(0, noise_sd)` values.
+#' @param background_effect_scale Relative magnitude of unstructured
+#'   background (and spurious off-support) associations compared with the
+#'   planted module effect size. Background magnitudes are drawn from a
+#'   standardised heavy-tailed distribution with typical magnitude ~1 and
+#'   scaled by `background_effect_scale * effect_size`, so e.g. with
+#'   `effect_size = 6`, `background_effect_scale = 0.75` gives background hits
+#'   with typical magnitude ~4.5, some below and some above. This is a
+#'   relative effect-size parameter, not a significance threshold: it changes
+#'   the *distribution* of background magnitudes without clipping or
+#'   guaranteeing significance. Default 0.75.
 #' @param effect_tail Standard deviation (on the log scale) of a per-*trait*
 #'   lognormal multiplier applied to a driver trait's effects across all of its
 #'   module's SNPs. Zero keeps every driver trait at (approximately)
@@ -150,10 +155,10 @@
 #'   which each hub trait is observed. Defaults to `c(0.3, 1)`.
 #' @param target_pattern Target-trait row regime: `"dense"` (default) gives
 #'   the target trait a significant, heavy-tailed positive z-score at **every**
-#'   SNP (magnitude `effect_size[1] * lognormal(0, 0.5)`, floored at
-#'   `min_abs_z` when set), matching a real target-trait row in the oriented
-#'   frame — informative about nothing but its own strength; `"module"` gives
-#'   the target trait elevated signal at module SNPs and noise elsewhere.
+#'   SNP (magnitude `effect_size[1] * lognormal(0, 0.5)`), matching a real
+#'   target-trait row in the oriented frame — informative about nothing but its
+#'   own strength; `"module"` gives the target trait elevated signal at module
+#'   SNPs and noise elsewhere.
 #' @param p_negative Probability that an individual driver cell within module
 #'   support has its sign flipped, emulating the minority of cells that
 #'   disagree with the target-trait orientation in real data. Default 0.05.
@@ -223,7 +228,7 @@ simulate_trait <- function(n_coloc_groups = 100,
                            p_spurious = 0.05,
                            p_active_background = 0.08,
                            background_sparsity_sd = 1.2,
-                           min_abs_z = 4.5,
+                           background_effect_scale = 0.75,
                            effect_tail = 0.4,
                            n_hub_traits = NULL,
                            hub_snp_fraction = c(0.3, 1),
@@ -335,9 +340,9 @@ simulate_trait <- function(n_coloc_groups = 100,
       stop(name, " must be a non-negative finite number")
     }
   }
-  scalar_nonneg(min_abs_z, "min_abs_z")
   scalar_nonneg(effect_tail, "effect_tail")
   scalar_nonneg(background_sparsity_sd, "background_sparsity_sd")
+  scalar_nonneg(background_effect_scale, "background_effect_scale")
   n_hub_traits_auto <- is.null(n_hub_traits)
   if (!n_hub_traits_auto) {
     if (!is.numeric(n_hub_traits) || length(n_hub_traits) != 1L ||
@@ -458,9 +463,6 @@ simulate_trait <- function(n_coloc_groups = 100,
     # oriented frame (matching a real target-trait row after orientation).
     target_vals <- effect_size[1] * stats::rlnorm(n_snps, 0, 0.5) +
       stats::rnorm(n_snps, 0, noise_sd)
-    if (min_abs_z > 0) {
-      target_vals <- sign(target_vals) * pmax(min_abs_z, abs(target_vals))
-    }
     M[as.character(target_tid), ] <- target_vals
   }
 
@@ -550,9 +552,6 @@ simulate_trait <- function(n_coloc_groups = 100,
           if (!is.null(p_negative)) {
             vals <- ifelse(stats::runif(n_fill) < p_negative, -vals, vals)
           }
-          if (min_abs_z > 0) {
-            vals <- sign(vals) * pmax(min_abs_z, abs(vals))
-          }
           M[row, in_module] <- ifelse(active, vals, NA_real_)
           filled <- c(filled, in_module)
         }
@@ -561,13 +560,10 @@ simulate_trait <- function(n_coloc_groups = 100,
       spur <- stats::runif(length(off_module)) < p_spurious
       vals <- rep(NA_real_, length(off_module))
       if (any(spur)) {
-        if (min_abs_z > 0) {
-          # Spurious associations are significant hits too, with random sign.
-          vals[spur] <- sign(stats::rnorm(sum(spur))) *
-            (min_abs_z + stats::rexp(sum(spur), rate = 1 / 3))
-        } else {
-          vals[spur] <- stats::rnorm(sum(spur), 0, noise_sd)
-        }
+        # Spurious associations are background-scale hits with random sign.
+        vals[spur] <- .sim_background_effects(
+          sum(spur), background_effect_scale, effect_size[1]
+        )
       }
       M[row, off_module] <- vals
     }
@@ -622,9 +618,10 @@ simulate_trait <- function(n_coloc_groups = 100,
         )
         act <- stats::runif(n_snps) < hub_frac
         vals <- rep(NA_real_, n_snps)
-        # Magnitude rides the shared per-SNP latent (hub rows correlate) on a
-        # significant floor; the per-hub scale sets each trait's typical size.
-        hub_mag <- hub_scale[h] * hub_latent * pmax(min_abs_z, 3)
+        # Magnitude rides the shared per-SNP latent (hub rows correlate) on
+        # the module effect scale; the per-hub scale sets each trait's
+        # typical size.
+        hub_mag <- hub_scale[h] * hub_latent * effect_size[1]
         hub_sign <- if (!is.null(p_negative)) {
           ifelse(stats::runif(n_snps) < p_negative, -1, 1)
         } else {
@@ -632,9 +629,6 @@ simulate_trait <- function(n_coloc_groups = 100,
         }
         vals[act] <- hub_sign[act] * hub_mag[act] +
           stats::rnorm(sum(act), 0, noise_sd)
-        if (min_abs_z > 0) {
-          vals[act] <- sign(vals[act]) * pmax(min_abs_z, abs(vals[act]))
-        }
         M[row, ] <- vals
       } else {
         base_prob <- p_active_background
@@ -645,17 +639,14 @@ simulate_trait <- function(n_coloc_groups = 100,
         }
         act <- stats::runif(n_snps) < act_prob
         vals <- rep(NA_real_, n_snps)
-        if (min_abs_z > 0) {
-          # Every observed background cell is a significant hit; noise is
-          # absence (NA), never a small observed value.
-          n_act <- sum(act)
-          if (n_act > 0) {
-            hit_sign <- sign(stats::rnorm(n_act))
-            vals[act] <- hit_sign *
-              (min_abs_z + stats::rexp(n_act, rate = 1 / 3))
-          }
-        } else {
-          vals[act] <- stats::rnorm(sum(act), 0, noise_sd)
+        # Background magnitudes come from the standardised heavy-tailed
+        # distribution scaled relative to the module effect size; they are not
+        # floored at a significance threshold.
+        n_act <- sum(act)
+        if (n_act > 0) {
+          vals[act] <- .sim_background_effects(
+            n_act, background_effect_scale, effect_size[1]
+          )
         }
         M[row, ] <- vals
       }
@@ -738,7 +729,7 @@ simulate_trait <- function(n_coloc_groups = 100,
         p_spurious = p_spurious,
         p_active_background = p_active_background,
         background_sparsity_sd = background_sparsity_sd,
-        min_abs_z = min_abs_z,
+        background_effect_scale = background_effect_scale,
         effect_tail = effect_tail,
         n_hub_traits = n_hub_traits,
         hub_snp_fraction = hub_snp_fraction,
@@ -767,6 +758,21 @@ simulate_trait <- function(n_coloc_groups = 100,
     stop(name, " must be non-negative")
   }
   return(x)
+}
+
+
+.sim_background_effects <- function(n, background_effect_scale, effect_size) {
+  # Relative-to-module background magnitudes. Draws from a standardised
+  # heavy-tailed distribution (exponential with mean ~1, independent of the
+  # module effect size) and scales it by background_effect_scale * effect_size,
+  # so background_effect_scale is interpretable regardless of effect_size.
+  # This sets the *distribution* of background magnitudes; it is not a
+  # significance floor, so no hard minimum z-score is imposed.
+  if (n <= 0) {
+    return(numeric(0))
+  }
+  mag <- background_effect_scale * effect_size * stats::rexp(n, rate = 1)
+  return(sign(stats::rnorm(n)) * mag)
 }
 
 
