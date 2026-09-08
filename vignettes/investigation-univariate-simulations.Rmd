@@ -34,7 +34,7 @@ params:
   # background density is evaluated at every trait-overlap level.
   p_active_background: [0.02, 0.07, 0.15]
   snp_driver_groups: [1, 2, 3]
-  driver_sharing: [0.0, 0.5, 0.25]
+  driver_sharing: [0.0, 0.1, 0.25]
   p_spurious: [0.0, 0.01]
 
   # EBMF / clustering parameters (inputs to run_univariate_clustering)
@@ -46,12 +46,11 @@ params:
   similarity_threshold: 0.2
   ebmf_se_mode: unit
   ebmf_beta_scale: trait
-  ebmf_lfsr_threshold: 0.05
+  ebmf_lfsr_threshold: 0.01
   ebmf_magnitude_threshold: 0.3
   ebmf_drop_global: true
-  ebmf_prior: point_normal
+  ebmf_prior: point_laplace
   ebmf_backfit: true
-  ebmf_hard_assignment: false
 
   # Program validation parameters (inputs to summarise_ebmf_programs)
   min_module_size: 3
@@ -123,7 +122,6 @@ clustering_settings <- list(
   ebmf_drop_global = params$ebmf_drop_global,
   ebmf_prior = params$ebmf_prior,
   ebmf_backfit = params$ebmf_backfit,
-  ebmf_hard_assignment = params$ebmf_hard_assignment,
   min_module_size = params$min_module_size,
   min_mean_internal = params$min_mean_internal,
   min_connectedness = params$min_connectedness
@@ -355,6 +353,47 @@ make_background_cross <- function() {
   return(list(labels = labels, specs = specs))
 }
 
+# For each found program, match it to the planted module whose SNP set it
+# overlaps most (on the gated membership) and score recovery: module SNPs
+# captured (`module_found`), module SNPs missed (`module_missed`), and program
+# SNPs not in that module (`not_module`). Modules are a disjoint partition
+# (`module_of_snp`; 0 = background). No-op when there are no programs or no
+# planted modules.
+score_module_recovery <- function(programs, assigned, module_of_snp) {
+  if (nrow(programs) == 0 || is.null(module_of_snp)) {
+    return(programs)
+  }
+  mod_ids <- sort(unique(module_of_snp[module_of_snp > 0]))
+  if (length(mod_ids) == 0) {
+    return(programs)
+  }
+  mod_snps <- lapply(mod_ids, function(m) {
+    names(module_of_snp)[module_of_snp == m]
+  })
+  names(mod_snps) <- as.character(mod_ids)
+
+  rows <- lapply(programs$program, function(p) {
+    prog_snps <- assigned$snp_id[assigned$program == p]
+    overlaps <- vapply(mod_ids, function(m) {
+      sum(prog_snps %in% mod_snps[[as.character(m)]])
+    }, integer(1))
+    best <- mod_ids[which.max(overlaps)]
+    n_module <- length(mod_snps[[as.character(best)]])
+    n_found <- overlaps[best]
+    data.frame(
+      matched_module = best,
+      n_module_snps = n_module,
+      module_found = n_found,
+      module_missed = n_module - n_found,
+      not_module = length(prog_snps) - n_found,
+      stringsAsFactors = FALSE
+    )
+  })
+  m <- dplyr::bind_rows(rows)
+  m$program <- programs$program
+  return(dplyr::left_join(programs, m, by = "program"))
+}
+
 run_tier_one <- function(spec, rep) {
   dots <- spec
   dots$seed <- sample.int(.Machine$integer.max, 1)
@@ -377,6 +416,9 @@ run_tier_one <- function(spec, rep) {
   )
   programs <- smry$programs
   programs$rep <- rep(rep, nrow(programs))
+  programs <- score_module_recovery(
+    programs, smry$assigned, sim$ground_truth$module_of_snp
+  )
   driver_ov <- sim$ground_truth$driver_overlap
   true_driver_overlap <- if (!is.null(driver_ov) && nrow(driver_ov) > 1) {
     mean(driver_ov[upper.tri(driver_ov)])
@@ -606,6 +648,16 @@ program does not meet that criterion; `n/a` under `stability` means the
 program already failed the internal-coherence checks, so stability was not
 re-tested.
 
+Each program is also scored against the planted module it overlaps most (on
+its gated SNPs): `% module found` is the fraction of that module's SNPs the
+program recovered, `% module missed` its complement, and `% not module` is the
+fraction of the program's SNPs that are not in that module (background or
+other-module SNPs pulled in). `% module found` + `% module missed` always sum
+to 100%. Under high `trait_overlap` a program that correctly merges two
+modules matches only one, so its `% not module` rises even though it is
+recovering real structure — read these alongside the merge-fair `module_recall`
+in the Aggregate table.
+
 ```{r check-helper, include=FALSE}
 check_table <- function(which_tier) {
   df <- program_checks |>
@@ -625,11 +677,28 @@ check_table <- function(which_tier) {
       ),
       mean_internal_similarity = round(mean_internal_similarity, 3),
       connectedness = round(connectedness, 3),
-      replication = round(replication, 3)
+      replication = round(replication, 3),
+      matched = paste0("M", matched_module),
+      pct_module_found = ifelse(
+        n_module_snps > 0,
+        paste0(round(100 * module_found / n_module_snps), "%"),
+        "-"
+      ),
+      pct_module_missed = ifelse(
+        n_module_snps > 0,
+        paste0(round(100 * module_missed / n_module_snps), "%"),
+        "-"
+      ),
+      pct_not_module = ifelse(
+        n_snps_filtered > 0,
+        paste0(round(100 * not_module / n_snps_filtered), "%"),
+        "-"
+      )
     ) |>
     dplyr::select(
       rep, program, n_snps, n_snps_filtered, mean_internal_similarity,
-      connectedness, replication,
+      connectedness, replication, matched, pct_module_found,
+      pct_module_missed, pct_not_module,
       check_size, check_internal_similarity, check_connectedness,
       check_stability, status
     ) |>
@@ -639,6 +708,7 @@ check_table <- function(which_tier) {
       col.names = c(
         "rep", "program", "n_snps", "n_snps filtered",
         "mean internal similarity", "connectedness", "replication",
+        "matched module", "% module found", "% module missed", "% not module",
         "size", "internal sim", "connectivity", "stability", "status"
       )
     )

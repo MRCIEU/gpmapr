@@ -35,7 +35,6 @@ ebmf_magnitude_threshold <- 0.5
 ebmf_drop_global <- TRUE
 ebmf_prior <- "point_normal"
 ebmf_backfit <- TRUE
-ebmf_hard_assignment <- FALSE
 min_module_size <- 3L
 n_null <- 5L
 cores <- 5L
@@ -71,7 +70,6 @@ res <- run_univariate_clustering(
   ebmf_drop_global = ebmf_drop_global,
   ebmf_prior = ebmf_prior,
   ebmf_backfit = ebmf_backfit,
-  ebmf_hard_assignment = ebmf_hard_assignment,
   min_module_size = min_module_size
 )
 

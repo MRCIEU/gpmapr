@@ -32,7 +32,6 @@ params:
   ebmf_drop_global: true
   ebmf_prior: point_normal
   ebmf_backfit: true
-  ebmf_hard_assignment: false
 
   # Program validation parameters (inputs to summarise_ebmf_programs)
   min_module_size: 3
@@ -101,7 +100,6 @@ clustering_settings <- list(
   ebmf_drop_global = params$ebmf_drop_global,
   ebmf_prior = params$ebmf_prior,
   ebmf_backfit = params$ebmf_backfit,
-  ebmf_hard_assignment = params$ebmf_hard_assignment,
   min_module_size = params$min_module_size,
   min_mean_internal = params$min_mean_internal,
   min_connectedness = params$min_connectedness
@@ -170,7 +168,7 @@ settings_to_show <- c(
   "compress_method", "compress_scale", "similarity_threshold",
   "ebmf_se_mode", "ebmf_beta_scale", "ebmf_lfsr_threshold",
   "ebmf_magnitude_threshold", "ebmf_drop_global", "ebmf_prior",
-  "ebmf_backfit", "ebmf_hard_assignment",
+  "ebmf_backfit",
   "min_mean_internal", "min_connectedness",
   "n_null", "alpha_membership", "n_candidate_tier", "n_rep",
   "frac_traits", "stability_top_n", "stability_threshold",

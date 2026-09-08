@@ -405,6 +405,72 @@ on its module's SNPs, under a `sign_pattern` (`coherent`, `flipped`, or
 module's SNP block** — this is the "signal" the EBMF programs are supposed to
 recover.
 
+**How we control the simulations**. The parameters shape the input, and they differ in 
+where the structure (or mess) they add lives:
+
+1. Background effect parameters (p_active_background,
+background_sparsity_sd, background_effect_scale) — the unstructured
+noise floor. Every background SNP association is an independent draw:
+p_active_background sets how often a background trait is observed at a SNP
+(density), background_sparsity_sd makes per-trait density heavy-tailed
+(most traits observed at a handful of SNPs, with a tail of denser traits),
+and background_effect_scale sets the magnitude of the hits relative to
+effect_size. Unlike modules, the background has no shared structure;
+it makes recovery harder by reducing the contrast between coherent module
+signal and unrelated associations.
+
+2. SNP driver groups and driver sharing (snp_driver_groups,
+driver_sharing) — the internal and cross-module SNP architecture of the
+planted modules. These parameters introduce additional structured
+complexity, rather than unstructured noise, but they act in different ways.
+
+snp_driver_groups partitions each module's SNPs into groups and assigns
+each driver trait to only one corresponding SNP group. Thus, increasing
+snp_driver_groups progressively changes a planted module from a single
+coherent SNP-by-trait pattern into several distinct subpatterns. This is
+therefore a relatively strong form of within-module heterogeneity: at high
+values, the simulated data may contain multiple statistically distinguishable
+latent patterns even though all of their SNPs are labelled as belonging to
+the same ground-truth module. The parameter consequently tests how many
+distinct subpatterns can be embedded within one nominal biological programme
+before EBMF and subsequent clustering resolve them as separate factors or
+programs.
+
+driver_sharing acts differently. It does not control similarity between
+SNP groups within the same module. Instead, the first
+floor(n_traits_per_module * driver_sharing) driver traits of module m
+are also active across the SNP set of the previous module. It therefore
+creates structured overlap in SNP usage between adjacent modules: a driver
+trait nominally associated with one module can also generate signal among
+SNPs belonging to another module. This differs from both trait_overlap,
+which makes modules share driver traits themselves, and the background
+parameters, which generate associations without coherent shared structure.
+
+3. Module trait overlap (trait_overlap, trait_effect_corr) — the
+overlap of trait signatures between modules. trait_overlap determines
+the proportion of each module's driver traits that are shared with other
+modules. As trait overlap increases, different modules are defined by
+increasingly similar sets of traits, reducing the distinction between their
+pleiotropic signatures. trait_effect_corr determines how similar the
+corresponding effects are when traits are shared: shared drivers can have
+correlated but non-identical effects across modules.
+
+This manipulation is distinct from driver_sharing. trait_overlap changes
+which traits define each module, whereas driver_sharing changes which
+SNPs are affected by particular driver traits. At high trait overlap,
+modules may become difficult to separate because their trait signatures are
+genuinely similar, even when their SNP sets remain distinct. The parameter
+therefore tests the resolution limit of the method when biologically
+distinct SNP groups have increasingly overlapping pleiotropic profiles.
+
+4. Spurious hits (p_spurious) — contamination of the driver signal.
+p_spurious adds background-scale off-module associations to driver traits,
+introducing associations outside their intended structured SNP patterns.
+Unlike snp_driver_groups or driver_sharing, these hits do not represent
+additional coherent latent structure. They instead test robustness to
+isolated or weak associations that partially obscure the intended module
+boundaries.
+
 **How we control the simulations.** The parameters shape the input, and they
 differ in *where* the structure (or mess) they add lives:
 
@@ -420,7 +486,9 @@ differ in *where* the structure (or mess) they add lives:
    signal and noise.
 
 2. **SNP driver groups and sharing** (`snp_driver_groups`, `driver_sharing`) —
-   the *internal SNP architecture of the modules*. `snp_driver_groups` splits
+   The key idea is that driver sharing and SNP driver groups introduce heterogeneity within a true program. They test whether your method can recognise a biological program when its SNPs are similar, but not identical.  
+   Tries to ask the question "How much heterogeneity can exist within a biological program before EBMF and the subsequent clustering treat it as multiple programs?"
+   The *internal SNP architecture of the modules*. `snp_driver_groups` splits
    each module's SNP set into contiguous groups and makes each driver trait act
    on only its own group, so a module's drivers are compartmentalised and a
    driver's signal is recoverable only from its SNP subgroup.
