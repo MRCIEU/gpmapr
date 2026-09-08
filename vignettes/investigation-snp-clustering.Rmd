@@ -334,7 +334,6 @@ Exposed in the univariate vignette today (EBMF path):
 
 | Parameter | Values | Meaning | Explanation |
 |---|---|---|---|
-| `Dataset` | `production`, `local` | Public GPMap vs new trans-QTL DB | Local data added trans-QTL studies, increasing matrix density and changing the regulatory signals that connect SNPs. This can alter both program membership and tissue/gene interpretation. Production is more reproducible but may omit those signals. |
 | `include_trans` | `TRUE`, `FALSE` | Whether trans-QTL rows are retained | Including trans effects can reveal distributed regulatory programs and improve tissue/pathway interpretation, while increasing density and possible noise. Excluding them gives a more local cis-focused analysis but may miss system-level mechanisms. |
 | `trait_subset` | `all`, `phenotypic` | Which trait rows back the matrix | `phenotypic` drops sparse molecular / gene-annotated rows (keeping the target trait), recovering structure that sparse molecular rows dilute but losing QTL-level signal. `all` keeps every available background trait at the cost of extra sparsity. |
 | `min_snp_signals` | `1`, `2`, `3`, `5` | Minimum SNPs with a value for a background trait | Raising it removes singleton or very sparse rows, reducing unstable factors and computation. It can also remove rare, module-specific biology. Lowering it preserves those signals but makes factorization more sensitive to sparse observations. |
@@ -371,12 +370,11 @@ we planted, and how well?).
 
 ### Null simulations: testing hallucination
 
-The null family keeps `K = 0`: no modules, no driver traits, and no hub traits
-(`n_hub_traits = 0`). The matrix is the dense target row plus unstructured
-background traits. Because there is no planted structure, any program that
-passes all four validation checks is a **false discovery**, so the null runs
-measure how often the EBMF + validation battery invents structure from
-randomness.
+The null family keeps `K = 0`: no modules and no driver traits. The matrix is
+the dense target row plus unstructured background traits. Because there is no
+planted structure, any program that passes all four validation checks is a
+**false discovery**, so the null runs measure how often the EBMF + validation
+battery invents structure from randomness.
 
 - The meaningful controls here are the **background effect** parameters
   (below) and `noise_sd`. The driver/module parameters (`p_structural_zero`,
@@ -407,8 +405,8 @@ on its module's SNPs, under a `sign_pattern` (`coherent`, `flipped`, or
 module's SNP block** — this is the "signal" the EBMF programs are supposed to
 recover.
 
-**How we control the simulations.** Three families of parameters shape the
-input, and they differ in *where* the structure (or mess) they add lives:
+**How we control the simulations.** The parameters shape the input, and they
+differ in *where* the structure (or mess) they add lives:
 
 1. **Background effect parameters** (`p_active_background`,
    `background_sparsity_sd`, `background_effect_scale`) — the *unstructured
@@ -417,21 +415,11 @@ input, and they differ in *where* the structure (or mess) they add lives:
    (density), `background_sparsity_sd` makes per-trait density heavy-tailed
    (most traits observed at a handful of SNPs, a tail dense), and
    `background_effect_scale` sets the magnitude of the hits relative to
-   `effect_size`. Unlike modules and hubs, the background has **no shared
-   structure at all**; it makes recovery harder purely by diluting the contrast
-   between signal and noise.
+   `effect_size`. Unlike modules, the background has **no shared structure at
+   all**; it makes recovery harder purely by diluting the contrast between
+   signal and noise.
 
-2. **Hub trait parameters** (`n_hub_traits`, `hub_snp_fraction`) — a
-   *structured, global* layer. `n_hub_traits` background traits are converted
-   into dense, mostly-positive rows observed at a large fraction of SNPs
-   (`hub_snp_fraction`), all correlated through a shared per-SNP latent, so
-   they read as a **single global mega-factor** rather than many independent
-   rows. This is the opposite of the background: the background is unstructured
-   noise, the hubs are highly structured shared signal. Hubs test whether
-   `ebmf_drop_global` correctly recognises and drops the mega-factor instead of
-   letting it leak into module programs.
-
-3. **SNP driver groups and sharing** (`snp_driver_groups`, `driver_sharing`) —
+2. **SNP driver groups and sharing** (`snp_driver_groups`, `driver_sharing`) —
    the *internal SNP architecture of the modules*. `snp_driver_groups` splits
    each module's SNP set into contiguous groups and makes each driver trait act
    on only its own group, so a module's drivers are compartmentalised and a
@@ -443,9 +431,10 @@ input, and they differ in *where* the structure (or mess) they add lives:
    shares *trait signatures* between modules) and from the background (which is
    noise): they add *structured* SNP usage that is not confined to one module's
    own block.
-4. `trait_overlap` / `trait_effect_corr` share driver traits between modules
-    (trait-signature overlap), and `p_spurious`
-    adds background-scale off-module hits to the driver rows (contamination).
+
+3. **Module Trait Overlap**: `trait_overlap` / `trait_effect_corr` share driver traits between modules
+    (trait-signature overlap)
+4. **Spurious Hits**: `p_spurious` adds background-scale off-module hits to the driver rows (contamination).
 
 The module simulations are scored against ground truth by
 `evaluate_univariate_simulation()`:
