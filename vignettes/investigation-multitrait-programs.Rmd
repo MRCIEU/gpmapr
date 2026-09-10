@@ -1,0 +1,645 @@
+---
+title: "Investigation of multi-trait EBMF program correspondence"
+output:
+  rmarkdown::html_vignette:
+    includes:
+      in_header: investigation-wide.html
+vignette: >
+  %\VignetteIndexEntry{Investigation of multi-trait EBMF program correspondence}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+params:
+  api: "prod"
+  include_trans: false
+  trait_ids: [1992, 114]
+  trait_subset: "phenotypic"
+  min_snp_signals: 2
+  min_module_size: 3
+  cluster_type: "ebmf"
+  louvain_gamma: 1.5
+  compress_method: "asinh"
+  compress_scale: 5
+  similarity_threshold: 0.2
+  ebmf_se_mode: "unit"
+  ebmf_beta_scale: "trait"
+  ebmf_magnitude_threshold: 0.75
+  ebmf_lfsr_threshold: 0.02
+  ebmf_prior: "point_laplace"
+  ebmf_backfit: true
+  min_mean_internal: 0.3
+  min_connectedness: 0.5
+  n_null: 5
+  alpha_membership: 0.05
+  n_candidate_tier: 25
+  n_rep: 0
+  frac_traits: 0.8
+  stability_top_n: 20
+  stability_threshold: 0.5
+  posterior_stat: "median"
+  posterior_evidence_cap: 50
+  redundancy_threshold: 0.9
+  cores: 5
+  n_perm: 200
+  fdr_threshold: 0.05
+  zero_tol: 0.00000001
+  associations: "coloc"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+```{r libraries}
+pkg_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("devtools", quietly = TRUE)) {
+  devtools::load_all(pkg_root, quiet = TRUE)
+} else {
+  library(gpmapr)
+}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+This vignette extends the single-trait investigation
+(`investigation-univariate-analysis.html`) to **multiple traits**. EBMF programs
+are discovered independently for each target trait, then cross-trait program
+pairs are compared. The primary similarity is the Pearson correlation of the
+programs' SNP loading vectors (`F_pm`), aligned on the union of their SNPs; a
+supporting Jaccard overlap is taken on each program's high-confidence
+(lFSR/magnitude-gated) SNP set. A matched permutation null turns every
+correlation into an empirical p-value, which is BH-corrected across all
+cross-trait pairs. Credibly corresponding programs are then joined into
+**multi-trait program families** (weak connected components of the significant
+graph), so no one-to-one matching is forced.
+
+Traits are supplied as an array in `params$trait_ids`. We use the defaults:
+BMI (`1992`) and Type 2 Diabetes (`114`).
+
+```{r params}
+trait_ids <- as.character(params$trait_ids)
+if (length(trait_ids) < 2) {
+  stop("At least two trait_ids are required for a multi-trait comparison")
+}
+
+api <- params$api
+trait_subset <- params$trait_subset
+min_module_size <- as.integer(params$min_module_size)
+min_snp_signals <- as.integer(params$min_snp_signals)
+cluster_type <- params$cluster_type
+compress_method <- params$compress_method
+compress_scale <- as.numeric(params$compress_scale)
+include_trans <- isTRUE(params$include_trans)
+similarity_threshold <- as.numeric(params$similarity_threshold)
+ebmf_se_mode <- params$ebmf_se_mode
+ebmf_beta_scale <- params$ebmf_beta_scale
+ebmf_lfsr_threshold <- as.numeric(params$ebmf_lfsr_threshold)
+ebmf_prior <- params$ebmf_prior
+ebmf_backfit <- isTRUE(params$ebmf_backfit)
+ebmf_magnitude_threshold <- if (is.na(params$ebmf_magnitude_threshold)) {
+  NA_real_
+} else {
+  as.numeric(params$ebmf_magnitude_threshold)
+}
+associations <- params$associations
+min_mean_internal <- as.numeric(params$min_mean_internal)
+min_connectedness <- as.numeric(params$min_connectedness)
+n_null <- as.integer(params$n_null)
+alpha_membership <- as.numeric(params$alpha_membership)
+n_candidate_tier <- as.integer(params$n_candidate_tier)
+n_rep <- as.integer(params$n_rep)
+frac_traits <- as.numeric(params$frac_traits)
+stability_top_n <- as.integer(params$stability_top_n)
+stability_threshold <- as.numeric(params$stability_threshold)
+posterior_stat <- params$posterior_stat
+posterior_evidence_cap <- as.numeric(params$posterior_evidence_cap)
+redundancy_threshold <- as.numeric(params$redundancy_threshold)
+cores <- as.integer(params$cores)
+n_perm <- as.integer(params$n_perm)
+fdr_threshold <- as.numeric(params$fdr_threshold)
+zero_tol <- as.numeric(params$zero_tol)
+
+if (!identical(cluster_type, "ebmf")) {
+  stop("This vignette is configured for cluster_type = 'ebmf'")
+}
+
+select_api(api)
+
+knitr::kable(
+  data.frame(
+    api = api,
+    trait_ids = paste(trait_ids, collapse = ", "),
+    trait_subset = trait_subset,
+    min_snp_signals = min_snp_signals,
+    min_module_size = min_module_size,
+    compress_method = compress_method,
+    compress_scale = compress_scale,
+    include_trans = include_trans,
+    similarity_threshold = similarity_threshold,
+    ebmf_se_mode = ebmf_se_mode,
+    ebmf_beta_scale = ebmf_beta_scale,
+    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
+    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
+    ebmf_prior = ebmf_prior,
+    ebmf_backfit = ebmf_backfit,
+    min_mean_internal = min_mean_internal,
+    min_connectedness = min_connectedness,
+    n_null = n_null,
+    n_rep = n_rep,
+    n_perm = n_perm,
+    fdr_threshold = fdr_threshold,
+    zero_tol = zero_tol,
+    associations = associations,
+    stringsAsFactors = FALSE
+  ),
+  caption = "Active run parameters",
+  row.names = FALSE
+)
+
+trait_meta <- traits(trait_ids)
+trait_name_map <- stats::setNames(
+  as.character(trait_meta$traits$trait_name),
+  as.character(trait_meta$traits$id)
+)
+trait_name_map[is.na(trait_name_map)] <- names(trait_name_map)[is.na(trait_name_map)]
+
+knitr::kable(
+  data.frame(
+    trait_id = trait_ids,
+    trait_name = unname(trait_name_map[trait_ids]),
+    stringsAsFactors = FALSE
+  ),
+  caption = "Target traits compared",
+  row.names = FALSE
+)
+```
+
+## Step 1: Univariate EBMF per trait
+
+The existing single-trait pipeline is run independently for each target trait:
+`run_univariate_clustering()` (EBMF) followed by `summarise_ebmf_programs()`.
+Programs are kept when they pass the validation filters (`status == "valid"`).
+Each program's posterior-mean SNP loadings (`F_pm`), lFSR, and high-confidence
+SNP membership are then extracted, with loadings sign-oriented to the target
+trait (see `extract_program_loadings()`).
+
+```{r step1-run}
+run_trait <- function(tid) {
+  obj <- trait(tid, include_associations = TRUE)
+  res <- run_univariate_clustering(
+    obj,
+    target_trait_id = tid,
+    associations = associations,
+    trait_subset = trait_subset,
+    include_trans = include_trans,
+    min_snp_signals = min_snp_signals,
+    max_snp_fraction = 0.8,
+    compress_method = compress_method,
+    compress_scale = compress_scale,
+    similarity_threshold = similarity_threshold,
+    cluster_type = "ebmf",
+    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
+    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
+    ebmf_prior = ebmf_prior,
+    ebmf_backfit = ebmf_backfit,
+    ebmf_se_mode = ebmf_se_mode,
+    ebmf_beta_scale = ebmf_beta_scale,
+    min_module_size = min_module_size,
+    min_mean_internal = min_mean_internal,
+    min_connectedness = min_connectedness
+  )
+  smry <- summarise_ebmf_programs(
+    res,
+    s_matrix = res$s_matrix,
+    edge_threshold = similarity_threshold,
+    min_module_size = min_module_size,
+    min_mean_internal = min_mean_internal,
+    min_connectedness = min_connectedness,
+    n_null = n_null,
+    alpha_membership = alpha_membership,
+    n_candidate_tier = n_candidate_tier,
+    n_rep = n_rep,
+    frac_traits = frac_traits,
+    top_n = stability_top_n,
+    stability_threshold = stability_threshold,
+    posterior_stat = posterior_stat,
+    posterior_evidence_cap = posterior_evidence_cap,
+    redundancy_threshold = redundancy_threshold,
+    cores = cores,
+    verbose = FALSE
+  )
+  extracted <- extract_program_loadings(res, smry, valid_only = TRUE)
+  list(trait_id = tid, fit = res, summary = smry, extraction = extracted)
+}
+
+trait_results <- lapply(trait_ids, run_trait)
+names(trait_results) <- trait_ids
+
+for (tid in names(trait_results)) {
+  x <- trait_results[[tid]]
+  x$extraction$loadings$trait_name <- trait_name_map[[tid]]
+  x$extraction$programs$trait_name <- trait_name_map[[tid]]
+  x$extraction$programs$trait_id <- tid
+  trait_results[[tid]] <- x
+}
+
+program_meta <- dplyr::bind_rows(lapply(trait_results, function(x) {
+  x$summary$programs |>
+    dplyr::mutate(
+      trait_id = x$trait_id,
+      trait_name = trait_name_map[[x$trait_id]]
+    )
+}))
+program_info <- dplyr::bind_rows(lapply(trait_results, function(x) x$extraction$programs))
+program_loadings <- dplyr::bind_rows(lapply(trait_results, function(x) x$extraction$loadings))
+
+knitr::kable(
+  program_meta |>
+    dplyr::group_by(trait_id, trait_name) |>
+    dplyr::summarise(
+      n_programs = dplyr::n(),
+      n_valid = sum(status == "valid"),
+      n_valid_snps = sum(n_snps_filtered[status == "valid"]),
+      .groups = "drop"
+    ),
+  caption = paste0(
+    "Per-trait EBMF programs (valid = passes size, internal coherence, ",
+    "stability, and redundancy filters; stability is not checked when ",
+    "n_rep = 0)"
+  ),
+  row.names = FALSE
+)
+```
+
+```{r step1-program-table, results='asis'}
+knitr::kable(
+  program_meta |>
+    dplyr::select(
+      trait_name, program, n_snps, n_snps_filtered, mean_internal_similarity,
+      connectedness, factor_strength, posterior_evidence, status
+    ) |>
+    dplyr::mutate(
+      mean_internal_similarity = round(mean_internal_similarity, 3),
+      connectedness = round(connectedness, 3),
+      factor_strength = round(factor_strength, 3),
+      posterior_evidence = round(posterior_evidence, 2)
+    ),
+  caption = "All EBMF programs discovered per trait, with validation status",
+  row.names = FALSE
+)
+```
+
+## Step 2: Common SNP universe
+
+For every cross-trait program pair, the two loading vectors are aligned on the
+**union of their `variant_id`s**; SNPs absent from one program are treated as
+zero. Only entries that are effectively zero (`|loading| <= zero_tol`) for
+**both** programs are dropped — SNPs that merely fail the lFSR/magnitude gate
+are kept, since the correlation is meant to describe the full loading
+architecture rather than only the confidently-called SNPs.
+
+```{r step2-universe}
+trait_snp_counts <- program_loadings |>
+  dplyr::group_by(trait_id, trait_name) |>
+  dplyr::summarise(
+    n_programs = dplyr::n_distinct(program_id),
+    n_snps_any = dplyr::n_distinct(snp_id),
+    n_high_conf_snps = dplyr::n_distinct(snp_id[high_confidence]),
+    .groups = "drop"
+  )
+
+knitr::kable(
+  trait_snp_counts,
+  caption = "SNP universe per trait (across valid programs)",
+  row.names = FALSE
+)
+```
+
+## Steps 3-4: Primary and supporting similarity
+
+For every cross-trait program pair `compare_program_pairs()` computes:
+
+- **primary** Pearson `r` on the aligned full loading vectors;
+- **supporting** Jaccard overlap of the high-confidence SNP sets.
+
+A matched null is generated by permuting one program's loadings across the
+aligned SNP slots (preserving its size and loading distribution while breaking
+the biological correspondence), giving a two-sided empirical p-value.
+
+```{r step3-compare}
+if (nrow(program_loadings) >= 2 && dplyr::n_distinct(program_loadings$trait_id) >= 2) {
+  pairs_result <- compare_program_pairs(
+    program_loadings,
+    n_perm = n_perm,
+    fdr_threshold = fdr_threshold,
+    zero_tol = zero_tol,
+    seed = 1
+  )
+} else {
+  pairs_result <- list(pairs = compare_program_pairs(program_loadings[0, ])$pairs)
+}
+pairs_tbl <- pairs_result$pairs
+
+n_pairs_total <- nrow(pairs_tbl)
+n_pairs_testable <- sum(is.finite(pairs_tbl$r))
+knitr::kable(
+  data.frame(
+    n_programs = dplyr::n_distinct(program_info$program_id),
+    n_cross_trait_pairs = n_pairs_total,
+    n_testable = n_pairs_testable,
+    median_snps_used = if (n_pairs_testable > 0) {
+      stats::median(pairs_tbl$n_snps_used[is.finite(pairs_tbl$r)])
+    } else {
+      NA_real_
+    },
+    n_significant = sum(pairs_tbl$shared, na.rm = TRUE),
+    n_concordant = sum(pairs_tbl$shared & pairs_tbl$direction == "concordant", na.rm = TRUE),
+    n_antagonistic = sum(pairs_tbl$shared & pairs_tbl$direction == "antagonistic", na.rm = TRUE),
+    stringsAsFactors = FALSE
+  ),
+  caption = paste0(
+    "Cross-trait program pairs compared. n_testable = pairs with a defined ",
+    "correlation (at least 3 non-zero aligned SNPs and non-constant loadings). ",
+    "Significant = BH FDR <= ", fdr_threshold, "."
+  ),
+  row.names = FALSE
+)
+```
+
+## Step 5: Null calibration
+
+The empirical p-values are BH-corrected across all testable cross-trait pairs.
+The table below shows the strongest pairs by `|r|`.
+
+```{r step5-null-table}
+if (n_pairs_testable > 0) {
+  suppressWarnings({
+    pairs_tbl |>
+      dplyr::filter(is.finite(r)) |>
+      dplyr::arrange(dplyr::desc(abs(r))) |>
+      utils::head(25) |>
+      dplyr::mutate(
+        r = round(r, 3),
+        jaccard = round(jaccard, 3),
+        p_emp = signif(p_emp, 3),
+        fdr = signif(fdr, 3),
+        shared = dplyr::if_else(shared, "yes", "no")
+      ) |>
+      knitr::kable(
+        caption = "Top cross-trait program pairs by absolute correlation",
+        row.names = FALSE
+      )
+  })
+} else {
+  cat("No testable cross-trait program pairs.\n")
+}
+```
+
+```{r step5-null-distribution, fig.height = 4, fig.width = 7}
+if (n_pairs_testable > 0) {
+  print(
+    ggplot2::ggplot(
+      pairs_tbl |> dplyr::filter(is.finite(p_emp)),
+      ggplot2::aes(x = p_emp)
+    ) +
+      ggplot2::geom_histogram(bins = 20, fill = "#7570b3", colour = "white") +
+      ggplot2::geom_vline(xintercept = fdr_threshold, linetype = "dashed") +
+      ggplot2::labs(
+        title = "Empirical p-values across cross-trait program pairs",
+        subtitle = paste0(
+          "dashed line = FDR threshold (", fdr_threshold,
+          "); excess near 0 indicates real correspondence"
+        ),
+        x = "empirical p-value",
+        y = "program pairs"
+      ) +
+      ggplot2::theme_minimal()
+  )
+} else {
+  cat("No empirical p-values to plot.\n")
+}
+```
+
+## Steps 6-7: Correspondence and direction
+
+A pair is called **shared** when its FDR-controlled null threshold is met; the
+strength is kept continuous as signed `r`. `r > 0` is a concordant
+(target-aligned) shared program and `r < 0` an antagonistic one. Significance
+is based on `|r|`, so negative correlations are only reported when they are
+extreme relative to the matched null.
+
+```{r step6-correspondence}
+shared_pairs <- pairs_tbl |>
+  dplyr::filter(shared) |>
+  dplyr::arrange(dplyr::desc(abs(r)))
+
+if (nrow(shared_pairs) > 0) {
+  knitr::kable(
+    shared_pairs |>
+      dplyr::select(
+        trait_id_a, program_a, trait_id_b, program_b, r, jaccard,
+        n_snps_used, n_high_conf_shared, p_emp, fdr, direction
+      ) |>
+      dplyr::mutate(
+        r = round(r, 3),
+        jaccard = round(jaccard, 3),
+        p_emp = signif(p_emp, 3),
+        fdr = signif(fdr, 3)
+      ),
+    caption = "Significant cross-trait program correspondences",
+    row.names = FALSE
+  )
+} else {
+  cat("No program pairs passed the FDR-controlled correspondence threshold.\n")
+}
+```
+
+```{r step6-heatmap, fig.height = 8, fig.width = 8}
+if (n_pairs_testable > 0) {
+  program_order <- program_info |>
+    dplyr::arrange(trait_id, program) |>
+    dplyr::pull(program_id)
+  program_order <- unique(c(program_order, pairs_tbl$program_id_a, pairs_tbl$program_id_b))
+
+  pair_pos <- function(pairs_tbl, flip = FALSE) {
+    out <- if (flip) {
+      pairs_tbl |>
+        dplyr::transmute(
+          y = program_id_a, x = program_id_b, r = r, shared = shared
+        )
+    } else {
+      pairs_tbl |>
+        dplyr::transmute(
+          y = program_id_b, x = program_id_a, r = r, shared = shared
+        )
+    }
+    return(out)
+  }
+  heat_df <- dplyr::bind_rows(pair_pos(pairs_tbl), pair_pos(pairs_tbl, flip = TRUE))
+
+  print(
+    ggplot2::ggplot(
+      heat_df,
+      ggplot2::aes(
+        x = factor(x, levels = program_order),
+        y = factor(y, levels = rev(program_order)),
+        fill = r
+      )
+    ) +
+      ggplot2::geom_tile(colour = "white", linewidth = 0.2) +
+      ggplot2::geom_text(
+        data = heat_df |> dplyr::filter(shared),
+        ggplot2::aes(label = "*"),
+        colour = "black", size = 4, vjust = 0.75, na.rm = TRUE
+      ) +
+      ggplot2::scale_fill_gradient2(
+        low = "#1b9e77", mid = "white", high = "#d95f02",
+        midpoint = 0, limits = c(-1, 1), na.value = "grey90"
+      ) +
+      ggplot2::labs(
+        title = "Cross-trait program correspondence",
+        subtitle = "Pearson r on aligned F_pm vectors; * = FDR-significant",
+        x = "program", y = "program", fill = "r"
+      ) +
+      ggplot2::theme_minimal() +
+      ggplot2::theme(
+        axis.text.x = ggplot2::element_text(angle = 90, hjust = 1, size = 7),
+        axis.text.y = ggplot2::element_text(size = 7),
+        panel.grid = ggplot2::element_blank()
+      )
+  )
+} else {
+  cat("No cross-trait program pairs to plot.\n")
+}
+```
+
+## Step 8: Program families
+
+Programs are nodes and significant pairs are undirected, signed edges. The
+**weak connected components** are the multi-trait program families: any chain
+of significant correspondences links its members into one family, without
+forcing one-to-one matching. Isolated programs form size-1 families.
+
+```{r step8-families}
+families_result <- build_program_families(
+  pairs_tbl,
+  program_info = program_info,
+  fdr_threshold = fdr_threshold
+)
+family_nodes <- families_result$nodes
+family_metrics <- families_result$families
+
+knitr::kable(
+  family_nodes |>
+    dplyr::arrange(family, trait_id, program_id),
+  caption = "Program family assignment",
+  row.names = FALSE
+)
+```
+
+```{r step8-network, fig.height = 7, fig.width = 9}
+if (!is.null(families_result$graph)) {
+  graph <- families_result$graph
+  node_traits <- family_nodes$trait_id[
+    match(igraph::V(graph)$name, family_nodes$program_id)
+  ]
+  trait_levels <- unique(node_traits)
+  trait_pal <- stats::setNames(
+    grDevices::hcl.colors(length(trait_levels), "Dark 3"),
+    trait_levels
+  )
+  edge_sign <- igraph::E(graph)$r
+  igraph::plot.igraph(
+    graph,
+    layout = igraph::layout_with_fr(graph),
+    vertex.color = unname(trait_pal[node_traits]),
+    vertex.size = 13,
+    vertex.frame.color = "white",
+    vertex.label = igraph::V(graph)$name,
+    vertex.label.cex = 0.65,
+    vertex.label.color = "black",
+    edge.color = ifelse(edge_sign > 0, "#d95f02", "#1b9e77"),
+    edge.width = 1 + 3 * abs(edge_sign),
+    main = "Multi-trait program families (orange = concordant, green = antagonistic)"
+  )
+  graphics::legend(
+    "topleft",
+    legend = trait_levels,
+    fill = unname(trait_pal[trait_levels]),
+    bty = "n",
+    title = "trait"
+  )
+} else {
+  cat("No significant correspondence edges; every program is a singleton family.\n")
+}
+```
+
+## Step 9: Family metrics
+
+For each family we report how many traits and programs it spans, the number of
+significant edges, the mean/median/minimum pairwise `r`, the direction split,
+and the SNP-overlap (Jaccard) statistics.
+
+```{r step9-metrics}
+if (nrow(family_metrics) > 0) {
+  knitr::kable(
+    family_metrics |>
+      dplyr::mutate(dplyr::across(
+        c(mean_r, median_r, min_r, max_r, mean_jaccard, median_jaccard),
+        ~ round(.x, 3)
+      )),
+    caption = "Multi-trait program family metrics",
+    row.names = FALSE
+  )
+
+  multi_trait_families <- family_metrics |>
+    dplyr::filter(n_programs > 1, n_traits > 1)
+  knitr::kable(
+    data.frame(
+      n_families = nrow(family_metrics),
+      n_singleton_families = sum(family_metrics$n_programs == 1),
+      n_multi_trait_families = nrow(multi_trait_families),
+      n_programs_in_multi_trait = sum(multi_trait_families$n_programs),
+      n_traits = dplyr::n_distinct(program_info$trait_id),
+      stringsAsFactors = FALSE
+    ),
+    caption = "Family summary",
+    row.names = FALSE
+  )
+} else {
+  cat("No program families with significant correspondence edges.\n")
+}
+```
+
+## Interpretation notes
+
+- **Direction is anchored, not absolute.** EBMF factor signs are not
+  identifiable and are arbitrary across independent fits. `extract_program_loadings()`
+  reflects each program so its target-trait loading is positive, making a
+  positive cross-trait `r` a target-aligned ("concordant") architecture and a
+  negative `r` an "antagonistic" one relative to each trait's own effect
+  direction. Pairs that do not load on their target fall back to anchoring on
+  the largest-|loading| SNP.
+- **`variant_id`-level alignment.** Programs from different traits are aligned
+  on exact shared variants only. Traits that tag distinct variants at the same
+  locus will show low Jaccard overlap even when the underlying locus is shared;
+  `r` on the union of loading vectors is the more robust signal in that case.
+- **Restricted to valid programs.** Only programs passing the per-trait
+  validation filters are compared. Set `n_rep > 0` to include the
+  trait-subsampling stability gate (slower); with `n_rep = 0` stability is not
+  checked.
+- **Supporting, not decisive, Jaccard.** Jaccard measures literal SNP sharing
+  and is reported alongside `r`; a pair can have high `r` with modest Jaccard
+  when programs share an architecture but only some high-confidence SNPs.
+- **FDR is across all cross-trait pairs**, as requested, so it does not account
+  for the number of programs per trait beyond the pairs actually formed.
