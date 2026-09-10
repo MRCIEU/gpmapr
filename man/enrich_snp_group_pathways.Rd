@@ -27,7 +27,8 @@ Defaults to 5.}
 
 \item{snp_key}{Column used to match SNP ids in \code{coloc_groups}.}
 
-\item{sources}{Pathway sources; see \code{enrich_trait_pathways()}. Reactome and
+\item{sources}{Pathway sources to query, e.g. \code{c("KEGG", "Reactome")}.
+Reactome and
 KEGG hits are summarised separately (and together as \code{top_enriched_pathway}
 for backwards compatibility); HP (Human Phenotype Ontology) hits are
 summarised separately as phenotypes.}
@@ -55,7 +56,7 @@ only (NA / 0 when \code{sources} has no HP).
 \description{
 Verification helper: for each SNP grouping (Louvain module,
 EBMF program, etc.) with more than \code{min_group_size} SNPs, collect molecular
-QTL genes at those SNPs and test pathway enrichment. Compare against
-\code{enrich_trait_pathways()} to see whether baseline pathways reappear and
-whether they split cleanly across groups.
+QTL genes at those SNPs and test pathway enrichment. Compare the per-group
+results to a trait-level baseline to see whether baseline pathways reappear
+and whether they split cleanly across groups.
 }

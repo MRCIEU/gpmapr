@@ -1,23 +1,22 @@
-# Render the univariate simulation vignette across three simulation
-# investigations.
+# Render the univariate simulation vignette across the EBMF clustering and
+# program validation parameter grids.
 #
-# Investigation A: overall signal-to-noise
-#   noise_sd = 0.25 / 0.5 / 1 / 2 / 4 / 6
+# Investigation E: EBMF clustering parameters
+#   compress_method: none vs asinh (compress_scale = 5)
+#   ebmf_prior: point_normal vs point_laplace
+#   ebmf_magnitude_threshold: 0.25 / 0.5 / 0.75
 #
-# Investigation A2: individual sources of realism/noise
-#   p_structural_zero
-#   p_spurious
-#   p_active_background
-#   background_sparsity_sd
-#   n_hub_traits
-#   effect_tail
+# Investigation V: program validation parameters
+#   similarity_threshold: 0.2 vs 0.5
+#   min_module_size: 2 vs 5
+#   min_connectedness: 0.25 vs 0.5
+#   stability_threshold: 0.3 vs 0.7
 #
-# Investigation B: program size and number of defining traits
-#   module_sizes x n_traits_per_module
-#
-# The vignette itself retains its existing trait-overlap tiers for each run.
-# All other simulation parameters remain at their values in the Rmd unless
-# explicitly overridden below.
+# Each parameter is varied independently while the others remain at their
+# values in the Rmd. The vignette itself retains its generative input-version
+# tiers (background density x trait overlap, driver architecture, spurious
+# hits) for every run, so each analysis parameter is evaluated across the full
+# battery of input versions.
 #
 # Development settings below are intentionally small. For final results,
 # increase n_reps / n_null / n_rep as appropriate.
@@ -37,37 +36,35 @@ N_NULL=5
 N_REP=5
 
 # ---------------------------------------------------------------------------
-# Investigation A: how noisy?
+# Investigation E: EBMF clustering parameters
 #
-# effect_size stays fixed at the Rmd default (6).
-# noise_sd is the primary signal-to-noise parameter.
+# Rmd baselines for reference: compress_method = asinh (compress_scale = 5),
+# ebmf_prior = point_normal, ebmf_magnitude_threshold = 0.3.
 # ---------------------------------------------------------------------------
 
-noise_sds=(0.25 0.5 1 2 4 6)
+# Paired arrays: compress_scale only applies to the asinh arm (ignored by
+# "none", which returns the matrix unchanged).
+compress_methods=(none asinh)
+compress_scales=(5 5)
+
+ebmf_priors=(point_normal point_laplace)
+
+magnitude_thresholds=(0.25 0.5 0.75)
 
 # ---------------------------------------------------------------------------
-# Investigation A2: what type of noise/realism matters?
+# Investigation V: program validation parameters
 #
-# Each parameter is varied independently while the others remain at their
-# realistic baseline values.
+# Rmd baselines for reference: similarity_threshold = 0.2,
+# min_module_size = 3, min_connectedness = 0.25, stability_threshold = 0.5.
 # ---------------------------------------------------------------------------
 
-structural_zeros=(0 0.1 0.2 0.4 0.6)
-spurious_rates=(0 0.005 0.02 0.05)
-background_rates=(0.002 0.006 0.02 0.05)
-background_sds=(0 0.6 1.2 1.8)
-hub_traits=(0 5 15 30)
-effect_tails=(0 0.2 0.4 0.8)
+similarity_thresholds=(0.2 0.5)
 
-# ---------------------------------------------------------------------------
-# Investigation B: module size x number of defining traits
-#
-# Keep the three modules equal-sized for this experiment so that the
-# detection boundary is easier to interpret.
-# ---------------------------------------------------------------------------
+module_size_thresholds=(2 5)
 
-module_sizes=(5 10 20 40 80)
-traits_per_module=(2 3 5 10 20)
+connectedness_thresholds=(0.25 0.5)
+
+stability_thresholds=(0.3 0.7)
 
 # ---------------------------------------------------------------------------
 # Rendering helper
@@ -133,94 +130,76 @@ RSCRIPT
 cd "${VIGNETTES_DIR}"
 
 # ===========================================================================
-# Investigation A: How noisy?
+# Investigation E: EBMF clustering parameters
 # ===========================================================================
 
-for noise in "${noise_sds[@]}"; do
+for i in "${!compress_methods[@]}"; do
 
   render_one \
-    "A_noise${noise}" \
-    "noise_sd=${noise}"
+    "E_compress_${compress_methods[$i]}" \
+    "compress_method=${compress_methods[$i]}" \
+    "compress_scale=${compress_scales[$i]}"
 
 done
 
-# ===========================================================================
-# Investigation A2: Individual noise / realism parameters
-# ===========================================================================
-
-for value in "${structural_zeros[@]}"; do
+for prior in "${ebmf_priors[@]}"; do
 
   render_one \
-    "A2_structuralzero${value}" \
-    "p_structural_zero=${value}"
+    "E_prior_${prior}" \
+    "ebmf_prior=${prior}"
 
 done
 
-for value in "${spurious_rates[@]}"; do
+for value in "${magnitude_thresholds[@]}"; do
 
   render_one \
-    "A2_spurious${value}" \
-    "p_spurious=${value}"
-
-done
-
-for value in "${background_rates[@]}"; do
-
-  render_one \
-    "A2_background${value}" \
-    "p_active_background=${value}"
-
-done
-
-for value in "${background_sds[@]}"; do
-
-  render_one \
-    "A2_backgroundsd${value}" \
-    "background_sparsity_sd=${value}"
-
-done
-
-for value in "${hub_traits[@]}"; do
-
-  render_one \
-    "A2_hubs${value}" \
-    "n_hub_traits=${value}"
-
-done
-
-for value in "${effect_tails[@]}"; do
-
-  render_one \
-    "A2_effecttail${value}" \
-    "effect_tail=${value}"
+    "E_magnitude_${value}" \
+    "ebmf_magnitude_threshold=${value}"
 
 done
 
 # ===========================================================================
-# Investigation B: Module size x number of defining traits
+# Investigation V: program validation parameters
 # ===========================================================================
 
-for module_size in "${module_sizes[@]}"; do
-  for n_traits in "${traits_per_module[@]}"; do
+for value in "${similarity_thresholds[@]}"; do
 
-    render_one \
-      "B_snps${module_size}_traits${n_traits}" \
-      "module_sizes=${module_size},${module_size},${module_size}" \
-      "n_traits_per_module=${n_traits},${n_traits},${n_traits}"
+  render_one \
+    "V_simthr_${value}" \
+    "similarity_threshold=${value}"
 
-  done
+done
+
+for value in "${module_size_thresholds[@]}"; do
+
+  render_one \
+    "V_modulesize_${value}" \
+    "min_module_size=${value}"
+
+done
+
+for value in "${connectedness_thresholds[@]}"; do
+
+  render_one \
+    "V_connectedness_${value}" \
+    "min_connectedness=${value}"
+
+done
+
+for value in "${stability_thresholds[@]}"; do
+
+  render_one \
+    "V_stability_${value}" \
+    "stability_threshold=${value}"
+
 done
 
 echo ""
 echo "Done."
 echo ""
-echo "Investigation A:"
-ls -1 investigation-univariate-simulations_A_noise*.html
+echo "Investigation E: EBMF clustering parameters:"
+ls -1 investigation-univariate-simulations_E_*.html
 
 echo ""
-echo "Investigation A2:"
-ls -1 investigation-univariate-simulations_A2_*.html
-
-echo ""
-echo "Investigation B:"
-ls -1 investigation-univariate-simulations_B_*.html
+echo "Investigation V: program validation parameters:"
+ls -1 investigation-univariate-simulations_V_*.html

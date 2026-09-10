@@ -7,7 +7,8 @@
 compare_group_pathways(trait_enrichment, group_enrichment)
 }
 \arguments{
-\item{trait_enrichment}{Output of \code{enrich_trait_pathways()}.}
+\item{trait_enrichment}{Trait-level enrichment list with a \code{pathways}
+dataframe (columns \code{source}, \code{term_id}, \code{description}).}
 
 \item{group_enrichment}{Output of \code{enrich_snp_group_pathways()}.}
 }

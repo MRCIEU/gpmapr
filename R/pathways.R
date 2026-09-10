@@ -135,102 +135,12 @@ genes_at_snps <- function(snp_ids,
 }
 
 
-#' @title Baseline Pathway Enrichment For A Trait
-#' @description Verification helper: collect molecular QTL genes at genome-wide
-#' significant loci for a trait and test pathway enrichment (default KEGG +
-#' Reactome). Use before clustering / EBMF to see whether the trait gene set
-#' has recoverable pathway signal, and which SNPs those genes map to.
-#' @param trait_id Numeric trait ID.
-#' @param coloc_groups Optional coloc-group dataframe. If `NULL`, fetched via
-#'   `trait(trait_id, include_associations = TRUE)$coloc_groups`.
-#' @param p_threshold P-value threshold for target-trait SNPs. Defaults to 5e-8.
-#' @param snp_key Column used to identify SNPs. Defaults to `"variant_id"`.
-#' @param sources Character vector of pathway sources to query separately and
-#'   bind. Defaults to `c("KEGG", "Reactome")`. Use `NULL` for a single
-#'   unfiltered `pathway_enrichment()` call (all sources).
-#' @param p_value_threshold FDR threshold passed to `pathway_enrichment()`.
-#' @param minimum_count_in_network Minimum overlap passed to `pathway_enrichment()`.
-#' @return A list with:
-#'   \itemize{
-#'     \item trait_id, n_snps, n_genes
-#'     \item snp_genes: SNP-gene links from `genes_at_snps()`
-#'     \item genes: distinct genes tested
-#'     \item pathways: enriched pathway dataframe (possibly empty)
-#'     \item summary: one-row overview
-#'   }
-#' @export
-enrich_trait_pathways <- function(trait_id,
-                                  coloc_groups = NULL,
-                                  p_threshold = 5e-8,
-                                  snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-                                  sources = c("KEGG", "Reactome"),
-                                  p_value_threshold = 0.05,
-                                  minimum_count_in_network = 2L) {
-  if (missing(trait_id) || is.null(trait_id)) {
-    stop("trait_id is required")
-  }
-  snp_key <- match.arg(snp_key)
-
-  if (is.null(coloc_groups)) {
-    coloc_groups <- trait(trait_id, include_associations = TRUE)$coloc_groups
-  }
-  if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {
-    stop("No coloc_groups data available")
-  }
-
-  target_id <- trait_id
-  snp_col <- as.character(coloc_groups[[snp_key]])
-  target_snps <- coloc_groups |>
-    dplyr::mutate(snp_id = snp_col) |>
-    dplyr::filter(
-      trait_id == target_id,
-      if (!is.null(p_threshold)) min_p <= p_threshold else TRUE
-    ) |>
-    dplyr::distinct(snp_id)
-
-  snp_genes <- genes_at_snps(
-    snp_ids = target_snps$snp_id,
-    coloc_groups = coloc_groups,
-    snp_key = snp_key
-  )
-  genes <- snp_genes |>
-    dplyr::distinct(gene_id, gene) |>
-    dplyr::arrange(gene)
-
-  pathways <- .enrich_pathway_sources(
-    gene_ids = genes$gene_id,
-    sources = sources,
-    p_value_threshold = p_value_threshold,
-    minimum_count_in_network = minimum_count_in_network
-  )
-
-  summary_df <- data.frame(
-    trait_id = trait_id,
-    n_snps = nrow(target_snps),
-    n_genes = nrow(genes),
-    n_enriched_pathways = nrow(pathways),
-    top_enriched_pathway = .top_pathway_label(pathways),
-    stringsAsFactors = FALSE
-  )
-
-  return(list(
-    trait_id = trait_id,
-    n_snps = nrow(target_snps),
-    n_genes = nrow(genes),
-    snp_genes = snp_genes,
-    genes = genes,
-    pathways = pathways,
-    summary = summary_df
-  ))
-}
-
-
 #' @title Pathway Enrichment For SNP Groups
 #' @description Verification helper: for each SNP grouping (Louvain module,
 #' EBMF program, etc.) with more than `min_group_size` SNPs, collect molecular
-#' QTL genes at those SNPs and test pathway enrichment. Compare against
-#' `enrich_trait_pathways()` to see whether baseline pathways reappear and
-#' whether they split cleanly across groups.
+#' QTL genes at those SNPs and test pathway enrichment. Compare the per-group
+#' results to a trait-level baseline to see whether baseline pathways reappear
+#' and whether they split cleanly across groups.
 #' @param groups Either a named vector (`names` = SNP ids, values = group ids)
 #'   or a dataframe with `snp_id` plus a group column (`group`, `cluster`, or
 #'   `program`).
@@ -240,7 +150,8 @@ enrich_trait_pathways <- function(trait_id,
 #' @param snp_key Column used to match SNP ids in `coloc_groups`.
 #' @param include_situated_gene Include situated-gene links in addition to
 #'   ordinary gene links. Defaults to `FALSE`.
-#' @param sources Pathway sources; see `enrich_trait_pathways()`. Reactome and
+#' @param sources Pathway sources to query, e.g. `c("KEGG", "Reactome")`.
+#'   Reactome and
 #'   KEGG hits are summarised separately (and together as `top_enriched_pathway`
 #'   for backwards compatibility); HP (Human Phenotype Ontology) hits are
 #'   summarised separately as phenotypes.
@@ -359,7 +270,8 @@ enrich_snp_group_pathways <- function(groups,
 #' @description Summarise whether baseline trait pathways reappear in SNP-group
 #' enrichments, whether they split across multiple groups, and which pathways
 #' are group-specific.
-#' @param trait_enrichment Output of `enrich_trait_pathways()`.
+#' @param trait_enrichment Trait-level enrichment list with a `pathways`
+#'   dataframe (columns `source`, `term_id`, `description`).
 #' @param group_enrichment Output of `enrich_snp_group_pathways()`.
 #' @return A list with:
 #'   \itemize{

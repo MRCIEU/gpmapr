@@ -32,7 +32,7 @@ params:
   trait_effect_corr: [0.0, 0.8, 0.8, 0.8]
   # p_active_background is crossed (full grid) with trait_overlap, so each
   # background density is evaluated at every trait-overlap level.
-  p_active_background: [0.02, 0.07, 0.15]
+  p_active_background: [0.00, 0.02, 0.05, 0.07]
   snp_driver_groups: [1, 2, 3]
   driver_sharing: [0.0, 0.1, 0.25]
   p_spurious: [0.0, 0.01]
@@ -49,7 +49,7 @@ params:
   ebmf_lfsr_threshold: 0.01
   ebmf_magnitude_threshold: 0.3
   ebmf_drop_global: true
-  ebmf_prior: point_laplace
+  ebmf_prior: point_normal
   ebmf_backfit: true
 
   # Program validation parameters (inputs to summarise_ebmf_programs)
@@ -59,7 +59,7 @@ params:
   n_null: 5
   alpha_membership: 0.05
   n_candidate_tier: 25
-  n_rep: 5
+  n_rep: 1
   frac_traits: 0.8
   stability_top_n: 20
   stability_threshold: 0.5
@@ -69,7 +69,7 @@ params:
   cores: 5
 
   # Replication settings
-  n_reps: 5
+  n_reps: 3
 vignette: >
   %\VignetteIndexEntry{Simulation study of EBMF programs}
   %\VignetteEngine{knitr::rmarkdown}
@@ -238,13 +238,14 @@ input changes.
 ```{r settings-table}
 settings_to_show <- c(
   "cluster_type", "trait_subset", "min_snp_signals", "min_module_size", "module_sizes",
+  "compress_method", "compress_scale", "similarity_threshold",
   "overlap", "nested_effect_corr",
   "n_traits_per_module", "trait_overlap", "trait_effect_corr",
   "n_traits",
   "effect_size", "effect_tail", "p_structural_zero", "p_spurious",
   "p_active_background", "background_sparsity_sd", "background_effect_scale",
   "target_pattern", "p_negative",
-  "ebmf_lfsr_threshold", "ebmf_magnitude_threshold",
+  "ebmf_lfsr_threshold", "ebmf_magnitude_threshold", "ebmf_prior",
   "min_mean_internal", "min_connectedness", "n_rep",
   "frac_traits", "stability_top_n", "stability_threshold"
 )
@@ -446,7 +447,7 @@ run_tier_one <- function(spec, rep) {
 }
 
 run_tier <- function(name, label, spec, n_reps) {
-  n_jobs <- 6L
+  n_jobs <- 4L
   out <- if (n_reps > 1 && .Platform$OS.type != "windows") {
     parallel::mclapply(
       seq_len(n_reps),

@@ -9,7 +9,7 @@ vignette: >
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 params:
-  api: "local"
+  api: "prod"
   trait_subset: "phenotypic"
   min_snp_signals: 2
   min_module_size: 3
@@ -17,7 +17,7 @@ params:
   louvain_gamma: 1.5
   compress_method: "asinh"
   compress_scale: 5
-  include_trans: true 
+  include_trans: false
   include_situated_gene: false 
   similarity_threshold: 0.2
   ebmf_se_mode: "unit"
@@ -83,7 +83,7 @@ distinctiveness) before interpretation.
 We use **Type 2 Diabetes** (trait id `114`).
 
 ```{r params}
-target_trait_id <- 114
+target_trait_id <- 1992
 min_group_size <- 5
 max_snp_fraction <- 0.8
 top_n_traits <- 10L

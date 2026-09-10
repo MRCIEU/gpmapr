@@ -35,8 +35,6 @@ The output is a set of SNP programs (latent factors), each annotated with
 background traits, QTL studies, tissues, genes, and pathways. The runnable
 implementation is
 [Investigation of univariate analysis](investigation-univariate-analysis.html).
-[Investigation of EBMF analysis](investigation-ebmf-analysis.html) explores the
-EBMF factorisation itself (priors, variance structure, PVE).
 
 Background traits stay at **study level**. Molecular QTL studies are not
 collapsed by gene, tissue, cis/trans, or QTL type.
@@ -330,7 +328,12 @@ treating a hit as real.
 
 ## Variables to consider
 
-Exposed in the univariate vignette today (EBMF path):
+Exposed in the univariate vignette today (EBMF path). Parameters fall into two
+groups: the **EBMF clustering parameters** that control matrix construction and
+factor extraction, and the **program validation parameters** that decide whether
+a program is called `valid`.
+
+### EBMF clustering parameters
 
 | Parameter | Values | Meaning | Explanation |
 |---|---|---|---|
@@ -338,14 +341,20 @@ Exposed in the univariate vignette today (EBMF path):
 | `trait_subset` | `all`, `phenotypic` | Which trait rows back the matrix | `phenotypic` drops sparse molecular / gene-annotated rows (keeping the target trait), recovering structure that sparse molecular rows dilute but losing QTL-level signal. `all` keeps every available background trait at the cost of extra sparsity. |
 | `min_snp_signals` | `1`, `2`, `3`, `5` | Minimum SNPs with a value for a background trait | Raising it removes singleton or very sparse rows, reducing unstable factors and computation. It can also remove rare, module-specific biology. Lowering it preserves those signals but makes factorization more sensitive to sparse observations. |
 | `compress_method` | `asinh`, `none` | Transformation applied to z-scores | `asinh` is nearly linear around zero but compresses extreme values, so factors reflect patterns across several traits rather than one very large z-score. `none` preserves effect scale but allows outliers to dominate direction and norm. |
-| `similarity_threshold` | `0`, `0.2`, `0.5` | Absolute \(\|S\|\) edge cutoff for the connectedness gate | Not an EBMF input, but used by the validation layer: `connectedness` counts SNP pairs with \(\|S\| \ge\) this threshold. Raising it makes the connectedness gate stricter and the coherence metrics more conservative. |
 | `ebmf_lfsr_threshold` | `0.05`, `0.02`, `0.1` | Local false sign rate cutoff for SNP membership | Lowering it keeps only SNPs whose program loading has very strong posterior sign evidence, shrinking and sharpening programs. Raising it adds borderline `lfsr ~ threshold` memberships. |
 | `ebmf_magnitude_threshold` | `0.25`, `0.5`, `0.75`, `NA` | Minimum absolute posterior loading for SNP membership | Raising it keeps only SNPs with substantial program loadings. `NA` gates membership on lFSR alone (useful when loadings are on raw-beta scale). |
 | `ebmf_prior` | `point_normal`, `point_laplace` | Prior family for EBMF loadings/factors | `point_normal` is the general default; `point_laplace` has heavier tails and is often better when true effects are large relative to noise. |
+
+### Program validation parameters
+
+| Parameter | Values | Meaning | Explanation |
+|---|---|---|---|
+| `similarity_threshold` | `0`, `0.2`, `0.5` | Absolute \(\|S\|\) edge cutoff for the connectedness gate | Not an EBMF input, but used by the validation layer: `connectedness` counts SNP pairs with \(\|S\| \ge\) this threshold. Raising it makes the connectedness gate stricter and the coherence metrics more conservative. |
 | `min_module_size` | `3`, `5` | Minimum gated SNPs for the size gate | Ensures the coherence and stability metrics are computed on enough SNPs to be meaningful; also the effective minimum program size. |
 | `min_mean_internal` | `0.3` | Minimum mean internal similarity | The "same direction, not noise" bar on `S` among gated member SNPs. |
 | `min_connectedness` | `0.5` | Minimum pair-connectedness | Requires at least this fraction of member-SNP pairs to exceed `similarity_threshold`, so a program is a connected blob rather than one tight pair in a diffuse background. |
 | `stability_threshold` | `0.5`, `0.7` | Minimum replication for stability | Fraction of a program's top-loading SNPs that must reappear when traits are held out and EBMF is refit. |
+| `redundancy_threshold` | `0.8`, `0.9` | Threshold for redundancy program filtering | If a program shares the same set of SNPs as another program, it is considered redundant and filtered out. |
 
 Reliability/validation cutoffs used after clustering therefore are:
 `min_module_size`, `min_mean_internal = 0.3`, `min_connectedness = 0.5`,
@@ -354,7 +363,7 @@ Reliability/validation cutoffs used after clustering therefore are:
 `max_abs_factor_corr`/`redundant` are reported descriptively but do not gate
 `status`.
 
-## Simulation Stragegy
+## Simulation Strategy
 
 Simulations will help with 2 levels of parameter choice:
 1. Choosing what goes into the matrix (data, z-score attenuation) and LFSR/magnitude membership gates.
@@ -408,101 +417,68 @@ recover.
 **How we control the simulations**. The parameters shape the input, and they differ in 
 where the structure (or mess) they add lives:
 
-1. Background effect parameters (p_active_background,
-background_sparsity_sd, background_effect_scale) — the unstructured
+1. **Background effect parameters** (`p_active_background`,
+`background_sparsity_sd`, `background_effect_scale`) — the unstructured
 noise floor. Every background SNP association is an independent draw:
-p_active_background sets how often a background trait is observed at a SNP
-(density), background_sparsity_sd makes per-trait density heavy-tailed
+`p_active_background` sets how often a background trait is observed at a SNP
+(density), `background_sparsity_sd` makes per-trait density heavy-tailed
 (most traits observed at a handful of SNPs, with a tail of denser traits),
-and background_effect_scale sets the magnitude of the hits relative to
-effect_size. Unlike modules, the background has no shared structure;
+and `background_effect_scale` sets the magnitude of the hits relative to
+`effect_size`. Unlike modules, the background has no shared structure;
 it makes recovery harder by reducing the contrast between coherent module
 signal and unrelated associations.
 
-2. SNP driver groups and driver sharing (snp_driver_groups,
-driver_sharing) — the internal and cross-module SNP architecture of the
+2. **SNP driver groups and driver sharing** (`snp_driver_groups`,
+`driver_sharing`) — the internal and cross-module SNP architecture of the
 planted modules. These parameters introduce additional structured
 complexity, rather than unstructured noise, but they act in different ways.
 
-snp_driver_groups partitions each module's SNPs into groups and assigns
-each driver trait to only one corresponding SNP group. Thus, increasing
-snp_driver_groups progressively changes a planted module from a single
-coherent SNP-by-trait pattern into several distinct subpatterns. This is
-therefore a relatively strong form of within-module heterogeneity: at high
-values, the simulated data may contain multiple statistically distinguishable
-latent patterns even though all of their SNPs are labelled as belonging to
-the same ground-truth module. The parameter consequently tests how many
-distinct subpatterns can be embedded within one nominal biological programme
-before EBMF and subsequent clustering resolve them as separate factors or
-programs.
+    snp_driver_groups partitions each module's SNPs into groups and assigns
+    each driver trait to only one corresponding SNP group. Thus, increasing
+    snp_driver_groups progressively changes a planted module from a single
+    coherent SNP-by-trait pattern into several distinct subpatterns. This is
+    therefore a relatively strong form of within-module heterogeneity: at high
+    values, the simulated data may contain multiple statistically distinguishable
+    latent patterns even though all of their SNPs are labelled as belonging to
+    the same ground-truth module. The parameter consequently tests how many
+    distinct subpatterns can be embedded within one nominal biological programme
+    before EBMF and subsequent clustering resolve them as separate factors or
+    programs.
 
-driver_sharing acts differently. It does not control similarity between
-SNP groups within the same module. Instead, the first
-floor(n_traits_per_module * driver_sharing) driver traits of module m
-are also active across the SNP set of the previous module. It therefore
-creates structured overlap in SNP usage between adjacent modules: a driver
-trait nominally associated with one module can also generate signal among
-SNPs belonging to another module. This differs from both trait_overlap,
-which makes modules share driver traits themselves, and the background
-parameters, which generate associations without coherent shared structure.
+    driver_sharing acts differently. It does not control similarity between
+    SNP groups within the same module. Instead, the first
+    floor(n_traits_per_module * driver_sharing) driver traits of module m
+    are also active across the SNP set of the previous module. It therefore
+    creates structured overlap in SNP usage between adjacent modules: a driver
+    trait nominally associated with one module can also generate signal among
+    SNPs belonging to another module. This differs from both trait_overlap,
+    which makes modules share driver traits themselves, and the background
+    parameters, which generate associations without coherent shared structure.
 
-3. Module trait overlap (trait_overlap, trait_effect_corr) — the
-overlap of trait signatures between modules. trait_overlap determines
+3. **Module trait overlap** (`trait_overlap`, `trait_effect_corr`) — the
+overlap of trait signatures between modules. `trait_overlap` determines
 the proportion of each module's driver traits that are shared with other
 modules. As trait overlap increases, different modules are defined by
 increasingly similar sets of traits, reducing the distinction between their
-pleiotropic signatures. trait_effect_corr determines how similar the
+pleiotropic signatures. `trait_effect_corr` determines how similar the
 corresponding effects are when traits are shared: shared drivers can have
 correlated but non-identical effects across modules.
 
-This manipulation is distinct from driver_sharing. trait_overlap changes
-which traits define each module, whereas driver_sharing changes which
-SNPs are affected by particular driver traits. At high trait overlap,
-modules may become difficult to separate because their trait signatures are
-genuinely similar, even when their SNP sets remain distinct. The parameter
-therefore tests the resolution limit of the method when biologically
-distinct SNP groups have increasingly overlapping pleiotropic profiles.
+    This manipulation is distinct from driver_sharing. trait_overlap changes
+    which traits define each module, whereas driver_sharing changes which
+    SNPs are affected by particular driver traits. At high trait overlap,
+    modules may become difficult to separate because their trait signatures are
+    genuinely similar, even when their SNP sets remain distinct. The parameter
+    therefore tests the resolution limit of the method when biologically
+    distinct SNP groups have increasingly overlapping pleiotropic profiles.
 
-4. Spurious hits (p_spurious) — contamination of the driver signal.
-p_spurious adds background-scale off-module associations to driver traits,
+4. **Spurious hits** (`p_spurious`) — contamination of the driver signal.
+`p_spurious` adds background-scale off-module associations to driver traits,
 introducing associations outside their intended structured SNP patterns.
-Unlike snp_driver_groups or driver_sharing, these hits do not represent
+Unlike `snp_driver_groups` or `driver_sharing`, these hits do not represent
 additional coherent latent structure. They instead test robustness to
 isolated or weak associations that partially obscure the intended module
 boundaries.
-
-**How we control the simulations.** The parameters shape the input, and they
-differ in *where* the structure (or mess) they add lives:
-
-1. **Background effect parameters** (`p_active_background`,
-   `background_sparsity_sd`, `background_effect_scale`) — the *unstructured
-   noise floor*. Every background SNP association is an independent draw:
-   `p_active_background` sets how often a background trait is observed at a SNP
-   (density), `background_sparsity_sd` makes per-trait density heavy-tailed
-   (most traits observed at a handful of SNPs, a tail dense), and
-   `background_effect_scale` sets the magnitude of the hits relative to
-   `effect_size`. Unlike modules, the background has **no shared structure at
-   all**; it makes recovery harder purely by diluting the contrast between
-   signal and noise.
-
-2. **SNP driver groups and sharing** (`snp_driver_groups`, `driver_sharing`) —
-   The key idea is that driver sharing and SNP driver groups introduce heterogeneity within a true program. They test whether your method can recognise a biological program when its SNPs are similar, but not identical.  
-   Tries to ask the question "How much heterogeneity can exist within a biological program before EBMF and the subsequent clustering treat it as multiple programs?"
-   The *internal SNP architecture of the modules*. `snp_driver_groups` splits
-   each module's SNP set into contiguous groups and makes each driver trait act
-   on only its own group, so a module's drivers are compartmentalised and a
-   driver's signal is recoverable only from its SNP subgroup.
-   `driver_sharing` makes the first
-   `floor(n_traits_per_module * driver_sharing)` driver traits of module `m`
-   active at the *previous* module's SNP set as well, creating SNP-space
-   overlap between adjacent modules. These differ from `trait_overlap` (which
-   shares *trait signatures* between modules) and from the background (which is
-   noise): they add *structured* SNP usage that is not confined to one module's
-   own block.
-
-3. **Module Trait Overlap**: `trait_overlap` / `trait_effect_corr` share driver traits between modules
-    (trait-signature overlap)
-4. **Spurious Hits**: `p_spurious` adds background-scale off-module hits to the driver rows (contamination).
 
 The module simulations are scored against ground truth by
 `evaluate_univariate_simulation()`:
