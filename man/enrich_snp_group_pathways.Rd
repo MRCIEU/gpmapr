@@ -54,8 +54,8 @@ only (NA / 0 when \code{sources} has no HP).
 }
 }
 \description{
-Verification helper: for each SNP grouping (Louvain module,
-EBMF program, etc.) with more than \code{min_group_size} SNPs, collect molecular
+Verification helper: for each SNP grouping (EBMF program, etc.)
+with more than \code{min_group_size} SNPs, collect molecular
 QTL genes at those SNPs and test pathway enrichment. Compare the per-group
 results to a trait-level baseline to see whether baseline pathways reappear
 and whether they split cleanly across groups.

@@ -60,11 +60,9 @@ obj <- trait(trait_id, include_associations = TRUE)
 
 res <- run_univariate_clustering(
   obj,
-  cluster_type = "ebmf",
   min_snp_signals = min_snp_signals,
   compress_method = compress_method,
   compress_scale = compress_scale,
-  similarity_threshold = similarity_threshold,
   ebmf_lfsr_threshold = ebmf_lfsr_threshold,
   ebmf_magnitude_threshold = ebmf_magnitude_threshold,
   ebmf_drop_global = ebmf_drop_global,

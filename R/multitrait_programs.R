@@ -10,8 +10,7 @@
 #' SNP. This makes a positive cross-trait correlation interpretable as a
 #' concordant (target-aligned) architecture. High-confidence membership follows
 #' the same lFSR / magnitude gate used elsewhere in the pipeline.
-#' @param clustering_result Result of [run_univariate_clustering()] with
-#'   `cluster_type = "ebmf"`.
+#' @param clustering_result Result of [run_univariate_clustering()] (EBMF).
 #' @param program_summary Optional result of [summarise_ebmf_programs()], used
 #'   only to restrict to programs with `status == "valid"` when
 #'   `valid_only = TRUE`.
@@ -31,9 +30,6 @@ extract_program_loadings <- function(clustering_result,
                                      program_summary = NULL,
                                      valid_only = TRUE) {
   params <- clustering_result$parameters
-  if (is.null(params) || !identical(params$cluster_type, "ebmf")) {
-    stop("clustering_result must come from cluster_type = 'ebmf'")
-  }
 
   posterior <- ebmf_posterior_table(clustering_result)
   if (nrow(posterior) == 0) {

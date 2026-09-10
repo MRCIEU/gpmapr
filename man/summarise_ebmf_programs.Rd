@@ -28,8 +28,7 @@ summarise_ebmf_programs(
 )
 }
 \arguments{
-\item{clustering_result}{Result of \code{run_univariate_clustering()} with
-\code{cluster_type = "ebmf"}.}
+\item{clustering_result}{Result of \code{run_univariate_clustering()}.}
 
 \item{s_matrix}{SNP-by-SNP similarity matrix used for the coherence metrics.
 Defaults to \code{clustering_result$s_matrix}.}

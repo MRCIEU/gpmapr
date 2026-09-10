@@ -15,8 +15,7 @@ stability_ebmf_programs(
 )
 }
 \arguments{
-\item{clustering_result}{Result of \code{run_univariate_clustering()} with
-\code{cluster_type = "ebmf"}.}
+\item{clustering_result}{Result of \code{run_univariate_clustering()}.}
 
 \item{n_rep}{Number of subsample replicates.}
 

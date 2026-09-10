@@ -38,7 +38,6 @@ params:
   p_spurious: [0.0, 0.01]
 
   # EBMF / clustering parameters (inputs to run_univariate_clustering)
-  cluster_type: ebmf
   trait_subset: "phenotypic"
   min_snp_signals: 2
   compress_method: asinh
@@ -101,20 +100,15 @@ library(ggplot2)
 n_reps <- as.integer(params$n_reps)
 set.seed(1)
 
-if (!identical(params$cluster_type, "ebmf")) {
-  stop("This vignette is configured for cluster_type = 'ebmf'")
-}
 if (params$K != length(params$module_sizes)) {
   stop("K must equal length(module_sizes)")
 }
 
 clustering_settings <- list(
-  cluster_type = params$cluster_type,
   min_snp_signals = params$min_snp_signals,
   trait_subset = params$trait_subset,
   compress_method = params$compress_method,
   compress_scale = params$compress_scale,
-  similarity_threshold = params$similarity_threshold,
   ebmf_se_mode = params$ebmf_se_mode,
   ebmf_beta_scale = params$ebmf_beta_scale,
   ebmf_lfsr_threshold = params$ebmf_lfsr_threshold,
@@ -237,7 +231,7 @@ input changes.
 
 ```{r settings-table}
 settings_to_show <- c(
-  "cluster_type", "trait_subset", "min_snp_signals", "min_module_size", "module_sizes",
+  "trait_subset", "min_snp_signals", "min_module_size", "module_sizes",
   "compress_method", "compress_scale", "similarity_threshold",
   "overlap", "nested_effect_corr",
   "n_traits_per_module", "trait_overlap", "trait_effect_corr",
@@ -412,7 +406,6 @@ run_tier_one <- function(spec, rep) {
     dplyr::filter(program %in% valid_ids)
   ev <- evaluate_univariate_simulation(
     sim,
-    res,
     predicted_memberships = valid_assigned
   )
   programs <- smry$programs

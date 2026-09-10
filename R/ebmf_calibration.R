@@ -4,8 +4,7 @@
 #' loading matrix becomes one row, so downstream reporting can apply its own
 #' calibrated thresholds (see [calibrate_ebmf_programs()]) instead of the
 #' pipeline's fixed lFSR / magnitude gates.
-#' @param clustering_result Result of `run_univariate_clustering()` with
-#'   `cluster_type = "ebmf"`.
+#' @param clustering_result Result of `run_univariate_clustering()`.
 #' @return A dataframe with one row per SNP x program:
 #'   \itemize{
 #'     \item snp_id, program
@@ -14,10 +13,7 @@
 #'   }
 #' @export
 ebmf_posterior_table <- function(clustering_result) {
-  if (!is.null(clustering_result$parameters) &&
-      !identical(clustering_result$parameters$cluster_type, "ebmf")) {
-    stop("clustering_result must come from cluster_type = 'ebmf'")
-  }
+  .assert_ebmf_result(clustering_result)
   fit <- clustering_result$cluster_details$flash_fit
   if (is.null(fit) || fit$n_factors == 0) {
     return(data.frame(
@@ -79,10 +75,9 @@ ebmf_posterior_table <- function(clustering_result) {
 #' }
 #'
 #' No thresholds are applied inside the pipeline; this function is the
-#' reporting layer. The Louvain path is unaffected.
-#' @param clustering_result Result of `run_univariate_clustering()` with
-#'   `cluster_type = "ebmf"`. Its recorded parameters are reused verbatim for
-#'   every null replicate.
+#' reporting layer.
+#' @param clustering_result Result of `run_univariate_clustering()`. Its
+#'   recorded parameters are reused verbatim for every null replicate.
 #' @param n_null Number of permutation replicates. More replicates sharpen the
 #'   empirical quantiles; 20 is a reasonable minimum. Null replicates are fit
 #'   greedy-only (no backfit): they only feed the descriptive membership
@@ -110,10 +105,8 @@ calibrate_ebmf_programs <- function(clustering_result,
                                     n_candidate_tier = 25L,
                                     seed = 1,
                                     verbose = TRUE) {
+  .assert_ebmf_result(clustering_result)
   params <- clustering_result$parameters
-  if (is.null(params) || !identical(params$cluster_type, "ebmf")) {
-    stop("clustering_result must come from cluster_type = 'ebmf'")
-  }
 
   fit_null <- function(i) {
     set.seed(seed + i)
@@ -314,8 +307,7 @@ calibrate_ebmf_programs <- function(clustering_result,
 #' fork support). Each replicate sets its own seed, so results are reproducible
 #' regardless of `cores`. flashier itself is single-threaded, so the speedup
 #' scales with the number of worker processes.
-#' @param clustering_result Result of `run_univariate_clustering()` with
-#'   `cluster_type = "ebmf"`.
+#' @param clustering_result Result of `run_univariate_clustering()`.
 #' @param n_rep Number of subsample replicates.
 #' @param frac_traits Fraction of trait rows sampled per replicate.
 #' @param top_n Size of each program's member set used for matching.
@@ -333,10 +325,8 @@ stability_ebmf_programs <- function(clustering_result,
                                     seed = 1,
                                     cores = 1,
                                     verbose = TRUE) {
+  .assert_ebmf_result(clustering_result)
   params <- clustering_result$parameters
-  if (is.null(params) || !identical(params$cluster_type, "ebmf")) {
-    stop("clustering_result must come from cluster_type = 'ebmf'")
-  }
   posterior <- ebmf_posterior_table(clustering_result)
   if (nrow(posterior) == 0) {
     return(data.frame(program = integer(0), n_ref = integer(0),

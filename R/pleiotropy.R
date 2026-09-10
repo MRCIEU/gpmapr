@@ -34,8 +34,9 @@ get_all_variant_pleiotropies <- function() {
 #'   protein-coding genes each SNP is associated with via coloc groups. A module
 #'   of broadly pleiotropic SNPs (high category count) is more hub-like or
 #'   generic; a module of narrowly pleiotropic SNPs is more specific. This is a
-#'   descriptive annotation, not a reliability gate — combine with
-#'   `summarise_snp_module_quality()` to interpret modules.
+#'   descriptive annotation, not a reliability gate — combine with the
+#'   program-validation metrics from `summarise_ebmf_programs()` to interpret
+#'   programs.
 #' @param groups Named vector mapping SNP ids to group/module ids, or a dataframe
 #'   with snp/variant and group/cluster columns (see `.normalize_snp_groups()`).
 #' @param variant_pleiotropies Dataframe of per-SNP pleiotropy, e.g. the output

@@ -40,6 +40,7 @@ number of distinct trait categories and the number of distinct
 protein-coding genes each SNP is associated with via coloc groups. A module
 of broadly pleiotropic SNPs (high category count) is more hub-like or
 generic; a module of narrowly pleiotropic SNPs is more specific. This is a
-descriptive annotation, not a reliability gate — combine with
-\code{summarise_snp_module_quality()} to interpret modules.
+descriptive annotation, not a reliability gate — combine with the
+program-validation metrics from \code{summarise_ebmf_programs()} to interpret
+programs.
 }

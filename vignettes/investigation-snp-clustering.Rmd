@@ -172,7 +172,7 @@ Because EBMF is soft, one SNP can pass the gate for several programs
 this guards against the "one giant cluster" failure mode. Nothing assumes
 factor 1 is global.
 
-Why EBMF over community detection (Louvain / Leiden):
+Why EBMF:
 
 - SNPs can belong to multiple programs; biology is overlapping, not mutually
   exclusive.
@@ -221,8 +221,8 @@ Computed on `S`, restricted to the program's gated SNPs:
   parallel. Must be `>= min_mean_internal` (default `0.3`), a weak
   "same direction, not noise" bar.
 - **connectedness** — the fraction of member-SNP pairs with
-  \(|S| \ge\) `similarity_threshold` (the same `edge_threshold` used in the
-  old graph clustering). Mean internal similarity can look decent if a few
+  \(|S| \ge\) `similarity_threshold` (the same `edge_threshold` used in
+  program validation). Mean internal similarity can look decent if a few
   pairs are very similar and the rest are near zero; connectedness
   `>= min_connectedness` (default `0.5`) requires at least half of all pairs
   to be strong edges, so the program is a real connected blob on `S`, not

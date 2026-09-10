@@ -13,8 +13,6 @@ params:
   trait_subset: "phenotypic"
   min_snp_signals: 2
   min_module_size: 3
-  cluster_type: "ebmf"
-  louvain_gamma: 1.5
   compress_method: "asinh"
   compress_scale: 5
   include_trans: false
@@ -68,13 +66,11 @@ library(tidyr)
 library(ggplot2)
 ```
 
-Single-trait SNP clustering: each column is a GWAS SNP for the target trait,
-each row is a background study (phenotypic or molecular; no collapsing).
-Profiles are oriented, compressed, and clustered with **`r params$cluster_type`**
-(Louvain: signed modularity on the SNP similarity graph; EBMF: empirical Bayes
-matrix factorization with overlapping programs, hard-assigned to their
-strongest factor). Modules/programs are then validated with a filtering
-framework — internal coherence (mean internal similarity and connectedness),
+Single-trait SNP program discovery: each column is a GWAS SNP for the target
+trait, each row is a background study (phenotypic or molecular; no collapsing).
+Profiles are oriented, compressed, and factorised with empirical Bayes matrix
+factorization (EBMF) into overlapping programs. Programs are then validated with
+a filtering framework — internal coherence (mean internal similarity and connectedness),
 factor strength normalised by the square root of the number of filtered SNPs,
 and trait-subsampling stability —
 plus descriptive evidence scores (aggregate posterior evidence and factor
@@ -93,8 +89,6 @@ api <- params$api
 trait_subset <- params$trait_subset
 min_module_size <- as.integer(params$min_module_size)
 min_snp_signals <- as.integer(params$min_snp_signals)
-cluster_type <- params$cluster_type
-louvain_gamma <- as.numeric(params$louvain_gamma)
 compress_method <- params$compress_method
 compress_scale <- as.numeric(params$compress_scale)
 include_trans <- isTRUE(params$include_trans)
@@ -133,33 +127,31 @@ knitr::kable(
     gpmap_url = getOption("gpmap_url"),
     min_snp_signals = min_snp_signals,
     trait_subset = trait_subset,
-    cluster_type = cluster_type,
-    louvain_gamma = louvain_gamma,
     compress_method = compress_method,
     compress_scale = compress_scale,
     include_trans = include_trans,
     include_situated_gene = include_situated_gene,
     min_specificity = min_specificity,
     similarity_threshold = similarity_threshold,
-    ebmf_se_mode = if (cluster_type == "ebmf") ebmf_se_mode else NULL,
-    ebmf_beta_scale = if (cluster_type == "ebmf") ebmf_beta_scale else NULL,
-    ebmf_lfsr_threshold = if (cluster_type == "ebmf") ebmf_lfsr_threshold else NULL,
-    ebmf_prior = if (cluster_type == "ebmf") ebmf_prior else NULL,
-    ebmf_backfit = if (cluster_type == "ebmf") ebmf_backfit else NULL,
-    ebmf_magnitude_threshold = if (cluster_type == "ebmf") ebmf_magnitude_threshold else NULL,
+    ebmf_se_mode = ebmf_se_mode,
+    ebmf_beta_scale = ebmf_beta_scale,
+    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
+    ebmf_prior = ebmf_prior,
+    ebmf_backfit = ebmf_backfit,
+    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
     min_mean_internal = min_mean_internal,
     min_connectedness = min_connectedness,
-    n_null = if (cluster_type == "ebmf") n_null else NULL,
-    alpha_membership = if (cluster_type == "ebmf") alpha_membership else NULL,
-    n_candidate_tier = if (cluster_type == "ebmf") n_candidate_tier else NULL,
-    n_rep = if (cluster_type == "ebmf") n_rep else NULL,
-    frac_traits = if (cluster_type == "ebmf") frac_traits else NULL,
-    stability_top_n = if (cluster_type == "ebmf") stability_top_n else NULL,
-    stability_threshold = if (cluster_type == "ebmf") stability_threshold else NULL,
-    posterior_stat = if (cluster_type == "ebmf") posterior_stat else NULL,
-    posterior_evidence_cap = if (cluster_type == "ebmf") posterior_evidence_cap else NULL,
-    redundancy_threshold = if (cluster_type == "ebmf") redundancy_threshold else NULL,
-    cores = if (cluster_type == "ebmf") cores else NULL,
+    n_null = n_null,
+    alpha_membership = alpha_membership,
+    n_candidate_tier = n_candidate_tier,
+    n_rep = n_rep,
+    frac_traits = frac_traits,
+    stability_top_n = stability_top_n,
+    stability_threshold = stability_threshold,
+    posterior_stat = posterior_stat,
+    posterior_evidence_cap = posterior_evidence_cap,
+    redundancy_threshold = redundancy_threshold,
+    cores = cores,
     associations = associations,
     stringsAsFactors = FALSE
   ),
@@ -295,59 +287,41 @@ knitr::kable(
 
 ## Step 4: Clustering
 
-Edges with `|S| < similarity_threshold` are zeroed before Louvain. For EBMF,
-the oriented compressed matrix `X_star` is factorised directly (features x
-SNPs), a global mega-factor is dropped if detected, and each SNP is assigned to
-the factor with the largest absolute posterior loading among the factors it
-significantly belongs to.
+The oriented compressed matrix `X_star` is factorised directly with EBMF
+(features x SNPs), a global mega-factor is dropped if detected, and each SNP is
+assigned to the factor with the largest absolute posterior loading among the
+factors it significantly belongs to.
 
 ```{r step4-cluster}
-ebmf_result <- NULL
-if (cluster_type == "louvain") {
-  clusters_fit <- cluster_snp_profiles_louvain(
-    S,
-    similarity_threshold = similarity_threshold,
-    gamma = louvain_gamma
-  )
-} else if (cluster_type == "ebmf") {
-  ebmf_result <- run_univariate_clustering(
-    list(
-      trait = list(id = target_trait_id),
-      coloc_groups = cg
-    ),
-    target_trait_id = target_trait_id,
-    associations = associations,
-    trait_subset = trait_subset,
-    include_trans = include_trans,
-    min_snp_signals = min_snp_signals,
-    max_snp_fraction = max_snp_fraction,
-    compress_method = compress_method,
-    compress_scale = compress_scale,
-    similarity_threshold = similarity_threshold,
-    cluster_type = "ebmf",
-    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
-    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
-    ebmf_prior = ebmf_prior,
-    ebmf_backfit = ebmf_backfit,
-    ebmf_se_mode = ebmf_se_mode,
-    ebmf_beta_scale = ebmf_beta_scale,
-    min_module_size = min_module_size,
-    min_mean_internal = min_mean_internal,
-    min_connectedness = min_connectedness
-  )
-  clusters_fit <- list(
-    cluster = ebmf_result$clusters,
-    details = ebmf_result$cluster_details
-  )
-} else {
-  stop("Unknown cluster_type: ", cluster_type)
-}
+ebmf_result <- run_univariate_clustering(
+  list(
+    trait = list(id = target_trait_id),
+    coloc_groups = cg
+  ),
+  target_trait_id = target_trait_id,
+  associations = associations,
+  trait_subset = trait_subset,
+  include_trans = include_trans,
+  min_snp_signals = min_snp_signals,
+  max_snp_fraction = max_snp_fraction,
+  compress_method = compress_method,
+  compress_scale = compress_scale,
+  ebmf_lfsr_threshold = ebmf_lfsr_threshold,
+  ebmf_magnitude_threshold = ebmf_magnitude_threshold,
+  ebmf_prior = ebmf_prior,
+  ebmf_backfit = ebmf_backfit,
+  ebmf_se_mode = ebmf_se_mode,
+  ebmf_beta_scale = ebmf_beta_scale,
+  min_module_size = min_module_size,
+  min_mean_internal = min_mean_internal,
+  min_connectedness = min_connectedness
+)
 ```
 
-## Step 4.5: Module / program validation
+## Step 4.5: Program validation
 
-Both clustering paths share the same internal-coherence metrics, computed on
-the SNP similarity graph:
+`summarise_ebmf_programs()` computes internal-coherence metrics on the SNP
+similarity graph:
 
 - **mean_internal_similarity** — mean off-diagonal `S` inside the module
 - **separation** — internal minus external mean similarity
@@ -389,41 +363,7 @@ A program is `valid` if it passes all four filters (`size`, `internal`,
 `stability`, `redundancy`); the failure reason is recorded in `status`.
 
 ```{r step4-quality, results='asis'}
-# if (cluster_type == "louvain") {
-#   module_quality <- summarise_snp_module_quality(
-#     S,
-#     clusters_fit$cluster,
-#     edge_threshold = similarity_threshold,
-#     min_module_size = min_module_size,
-#     min_mean_internal = min_mean_internal,
-#     min_connectedness = min_connectedness
-#   )
-#   program_summary <- NULL
-
-#   knitr::kable(
-#     module_quality |>
-#       dplyr::select(
-#         cluster, n_snps, mean_internal_similarity, mean_external_similarity,
-#         separation, connectedness
-#       ) |>
-#       dplyr::filter(n_snps >= min_module_size) |>
-#       dplyr::mutate(dplyr::across(
-#         c(
-#           mean_internal_similarity, mean_external_similarity,
-#           separation, connectedness
-#         ),
-#         ~ round(.x, 3)
-#       )),
-#     caption = "Louvain module reliability metrics",
-#     row.names = FALSE
-#   )
-
-#   reliable_ids <- module_quality$cluster[module_quality$reliable]
-#   clusters_analysis <- clusters_fit$cluster[
-#     clusters_fit$cluster %in% reliable_ids
-#   ]
-# } else {
-  program_summary <- summarise_ebmf_programs(
+program_summary <- summarise_ebmf_programs(
     ebmf_result,
     s_matrix = S,
     edge_threshold = similarity_threshold,
@@ -552,7 +492,6 @@ A program is `valid` if it passes all four filters (`size`, `internal`,
       snp_id = snp_id,
       group = as.character(program)
     )
-# }
 ```
 
 ```{r step4-heatmap, fig.height = 7, fig.width = 7}
@@ -575,11 +514,7 @@ if (is.data.frame(clusters_analysis) && nrow(clusters_analysis) >= 2) {
       Rowv = NA,
       Colv = NA,
       scale = "none",
-      main = sprintf(
-        "SNP similarity (%s)",
-        if (cluster_type == "ebmf") "valid EBMF programs" else
-          paste("reliable", cluster_type, "modules")
-      ),
+      main = "SNP similarity (valid EBMF programs)",
       xlab = "SNPs",
       ylab = "SNPs"
     )
@@ -683,10 +618,8 @@ separate call per source: Reactome and KEGG hits are reported side by side as
 **pathways**, and HP terms as **phenotypes**, so the three never compete for
 the same headline.
 
-Trait baseline = all SNPs attributed to this trait in the clustering analysis
-(`colnames(S)`; for Louvain this equals `names(clusters$cluster)`, and for EBMF
-it is kept identical so both methods are annotated against the same baseline),
-using coloc rows for those SNPs only—not
+Trait baseline = all SNPs attributed to this trait in the analysis
+(`colnames(S)`), using coloc rows for those SNPs only—not
 the whole GPMap universe. Each module is compared to the **rest of the trait**
 (leave-one-out): observed link share vs expected share, with fold enrichment.
 

@@ -2,7 +2,7 @@
 % Please edit documentation in R/univariate_clustering.R
 \name{run_univariate_clustering}
 \alias{run_univariate_clustering}
-\title{Run Univariate SNP Clustering Pipeline}
+\title{Run Univariate SNP Program Discovery}
 \usage{
 run_univariate_clustering(
   trait_object,
@@ -16,9 +16,6 @@ run_univariate_clustering(
   max_snp_fraction = 0.8,
   compress_method = c("none", "asinh"),
   compress_scale = 2,
-  similarity_threshold = 0,
-  cluster_type = c("louvain", "spectral", "ebmf"),
-  spectral_k = 3L,
   ebmf_greedy_Kmax = 50L,
   ebmf_lfsr_threshold = 0.05,
   ebmf_magnitude_threshold = 0.25,
@@ -27,14 +24,9 @@ run_univariate_clustering(
   ebmf_backfit = TRUE,
   ebmf_se_mode = c("unit", "matrix"),
   ebmf_beta_scale = c("none", "trait"),
-  louvain_gamma = 2,
-  seed = 1L,
   min_module_size = 3L,
   min_mean_internal = 0.3,
-  min_connectedness = 0.5,
-  compute_specific_traits = FALSE,
-  min_specificity = 1.25,
-  top_n_traits = 10L
+  min_connectedness = 0.5
 )
 }
 \arguments{
@@ -72,18 +64,7 @@ dilute. Requires \code{trait_info} with a \code{feature_type} column (present fo
 
 \item{compress_scale}{Asinh scale passed to \code{compress_effect_matrix()}.}
 
-\item{similarity_threshold}{Edge threshold applied before Louvain clustering.}
-
-\item{cluster_type}{Clustering method: \code{"louvain"} (default, signed Louvain
-on the SNP similarity graph), \code{"spectral"} (normalised Laplacian embedding
-plus k-means), or \code{"ebmf"} (empirical Bayes matrix factorization via
-flashier; soft factors are converted to hard clusters by assigning each
-SNP to the factor with the largest absolute posterior loading).}
-
-\item{spectral_k}{Number of clusters for \code{cluster_type = "spectral"}.}
-
-\item{ebmf_greedy_Kmax}{Maximum number of EBMF factors for
-\code{cluster_type = "ebmf"}.}
+\item{ebmf_greedy_Kmax}{Maximum number of EBMF factors.}
 
 \item{ebmf_lfsr_threshold}{lFSR threshold for EBMF program membership.}
 
@@ -120,23 +101,11 @@ harmonises units across traits while preserving within-trait precision
 information (z-scores remain unchanged by this since beta/se is
 scale-invariant).}
 
-\item{louvain_gamma}{Signed Louvain resolution parameter.}
-
-\item{seed}{RNG seed for Louvain node-order randomisation.}
-
-\item{min_module_size}{Minimum SNPs for a module to be reliable.}
-
-\item{min_mean_internal}{Minimum mean internal similarity for reliability.}
-
-\item{min_connectedness}{Minimum pair-connectedness for reliability.}
-
-\item{compute_specific_traits}{If \code{TRUE}, also run
-\code{summarise_module_specific_traits()} on the reliable modules using the
-compressed trait matrix (no API calls). Defaults to \code{FALSE}.}
-
-\item{min_specificity}{Soft specificity threshold for module-specific traits.}
-
-\item{top_n_traits}{Number of top traits returned per module.}
+\item{min_module_size, min_mean_internal, min_connectedness}{Recorded pipeline
+settings for the downstream program-validation layer and used (for
+\code{min_module_size}) by \code{calibrate_ebmf_programs()}. They do not affect the
+EBMF fit itself; pass them explicitly to \code{summarise_ebmf_programs()} to
+gate programs.}
 }
 \value{
 A list with:
@@ -146,15 +115,13 @@ A list with:
 \item trait_matrix: SNP x trait version of \code{x_star}
 \item s_matrix: SNP-by-SNP cosine similarity matrix
 \item overlap_matrix, eligible_matrix: joint-observation counts / eligibility
-\item clusters: named Louvain cluster assignment per SNP
-\item clusters_reliable: subset of \code{clusters} restricted to reliable modules
-\item module_quality: reliability metrics dataframe
+\item cluster_membership: SNP x program logical membership matrix from EBMF
+\item cluster_details: EBMF fit details (including the \code{flash} object)
+\item beta_matrix, se_matrix: trait x SNP beta / SE matrices when available
 \item ebmf_input: the features x SNPs matrix actually passed to flashier
-when \code{cluster_type = "ebmf"} (\code{NULL} otherwise)
 \item trait_info, snp_info: row / column metadata
 \item dropped_trait_ids: background traits removed by the feature-type
 (\code{trait_subset}) and/or sparse/ubiquitous filter
-\item group_traits: module-specific traits (when \code{compute_specific_traits = TRUE})
 \item coloc_groups: coloc groups actually used (after trans filtering)
 \item parameters: list of settings used
 }
@@ -162,7 +129,7 @@ when \code{cluster_type = "ebmf"} (\code{NULL} otherwise)
 \description{
 Run the full univariate analysis pipeline (pleiotropy matrix ->
 sparse/ubiquitous trait filter -> orientation -> compression -> SNP cosine
-similarity -> signed Louvain clustering -> module reliability) from a single
+similarity -> Empirical Bayes Matrix Factorization programs) from a single
 entry point. The function takes a trait object as returned by
 \code{trait(trait_id, include_associations = TRUE)} — or a simulated object with
 the same shape — so no API calls are made when \code{coloc_groups} (and, for

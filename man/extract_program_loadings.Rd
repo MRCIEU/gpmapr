@@ -11,8 +11,7 @@ extract_program_loadings(
 )
 }
 \arguments{
-\item{clustering_result}{Result of \code{\link[=run_univariate_clustering]{run_univariate_clustering()}} with
-\code{cluster_type = "ebmf"}.}
+\item{clustering_result}{Result of \code{\link[=run_univariate_clustering]{run_univariate_clustering()}} (EBMF).}
 
 \item{program_summary}{Optional result of \code{\link[=summarise_ebmf_programs]{summarise_ebmf_programs()}}, used
 only to restrict to programs with \code{status == "valid"} when

@@ -53,8 +53,7 @@
 #'   SNP-containment redundancy score and its partner program; reported for
 #'   context alongside the gating `redundancy_pass` described above.
 #' }
-#' @param clustering_result Result of `run_univariate_clustering()` with
-#'   `cluster_type = "ebmf"`.
+#' @param clustering_result Result of `run_univariate_clustering()`.
 #' @param s_matrix SNP-by-SNP similarity matrix used for the coherence metrics.
 #'   Defaults to `clustering_result$s_matrix`.
 #' @param edge_threshold Absolute similarity used for connectedness. Defaults to
@@ -124,10 +123,8 @@ summarise_ebmf_programs <- function(clustering_result,
                                     seed = 1,
                                     cores = 1,
                                     verbose = TRUE) {
+  .assert_ebmf_result(clustering_result)
   params <- clustering_result$parameters
-  if (is.null(params) || !identical(params$cluster_type, "ebmf")) {
-    stop("clustering_result must come from cluster_type = 'ebmf'")
-  }
   posterior_stat <- match.arg(posterior_stat)
 
   if (is.null(s_matrix)) {

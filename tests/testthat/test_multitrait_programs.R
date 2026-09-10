@@ -149,7 +149,6 @@ test_that("extract_program_loadings pulls valid programs from an EBMF fit", {
   )
   res <- run_univariate_clustering(
     sim$trait_object,
-    cluster_type = "ebmf",
     min_snp_signals = 2,
     min_module_size = 3
   )
@@ -167,10 +166,4 @@ test_that("extract_program_loadings pulls valid programs from an EBMF fit", {
                     paste0(ex$loadings$trait_id, ":", ex$loadings$program)))
   expect_true(all(ex$programs$n_high_confidence >= 0))
   expect_true(all(abs(ex$loadings$loading) == ex$loadings$abs_loading))
-})
-
-test_that("extract_program_loadings rejects non-EBMF results", {
-  sim <- simulate_trait(n_coloc_groups = 30, K = 0, seed = 3)
-  res <- run_univariate_clustering(sim$trait_object)
-  expect_error(extract_program_loadings(res), "cluster_type")
 })

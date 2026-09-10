@@ -46,44 +46,6 @@ test_that("module_sizes can define the number of planted modules", {
   expect_equal(sim$ground_truth$parameters$module_sizes, c(5L, 20L, 50L))
 })
 
-test_that("planted modules are recovered by the pipeline (disjoint)", {
-  sim <- simulate_trait(
-    n_coloc_groups = 48,
-    K = 3,
-    module_sizes = c(8, 8, 8),
-    p_structural_zero = 0.2,
-    p_spurious = 0.02,
-    p_active_background = 0.05,
-    noise_sd = 0.3,
-    effect_tail = 0,
-    background_sparsity_sd = 0,
-    n_hub_traits = 0L,
-    target_pattern = "module",
-    p_negative = NULL,
-    seed = 7
-  )
-  res <- run_univariate_clustering(sim$trait_object, louvain_gamma = 2)
-  ev <- evaluate_univariate_simulation(sim, res)
-  expect_gte(ev$k_hat, 2)
-  expect_gte(ev$ari_structured, 0.5)
-})
-
-test_that("null simulation produces limited structure", {
-  sim <- simulate_trait(
-    n_coloc_groups = 80,
-    K = 0,
-    p_active_background = 0.05,
-    background_sparsity_sd = 0,
-    n_hub_traits = 0L,
-    target_pattern = "module",
-    seed = 11
-  )
-  res <- run_univariate_clustering(sim$trait_object, louvain_gamma = 2)
-  ev <- evaluate_univariate_simulation(sim, res)
-  expect_equal(ev$k_planted, 0)
-  expect_lte(ev$coverage, 0.5)
-})
-
 test_that("simulation evaluation accepts overlapping EBMF memberships", {
   sim <- simulate_trait(
     n_coloc_groups = 60,
@@ -95,7 +57,6 @@ test_that("simulation evaluation accepts overlapping EBMF memberships", {
   )
   res <- run_univariate_clustering(
     sim$trait_object,
-    cluster_type = "ebmf",
     min_snp_signals = 2,
     ebmf_lfsr_threshold = 0.05,
     ebmf_magnitude_threshold = 0.25,
@@ -110,7 +71,6 @@ test_that("simulation evaluation accepts overlapping EBMF memberships", {
   valid <- summary$programs$program[summary$programs$status == "valid"]
   ev <- evaluate_univariate_simulation(
     sim,
-    res,
     predicted_memberships = summary$assigned[
       summary$assigned$program %in% valid,
       ,

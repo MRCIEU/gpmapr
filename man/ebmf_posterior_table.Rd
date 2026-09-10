@@ -7,8 +7,7 @@
 ebmf_posterior_table(clustering_result)
 }
 \arguments{
-\item{clustering_result}{Result of \code{run_univariate_clustering()} with
-\code{cluster_type = "ebmf"}.}
+\item{clustering_result}{Result of \code{run_univariate_clustering()}.}
 }
 \value{
 A dataframe with one row per SNP x program:

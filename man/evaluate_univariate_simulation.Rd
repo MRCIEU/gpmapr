@@ -2,24 +2,16 @@
 % Please edit documentation in R/evaluate_univariate_simulation.R
 \name{evaluate_univariate_simulation}
 \alias{evaluate_univariate_simulation}
-\title{Evaluate Clustering Against Simulated Ground Truth}
+\title{Evaluate EBMF Programs Against Simulated Ground Truth}
 \usage{
-evaluate_univariate_simulation(
-  simulation,
-  clustering_result,
-  predicted_memberships = NULL
-)
+evaluate_univariate_simulation(simulation, predicted_memberships)
 }
 \arguments{
 \item{simulation}{Result of \code{simulate_trait()}.}
 
-\item{clustering_result}{Result of \code{run_univariate_clustering()}. Reliable
-modules (\code{clusters_reliable}) are treated as the inferred partition; SNPs
-outside them are labelled \code{"unassigned"}.}
-
-\item{predicted_memberships}{Optional dataframe of predicted SNP-program
-memberships, typically \code{summarise_ebmf_programs()$assigned} restricted to
-valid programs. This preserves overlapping EBMF memberships for coverage,
+\item{predicted_memberships}{Dataframe of predicted SNP-program memberships,
+typically \code{summarise_ebmf_programs()$assigned} restricted to valid
+programs. Overlapping EBMF memberships are preserved for coverage,
 background absorption, and module recall. ARI uses each SNP's strongest
 assigned program as a hard projection.}
 }
@@ -27,26 +19,25 @@ assigned program as a hard projection.}
 A list with:
 \itemize{
 \item k_planted: number of modules in the simulation (0 for null)
-\item k_hat: number of reliable modules found
+\item k_hat: number of predicted programs
 \item k_error: absolute difference \verb{|k_hat - k_planted|}
 \item ari_all: ARI over all SNPs, background as its own truth class and
 unassigned SNPs as their own predicted class
 \item ari_structured: ARI over module SNPs only (background excluded)
 \item background_absorbed: fraction of background SNPs placed into
-reliable modules (higher = more hallucinated structure)
-\item coverage: fraction of all SNPs placed into reliable modules
+predicted programs (higher = more hallucinated structure)
+\item coverage: fraction of all SNPs placed into predicted programs
 \item module_recall: named numeric vector; for each planted module, the
-largest fraction of its SNPs contained in any single reliable predicted
-module. Unlike ARI this does not require a one-to-one partition match,
-so it scores overlapping/merged programs (e.g. from matrix
-factorisation) fairly.
+largest fraction of its SNPs contained in any single predicted program.
+Unlike ARI this does not require a one-to-one partition match, so it
+scores overlapping/merged programs fairly.
 \item mean_module_recall: mean of \code{module_recall} across planted modules
 \item confusion: truth-by-predicted contingency table over all SNPs
 }
 }
 \description{
-Score a \code{run_univariate_clustering()} result against the ground
-truth from \code{simulate_trait()}. Reports adjusted Rand index (hand-rolled
-contingency-table implementation), detected module count vs planted K, and
-how many unstructured background SNPs were absorbed into reliable modules.
+Score a \code{run_univariate_clustering()} EBMF result against the
+ground truth from \code{simulate_trait()}. Reports adjusted Rand index (hand-rolled
+contingency-table implementation), detected program count vs planted K, and
+how many unstructured background SNPs were absorbed into predicted programs.
 }

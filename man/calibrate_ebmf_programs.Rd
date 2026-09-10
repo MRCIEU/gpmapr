@@ -14,9 +14,8 @@ calibrate_ebmf_programs(
 )
 }
 \arguments{
-\item{clustering_result}{Result of \code{run_univariate_clustering()} with
-\code{cluster_type = "ebmf"}. Its recorded parameters are reused verbatim for
-every null replicate.}
+\item{clustering_result}{Result of \code{run_univariate_clustering()}. Its
+recorded parameters are reused verbatim for every null replicate.}
 
 \item{n_null}{Number of permutation replicates. More replicates sharpen the
 empirical quantiles; 20 is a reasonable minimum. Null replicates are fit
@@ -66,5 +65,5 @@ program-level filters).}
 }
 
 No thresholds are applied inside the pipeline; this function is the
-reporting layer. The Louvain path is unaffected.
+reporting layer.
 }

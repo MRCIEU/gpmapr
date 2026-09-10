@@ -13,7 +13,6 @@ make_ebmf_result <- function() {
   )
   res <- run_univariate_clustering(
     sim$trait_object,
-    cluster_type = "ebmf",
     min_snp_signals = 2,
     min_module_size = 3
   )
@@ -22,7 +21,6 @@ make_ebmf_result <- function() {
 
 test_that("ebmf_posterior_table returns one row per SNP x program", {
   r <- make_ebmf_result()
-  expect_length(r$res$clusters, 0)
   expect_true(is.matrix(r$res$cluster_membership))
   tab <- ebmf_posterior_table(r$res)
   fit <- r$res$cluster_details$flash_fit
@@ -32,12 +30,6 @@ test_that("ebmf_posterior_table returns one row per SNP x program", {
     c("snp_id", "program", "loading", "abs_loading", "lfsr")
   )
   expect_true(all(tab$abs_loading >= 0))
-})
-
-test_that("ebmf_posterior_table rejects non-EBMF results", {
-  sim <- simulate_trait(n_coloc_groups = 30, K = 0, seed = 3)
-  res <- run_univariate_clustering(sim$trait_object)
-  expect_error(ebmf_posterior_table(res), "cluster_type")
 })
 
 test_that("calibrate_ebmf_programs returns factor strength and null calibration", {
@@ -223,16 +215,4 @@ test_that("summarise_ebmf_programs checks stability only for programs passing co
   expect_true(all(ps$programs$stability_checked[coherent]))
   expect_true(all(!ps$programs$stability_checked[!coherent]))
   expect_true(all(is.finite(ps$programs$replication[coherent])))
-})
-
-test_that("louvain path is untouched by calibration helpers", {
-  sim <- simulate_trait(n_coloc_groups = 40, K = 2, seed = 5)
-  res <- run_univariate_clustering(sim$trait_object, louvain_gamma = 1.5,
-                                   similarity_threshold = 0.2)
-  expect_identical(res$parameters$cluster_type, "louvain")
-  expect_error(ebmf_posterior_table(res), "cluster_type")
-  expect_error(
-    calibrate_ebmf_programs(res, n_null = 1, verbose = FALSE),
-    "cluster_type"
-  )
 })
