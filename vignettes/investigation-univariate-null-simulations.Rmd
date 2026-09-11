@@ -24,8 +24,6 @@ params:
   compress_method: asinh
   compress_scale: 5
   similarity_threshold: 0.2
-  ebmf_se_mode: unit
-  ebmf_beta_scale: trait
   ebmf_lfsr_threshold: 0.05
   ebmf_magnitude_threshold: 0.3
   ebmf_drop_global: true
@@ -86,8 +84,6 @@ clustering_settings <- list(
   trait_subset = params$trait_subset,
   compress_method = params$compress_method,
   compress_scale = params$compress_scale,
-  ebmf_se_mode = params$ebmf_se_mode,
-  ebmf_beta_scale = params$ebmf_beta_scale,
   ebmf_lfsr_threshold = params$ebmf_lfsr_threshold,
   ebmf_magnitude_threshold = params$ebmf_magnitude_threshold,
   ebmf_drop_global = params$ebmf_drop_global,
@@ -159,7 +155,7 @@ one axis.
 settings_to_show <- c(
   "trait_subset", "min_snp_signals", "min_module_size",
   "compress_method", "compress_scale", "similarity_threshold",
-  "ebmf_se_mode", "ebmf_beta_scale", "ebmf_lfsr_threshold",
+  "ebmf_lfsr_threshold",
   "ebmf_magnitude_threshold", "ebmf_drop_global", "ebmf_prior",
   "ebmf_backfit",
   "min_mean_internal", "min_connectedness",

@@ -5,6 +5,9 @@ vignette: >
   %\VignetteIndexEntry{GPMap tutorial: Haemoglobin concentration case study}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
+params:
+  api: "prod"
+  anchor_trait_id: 4759
 ---
 
 ```{r setup, include=FALSE}
@@ -19,7 +22,14 @@ knitr::opts_chunk$set(
 )
 ```
 
-This is a case study of GPMAP genetic colocalisations with the UK Biobank complex trait "Haemoglobin concentration", a physiological measure underpinned by well understood biological mechanisms of iron uptake, handling and storage and erythropoiesis, which potentially sits downstream of many disease states.
+```{r anchor-trait-metadata, include=FALSE}
+gpmapr::select_api(params$api)
+anchor_trait_id <- as.integer(params$anchor_trait_id)
+anchor_trait_result <- gpmapr::trait(anchor_trait_id)
+anchor_trait_name <- anchor_trait_result$trait$trait_name
+```
+
+This is a case study of GPMAP genetic colocalisations with the UK Biobank complex trait "`r anchor_trait_name`", a physiological measure underpinned by well understood biological mechanisms of iron uptake, handling and storage and erythropoiesis, which potentially sits downstream of many disease states.
 
 This vignette is a demonstrative example of Figure 4 in [the GPMap paper](https://doi.org/10.64898/2026.02.19.26346618).
 
@@ -31,16 +41,15 @@ We wish to demonstrate that the GPMap:
 
 ## Trait colocalisations
 
-**Anchor trait:** Haemoglobin concentration (id: 4759)
+**Anchor trait:** `r anchor_trait_name` (id: `r anchor_trait_id`)
 
 ```{r find-trait}
 all_genes <- gpmapr::all_genes()
 all_traits_df <- gpmapr::all_traits()
 all_haemoglobin_traits <- gpmapr::search_gpmap("haemoglobin") |>
   dplyr::select(type_id, type, name, sample_size, num_coloc_groups)
-anchor_trait_id <- 4759
 
-trait_results <- gpmapr::trait(trait_id = anchor_trait_id)
+trait_results <- anchor_trait_result
 haemoglobin_common <- trait_results$coloc_groups
 haemoglobin_rare <- trait_results$rare_results
 knitr::kable(all_haemoglobin_traits)
@@ -50,7 +59,7 @@ Exclude duplicate haemoglobin traits and filter on genome-wide significance:
 
 ```{r filter-traits}
 # Identify other haemoglobin traits to exclude
-trait_ids_hgb <- dplyr::filter(all_haemoglobin_traits, type_id != 4759)
+trait_ids_hgb <- dplyr::filter(all_haemoglobin_traits, type_id != anchor_trait_id)
 traits_out <- trait_ids_hgb$type_id
 
 # Exclude coloc groups where the anchor trait has no genome-wide significant hit in the region
@@ -159,7 +168,7 @@ colocs_per_position |>
   )
 ```
 
-This is a recreation of the data you can see on the GPMap website at https://gpmap.opengwas.io/trait.html?id=4759
+This is a recreation of the data you can see on the GPMap website at https://gpmap.opengwas.io/trait.html?id=`r anchor_trait_id`
 
 ### Complex trait colocalisations
 

@@ -26,7 +26,7 @@ knitr::opts_chunk$set(
 ## Goal
 
 Take a **single trait** and decompose its genetic architecture by grouping SNPs
-according to their genome-wide pleiotropic profiles.
+according to their phenome-wide pleiotropic profiles.
 
 The central question is: **within one trait, what distinct biological programs
 are represented by its associated SNPs?**
@@ -290,8 +290,8 @@ The univariate vignette interprets **valid** EBMF programs as:
 - **Tissue composition** (`enrich_snp_group_tissues()`, `background = "trait"`)
   on the same leave-one-out trait baseline.
 - **Pathway enrichment** on QTL genes (KEGG and Reactome), treated as
-  secondary because the full-trait gene set is often empty for broad traits
-  such as BMI.
+  secondary because the full-trait gene set is often empty for broad polygenic
+  traits.
 - **SNP pleiotropy typology** (`summarise_snp_group_pleiotropy()`): programs
   are placed on a *breadth* axis (mean per-SNP distinct trait categories /
   distinct genes) against *tightness* (separation). Descriptive only — it

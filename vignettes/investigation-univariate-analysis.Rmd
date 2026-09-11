@@ -10,6 +10,7 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 params:
   api: "prod"
+  target_trait_id: 1992
   trait_subset: "phenotypic"
   min_snp_signals: 2
   min_module_size: 3
@@ -18,8 +19,6 @@ params:
   include_trans: false
   include_situated_gene: false 
   similarity_threshold: 0.2
-  ebmf_se_mode: "unit"
-  ebmf_beta_scale: "trait"
   ebmf_magnitude_threshold: 0.75
   ebmf_lfsr_threshold: 0.02
   ebmf_prior: "point_laplace"
@@ -66,6 +65,14 @@ library(tidyr)
 library(ggplot2)
 ```
 
+```{r trait-metadata, include=FALSE}
+api <- params$api
+target_trait_id <- as.integer(params$target_trait_id)
+select_api(api)
+target_trait <- trait(target_trait_id, include_associations = TRUE)
+target_trait_name <- target_trait$trait$trait_name
+```
+
 Single-trait SNP program discovery: each column is a GWAS SNP for the target
 trait, each row is a background study (phenotypic or molecular; no collapsing).
 Profiles are oriented, compressed, and factorised with empirical Bayes matrix
@@ -76,16 +83,14 @@ and trait-subsampling stability —
 plus descriptive evidence scores (aggregate posterior evidence and factor
 distinctiveness) before interpretation.
 
-We use **Type 2 Diabetes** (trait id `114`).
+We use **`r target_trait_name`** (trait id `r target_trait_id`).
 
 ```{r params}
-target_trait_id <- 1992
 min_group_size <- 5
 max_snp_fraction <- 0.8
 top_n_traits <- 10L
 min_specificity <- 1.25
 
-api <- params$api
 trait_subset <- params$trait_subset
 min_module_size <- as.integer(params$min_module_size)
 min_snp_signals <- as.integer(params$min_snp_signals)
@@ -94,8 +99,6 @@ compress_scale <- as.numeric(params$compress_scale)
 include_trans <- isTRUE(params$include_trans)
 include_situated_gene <- isTRUE(params$include_situated_gene)
 similarity_threshold <- as.numeric(params$similarity_threshold)
-ebmf_se_mode <- params$ebmf_se_mode
-ebmf_beta_scale <- params$ebmf_beta_scale
 ebmf_lfsr_threshold <- as.numeric(params$ebmf_lfsr_threshold)
 ebmf_prior <- params$ebmf_prior
 ebmf_backfit <- isTRUE(params$ebmf_backfit)
@@ -119,8 +122,6 @@ posterior_evidence_cap <- as.numeric(params$posterior_evidence_cap)
 redundancy_threshold <- as.numeric(params$redundancy_threshold)
 cores <- as.integer(params$cores)
 
-select_api(api)
-
 knitr::kable(
   data.frame(
     api = api,
@@ -133,8 +134,6 @@ knitr::kable(
     include_situated_gene = include_situated_gene,
     min_specificity = min_specificity,
     similarity_threshold = similarity_threshold,
-    ebmf_se_mode = ebmf_se_mode,
-    ebmf_beta_scale = ebmf_beta_scale,
     ebmf_lfsr_threshold = ebmf_lfsr_threshold,
     ebmf_prior = ebmf_prior,
     ebmf_backfit = ebmf_backfit,
@@ -158,11 +157,6 @@ knitr::kable(
   caption = "Active run parameters",
   row.names = FALSE
 )
-
-traits_meta <- traits(target_trait_id)
-target_trait_name <- traits_meta$traits$trait_name[
-  traits_meta$traits$id == target_trait_id
-]
 ```
 
 ## Step 1: Pleiotropy matrix
@@ -175,7 +169,7 @@ When `include_trans = FALSE`, trans target markers are removed from the
 association rows before the matrix is built.
 
 ```{r step1-build}
-coloc_groups <- trait(target_trait_id, include_associations = TRUE)$coloc_groups
+coloc_groups <- target_trait$coloc_groups
 if (!include_trans && "cis_trans" %in% names(coloc_groups)) {
   coloc_groups <- coloc_groups |>
     dplyr::filter(is.na(cis_trans) | tolower(cis_trans) != "trans")
@@ -310,8 +304,6 @@ ebmf_result <- run_univariate_clustering(
   ebmf_magnitude_threshold = ebmf_magnitude_threshold,
   ebmf_prior = ebmf_prior,
   ebmf_backfit = ebmf_backfit,
-  ebmf_se_mode = ebmf_se_mode,
-  ebmf_beta_scale = ebmf_beta_scale,
   min_module_size = min_module_size,
   min_mean_internal = min_mean_internal,
   min_connectedness = min_connectedness

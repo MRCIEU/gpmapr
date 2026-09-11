@@ -112,65 +112,29 @@ calibrate_ebmf_programs <- function(clustering_result,
     set.seed(seed + i)
     X <- clustering_result$x_matrix
     perm <- lapply(seq_len(nrow(X)), function(j) sample(ncol(X)))
-    if (params$ebmf_se_mode == "matrix" &&
-        !is.null(clustering_result$beta_matrix)) {
-      beta <- clustering_result$beta_matrix
-      se <- clustering_result$se_matrix
-      beta_perm <- beta
-      se_perm <- se
-      for (j in seq_len(nrow(beta))) {
-        idx <- perm[[j]]
-        beta_perm[j, ] <- beta[j, idx]
-        se_perm[j, ] <- se[j, idx]
-      }
-      signs <- orient_pleiotropy_matrix(
-        X, target_trait_id = params$target_trait_id
-      )$target_signs
-      input <- sweep(beta_perm, 2, signs, `*`)
-      se_input <- se_perm
-      if (identical(params$ebmf_beta_scale, "trait")) {
-        rs <- sqrt(rowMeans(input^2, na.rm = TRUE))
-        rs[!is.finite(rs) | rs <= 0] <- 1
-        input <- sweep(input, 1, rs, `/`)
-        se_input <- sweep(se_input, 1, rs, `/`)
-      }
-      .cluster_snp_profiles_ebmf(
-        input,
-        greedy_Kmax = params$ebmf_greedy_Kmax,
-        lfsr_threshold = params$ebmf_lfsr_threshold,
-        magnitude_threshold = params$ebmf_magnitude_threshold,
-        drop_global = FALSE,
-        prior = params$ebmf_prior,
-        # Null refits only feed the descriptive membership calibration, so
-        # greedy-only fits are enough and much cheaper than backfitting.
-        backfit = FALSE,
-        observed_se_matrix = se_input
-      )
-    } else {
-      X_perm <- X
-      for (j in seq_len(nrow(X))) {
-        X_perm[j, ] <- X[j, perm[[j]]]
-      }
-      oriented <- orient_pleiotropy_matrix(
-        X_perm, target_trait_id = params$target_trait_id
-      )
-      X_star <- compress_effect_matrix(
-        oriented$x_matrix,
-        method = params$compress_method,
-        asinh_scale = params$compress_scale
-      )
-      .cluster_snp_profiles_ebmf(
-        X_star,
-        greedy_Kmax = params$ebmf_greedy_Kmax,
-        lfsr_threshold = params$ebmf_lfsr_threshold,
-        magnitude_threshold = params$ebmf_magnitude_threshold,
-        drop_global = FALSE,
-        prior = params$ebmf_prior,
-        # Null refits only feed the descriptive membership calibration, so
-        # greedy-only fits are enough and much cheaper than backfitting.
-        backfit = FALSE
-      )
+    X_perm <- X
+    for (j in seq_len(nrow(X))) {
+      X_perm[j, ] <- X[j, perm[[j]]]
     }
+    oriented <- orient_pleiotropy_matrix(
+      X_perm, target_trait_id = params$target_trait_id
+    )
+    X_star <- compress_effect_matrix(
+      oriented$x_matrix,
+      method = params$compress_method,
+      asinh_scale = params$compress_scale
+    )
+    .cluster_snp_profiles_ebmf(
+      X_star,
+      greedy_Kmax = params$ebmf_greedy_Kmax,
+      lfsr_threshold = params$ebmf_lfsr_threshold,
+      magnitude_threshold = params$ebmf_magnitude_threshold,
+      drop_global = FALSE,
+      prior = params$ebmf_prior,
+      # Null refits only feed the descriptive membership calibration, so
+      # greedy-only fits are enough and much cheaper than backfitting.
+      backfit = FALSE
+    )
   }
 
   factor_masses <- function(fit) {
@@ -354,34 +318,12 @@ stability_ebmf_programs <- function(clustering_result,
   names(ref_sets) <- sort(unique(posterior$program))
 
   ebmf_input <- clustering_result$x_star
-  se_input <- NULL
-  if (identical(params$ebmf_se_mode, "matrix") &&
-      !is.null(clustering_result$beta_matrix)) {
-    signs <- orient_pleiotropy_matrix(
-      clustering_result$x_matrix,
-      target_trait_id = params$target_trait_id
-    )$target_signs
-    beta_o <- sweep(clustering_result$beta_matrix[
-      rownames(clustering_result$x_star), , drop = FALSE
-    ], 2, signs[colnames(clustering_result$x_star)], `*`)
-    ebmf_input <- beta_o
-    se_input <- clustering_result$se_matrix[
-      rownames(beta_o), , drop = FALSE
-    ]
-    if (identical(params$ebmf_beta_scale, "trait")) {
-      rs <- sqrt(rowMeans(ebmf_input^2, na.rm = TRUE))
-      rs[!is.finite(rs) | rs <= 0] <- 1
-      ebmf_input <- sweep(ebmf_input, 1, rs, `/`)
-      se_input <- sweep(se_input, 1, rs, `/`)
-    }
-  }
 
   replicate_sets <- function(i) {
     set.seed(seed + i)
     keep_rows <- sample(nrow(ebmf_input),
                         max(2L, floor(frac_traits * nrow(ebmf_input))))
     input <- ebmf_input[keep_rows, , drop = FALSE]
-    se_sub <- if (!is.null(se_input)) se_input[keep_rows, , drop = FALSE] else NULL
     fit <- .cluster_snp_profiles_ebmf(
       input,
       greedy_Kmax = params$ebmf_greedy_Kmax,
@@ -389,8 +331,7 @@ stability_ebmf_programs <- function(clustering_result,
       magnitude_threshold = params$ebmf_magnitude_threshold,
       drop_global = FALSE,
       prior = params$ebmf_prior,
-      backfit = params$ebmf_backfit,
-      observed_se_matrix = se_sub
+      backfit = params$ebmf_backfit
     )$details$flash_fit
     if (is.null(fit) || fit$n_factors == 0) {
       return(list())

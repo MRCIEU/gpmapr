@@ -198,11 +198,8 @@ replaced by a random draw from the corresponding pool.}
 \item{log_se_sd}{Standard deviation (on the log scale) of per-cell standard
 errors, drawn as \code{se = exp(N(0, log_se_sd))}. Zero (default) gives
 \code{se = 1} everywhere, so beta equals the z-score. Positive values emulate
-heterogeneous GWAS sample sizes: observed betas keep their raw scale,
-z-scores become noisy rescalings of them, and methods given access to the
-true SEs can down-weight imprecise cells. This is what makes it possible
-to test whether SE-aware clustering (EBMF \code{ebmf_se_mode = "matrix"})
-recovers structure better than unit-z clustering.}
+heterogeneous GWAS sample sizes: observed betas keep their raw scale while
+z-scores become noisy rescalings of them.}
 
 \item{snp_driver_groups}{Number of sub-groups (\verb{>= 1}) into which each
 module's SNPs are partitioned. Group g responds only to driver-subset g

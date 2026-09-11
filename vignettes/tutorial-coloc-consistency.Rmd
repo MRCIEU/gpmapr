@@ -5,6 +5,9 @@ vignette: >
   %\VignetteIndexEntry{Colocalisation consistency, latent blocks, and pathway enrichment}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
+params:
+  api: "prod"
+  trait_ids: [1486, 1630]
 ---
 
 ```{r setup, include=FALSE}
@@ -25,27 +28,40 @@ library(dplyr)
 library(tidyr)
 ```
 
-This vignette walks through three complementary layers of colocalisation analysis in **gpmapr**:
-
-1. **Pleiotropic Consistency Score (PCS)** and **Net Directionality Score (NDS)** — quantify locus overlap and effect concordance between traits.
-2. **Latent causal blocks** — cluster loci with similar multi-trait effect profiles using Latent Profile Analysis (LPA).
-3. **Pathway enrichment** — test whether genes mapped to those loci are enriched for biological pathways, and compare LPA-refined gene sets with broader colocalisation blocks.
-
-We use **LDL cholesterol** (trait id `1486`) and **HDL cholesterol levels** (trait id `1630`) as an illustrative pair of lipid traits that share some, but not all, causal loci.
-
-## Fetch colocalisation data
-
-We fetch both traits in a single call and retain association statistics (`beta`, `se`) for directionality and z-score construction.
-
-```{r fetch-data}
-ldl_id <- 1486
-hdl_id <- 1630
+```{r trait-metadata, include=FALSE}
+select_api(params$api)
+trait_ids <- as.integer(params$trait_ids)
+ldl_id <- trait_ids[1]
+hdl_id <- trait_ids[2]
 
 lipid_traits <- traits(
   c(ldl_id, hdl_id),
   include_associations = TRUE
 )
 cg <- lipid_traits$coloc_groups
+
+lipid_name_map <- stats::setNames(
+  as.character(lipid_traits$traits$trait_name),
+  as.character(lipid_traits$traits$id)
+)
+ldl_name <- unname(lipid_name_map[as.character(ldl_id)])
+hdl_name <- unname(lipid_name_map[as.character(hdl_id)])
+```
+
+This vignette walks through three complementary layers of colocalisation analysis in **gpmapr**:
+
+1. **Pleiotropic Consistency Score (PCS)** and **Net Directionality Score (NDS)** — quantify locus overlap and effect concordance between traits.
+2. **Latent causal blocks** — cluster loci with similar multi-trait effect profiles using Latent Profile Analysis (LPA).
+3. **Pathway enrichment** — test whether genes mapped to those loci are enriched for biological pathways, and compare LPA-refined gene sets with broader colocalisation blocks.
+
+We use **`r ldl_name`** (trait id `r ldl_id`) and **`r hdl_name`** (trait id `r hdl_id`) as an illustrative pair of lipid traits that share some, but not all, causal loci.
+
+## Fetch colocalisation data
+
+We fetch both traits in a single call and retain association statistics (`beta`, `se`) for directionality and z-score construction.
+
+```{r fetch-data}
+dim(cg)
 ```
 
 ## Pleiotropic consistency (PCS)
@@ -65,7 +81,7 @@ pcs_result <- pleiotropic_consistency_score(
 pcs_result
 ```
 
-LDL and HDL share a modest fraction of colocalising loci: most signals are trait-specific. This low PCS motivates splitting loci into blocks before interpreting shared biology.
+`r ldl_name` and `r hdl_name` share a modest fraction of colocalising loci: most signals are trait-specific. This low PCS motivates splitting loci into blocks before interpreting shared biology.
 
 `pcs_matrix()` extends this to all pairs when comparing more than two traits:
 
@@ -140,7 +156,7 @@ knitr::kable(
 )
 ```
 
-Profile 1 loci tend toward positive LDL and HDL z-scores; profile 2 loci tend toward negative values for both traits. Profile 3 contains only a handful of loci with strong negative effects.
+Profile 1 loci tend toward positive `r ldl_name` and `r hdl_name` z-scores; profile 2 loci tend toward negative values for both traits. Profile 3 contains only a handful of loci with strong negative effects.
 
 ## Pathway enrichment comparison
 
@@ -256,7 +272,7 @@ knitr::kable(
 )
 ```
 
-### All LDL vs all HDL, and LPA novelty
+### All `r ldl_name` vs all `r hdl_name`, and LPA novelty
 
 Finally, we enrich all genome-wide colocalisation genes for each trait and ask whether LPA profiles recover pathways that the full trait gene sets do not.
 
@@ -287,11 +303,11 @@ hdl_not_ldl <- all_hdl_pathways |>
 
 pathway_novelty_summary <- data.frame(
   comparison = c(
-    "All LDL pathways",
-    "All HDL pathways",
-    "LDL pathways not in all HDL",
-    "HDL pathways not in all LDL",
-    "LPA pathways not in all LDL or all HDL"
+    paste0("All ", ldl_name, " pathways"),
+    paste0("All ", hdl_name, " pathways"),
+    paste0(ldl_name, " pathways not in all ", hdl_name),
+    paste0(hdl_name, " pathways not in all ", ldl_name),
+    paste0("LPA pathways not in all ", ldl_name, " or all ", hdl_name)
   ),
   n_pathways = c(
     nrow(all_ldl_pathways),
@@ -321,18 +337,21 @@ if (nrow(lpa_novel_pathways) > 0) {
     lpa_novel_with_fdr |>
       dplyr::mutate(fdr = sprintf("%.1e", fdr)) |>
       dplyr::select(gene_set, source, description, fdr),
-    caption = "Pathways enriched in LPA profiles but not in full LDL or HDL gene sets"
+    caption = paste0(
+      "Pathways enriched in LPA profiles but not in full ",
+      ldl_name, " or ", hdl_name, " gene sets"
+    )
   )
 }
 ```
 
 ### Interpreting the comparison
 
-Several patterns emerge from the LDL vs HDL comparison:
+Several patterns emerge from the `r ldl_name` vs `r hdl_name` comparison:
 
 - **LPA profiles** enrich for pathways driven by loci with shared multi-trait effect directions (e.g. lipid metabolism in concordant-negative blocks, xenobiotic metabolism in concordant-positive blocks).
-- **LDL-only / HDL-only minus LPA** reveal trait-specific biology in colocalisation loci *not* tagged by any latent profile. Pathways shared with the LPA union are consistent with pleiotropic blocks; pathways **not** in the LPA union are candidates for trait-specific mechanisms.
-- **All LDL vs all HDL** show the broad trait-level pathway landscape. Differences between these sets reflect trait-specific colocalisation architecture at genome-wide significance.
+- **`r ldl_name`-only / `r hdl_name`-only minus LPA** reveal trait-specific biology in colocalisation loci *not* tagged by any latent profile. Pathways shared with the LPA union are consistent with pleiotropic blocks; pathways **not** in the LPA union are candidates for trait-specific mechanisms.
+- **All `r ldl_name` vs all `r hdl_name`** show the broad trait-level pathway landscape. Differences between these sets reflect trait-specific colocalisation architecture at genome-wide significance.
 - **LPA novelty** (pathways in LPA profiles but not in either full trait set) indicates that splitting by directional profile can surface enriched terms that are diluted when all colocalisation genes are pooled — the main justification for the LPA step.
 
 On gene-level agreement between LPA and pathways:
@@ -348,8 +367,8 @@ summary_table <- data.frame(
   metric = c(
     "PCS",
     "Shared loci (n)",
-    "LDL-only loci (m1)",
-    "HDL-only loci (m2)",
+    paste0(ldl_name, "-only loci (m1)"),
+    paste0(hdl_name, "-only loci (m2)"),
     "NDS",
     "LPA profiles (best BIC)",
     "Loci in z-score matrix"

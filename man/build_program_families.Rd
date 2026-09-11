@@ -4,17 +4,24 @@
 \alias{build_program_families}
 \title{Build Multi-Trait Program Families}
 \usage{
-build_program_families(pairs, program_info = NULL, fdr_threshold = 0.05)
+build_program_families(
+  result,
+  program_info = NULL,
+  fdr_threshold = 0.05,
+  rule = c("reciprocal_best_match", "components")
+)
 }
 \arguments{
-\item{pairs}{Either a result from \code{\link[=compare_program_pairs]{compare_program_pairs()}} or its \code{pairs}
+\item{result}{Either a result from \code{\link[=compare_program_pairs]{compare_program_pairs()}} or its \code{pairs}
 data.frame.}
 
 \item{program_info}{Optional data.frame with \code{program_id} and \code{trait_id}
-(one row per program). Defaults to the program ids appearing in \code{pairs}.}
+(one row per program). Defaults to the programs appearing in \code{result}.}
 
-\item{fdr_threshold}{FDR at or below which a pair is treated as an edge.
+\item{fdr_threshold}{FDR at or below which a \code{"components"} edge is kept.
 Defaults to \code{0.05}.}
+
+\item{rule}{Edge rule: \code{"reciprocal_best_match"} (default) or \code{"components"}.}
 }
 \value{
 A list with:
@@ -22,18 +29,23 @@ A list with:
 \item nodes: one row per program with \code{program_id}, \code{trait_id},
 \code{trait_name} (when available), and \code{family}
 \item families: one row per family with \code{family}, \code{n_programs},
-\code{n_traits}, \code{traits}, \code{n_edges}, \code{mean_r}, \code{median_r}, \code{min_r},
-\code{max_r}, \code{n_concordant}, \code{n_antagonistic}, \code{mean_jaccard},
-and \code{median_jaccard}
+\code{n_traits}, \code{traits}, \code{n_edges}, \code{mean_locus_concordance},
+\code{median_locus_concordance}, \code{mean_profile_r}, \code{n_concordant},
+\code{n_antagonistic}, and \code{n_shared_loci}
 \item graph: an \code{igraph} object (or \code{NULL} when there are no edges)
-\item edges: the significant pair table used as edges
+\item edges: the pair table used as edges (after the chosen rule)
 }
 }
 \description{
-Turn a significant program-correspondence graph into multi-trait
-program families. Programs are nodes and significant pairs are undirected
-edges (signed by their correlation). Families are the weak connected
-components of that graph, so a family is any chain of significantly
-corresponding programs across traits rather than a forced one-to-one match.
-Isolated programs form their own size-1 family.
+Turn a calibrated program-correspondence result into multi-trait
+program families. Programs are nodes and correspondence edges are drawn from
+\code{\link[=compare_program_pairs]{compare_program_pairs()}}.
+
+By default (\code{rule = "reciprocal_best_match"}) an edge is used only when it is
+the mutual best match of two significant programs, i.e. the calibrated
+\code{shared} flag, so families are one-to-one correspondences rather than
+transitive chains. \code{rule = "components"} instead uses every locus-matched pair
+whose pair-level \code{q_profile <= fdr_threshold}, reproducing the (transitive)
+connected-components behaviour for comparison. Isolated programs form their
+own size-1 family.
 }

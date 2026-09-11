@@ -2,7 +2,7 @@
 % Please edit documentation in R/multitrait_programs.R
 \name{extract_program_loadings}
 \alias{extract_program_loadings}
-\title{Extract EBMF Program Loadings For Cross-Trait Comparison}
+\title{Extract EBMF Program Loci And Pleiotropic Profiles}
 \usage{
 extract_program_loadings(
   clustering_result,
@@ -24,23 +24,39 @@ returned.}
 \value{
 A list with:
 \itemize{
-\item loadings: one row per SNP x program with \code{program_id}, \code{trait_id},
-\code{trait_name}, \code{program}, \code{snp_id}, \code{loading} (sign-oriented),
-\code{abs_loading}, \code{lfsr}, \code{high_confidence}
+\item loadings: one row per locus x program with \code{program_id}, \code{trait_id},
+\code{trait_name}, \code{program}, \code{snp_id}, \code{coloc_group_id}, \code{chr}, \code{bp},
+\code{loading} (sign-oriented), \code{abs_loading}, \code{lfsr}, \code{high_confidence}
+\item profiles: one row per feature x program with \code{program_id},
+\code{trait_id}, \code{trait_name}, \code{program}, \code{feature_trait_id},
+\code{feature_trait_name}, \code{loading} (sign-oriented), \code{lfsr}
 \item programs: one row per program with \code{program_id}, \code{trait_id},
-\code{trait_name}, \code{program}, \code{n_snps}, \code{n_high_confidence}, \code{sign}
+\code{trait_name}, \code{program}, \code{n_snps}, \code{n_high_confidence}, \code{n_features},
+\code{sign}
 }
 }
 \description{
-Pull the SNP loadings and high-confidence membership of every
+Pull the locus loadings and pleiotropic profiles of every
 (optionally valid-only) EBMF program out of a \code{run_univariate_clustering()}
 result so that programs discovered independently for different target traits
-can be compared. Each program's SNP loading vector is sign-oriented to the
-target trait before comparison: the factor sign in EBMF is not identifiable,
-so \code{F_pm} is reflected so the target trait's loading (\code{L_pm}) is positive.
-When the target trait does not load on a program (or \code{L_pm} is unavailable),
-the program is alternatively anchored on the sign of its largest-|loading|
-SNP. This makes a positive cross-trait correlation interpretable as a
-concordant (target-aligned) architecture. High-confidence membership follows
-the same lFSR / magnitude gate used elsewhere in the pipeline.
+can be compared. Two program dimensions are extracted:
+
+\describe{
+\item{\code{loadings}}{one row per candidate SNP (coloc group) x program. These
+are the EBMF \code{F_pm} SNP loadings, joined to the coloc-group identifiers in
+\code{clustering_result$snp_info} so programs can be compared at the locus level.}
+\item{\code{profiles}}{one row per background feature (trait) x program, from
+\code{L_pm}. These describe the \emph{pleiotropic profile} of the program (which
+background traits it loads on).}
+}
+
+Each program is sign-oriented to its target trait before comparison: the
+factor sign in EBMF is not identifiable, so both \code{F_pm} and \code{L_pm} are
+reflected by the sign of the target trait's \code{L_pm} loading (making that
+loading positive) while preserving the rank-1 product. When the target trait
+does not load on a program (or \code{L_pm} is unavailable), the program is
+alternatively anchored on the sign of its largest-|loading| SNP. This makes a
+positive cross-trait comparison interpretable as a concordant
+(target-aligned) architecture. High-confidence membership follows the same
+lFSR / magnitude gate used elsewhere in the pipeline.
 }

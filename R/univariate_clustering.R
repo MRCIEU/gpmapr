@@ -50,22 +50,6 @@
 #'   better when true effects are large relative to noise).
 #' @param ebmf_backfit If `TRUE` (default), cyclically refit all factors after
 #'   the greedy phase. `FALSE` is faster but leaves greedy-order artifacts.
-#' @param ebmf_se_mode Noise model for EBMF. `"unit"` (default) treats every
-#'   observed z-score as having standard error 1. `"matrix"` passes the
-#'   observed per-cell standard errors to flashier, so imprecise estimates are
-#'   down-weighted and winner's-curse inflation of tiny-but-precise effects is
-#'   avoided. In `"matrix"` mode the EBMF input is the oriented *beta* matrix
-#'   (compression is skipped, as it would violate the noise model), so
-#'   `ebmf_magnitude_threshold` reads raw-beta-scale loadings — consider `NA`
-#'   to gate membership on lFSR alone. Caveat: betas from different traits are
-#'   on study-native scales, so factors can be dominated by large-unit traits;
-#'   z-scores (`"unit"`) harmonise units at the cost of discarding precision.
-#' @param ebmf_beta_scale Scale normalisation for `ebmf_se_mode = "matrix"`:
-#'   `"none"` uses study-native betas; `"trait"` (recommended) divides each
-#'   trait row's betas and SEs by that row's root-mean-square beta, which
-#'   harmonises units across traits while preserving within-trait precision
-#'   information (z-scores remain unchanged by this since beta/se is
-#'   scale-invariant).
 #' @param min_module_size,min_mean_internal,min_connectedness Recorded pipeline
 #'   settings for the downstream program-validation layer and used (for
 #'   `min_module_size`) by `calibrate_ebmf_programs()`. They do not affect the
@@ -101,14 +85,12 @@ run_univariate_clustering <- function(trait_object,
                                       compress_method = c("none", "asinh"),
                                       compress_scale = 2,
                                       ebmf_greedy_Kmax = 50L,
-                                      ebmf_lfsr_threshold = 0.05,
+                                      ebmf_lfsr_threshold = 0.01,
                                       ebmf_magnitude_threshold = 0.25,
                                       ebmf_drop_global = TRUE,
                                       ebmf_prior = c("point_normal", "point_laplace"),
                                       ebmf_backfit = TRUE,
-                                      ebmf_se_mode = c("unit", "matrix"),
-                                      ebmf_beta_scale = c("none", "trait"),
-                                      min_module_size = 3L,
+                                      min_module_size = 1L,
                                       min_mean_internal = 0.3,
                                       min_connectedness = 0.5) {
   associations <- match.arg(associations)
@@ -116,8 +98,6 @@ run_univariate_clustering <- function(trait_object,
   trait_subset <- match.arg(trait_subset)
   compress_method <- match.arg(compress_method)
   ebmf_prior <- match.arg(ebmf_prior)
-  ebmf_se_mode <- match.arg(ebmf_se_mode)
-  ebmf_beta_scale <- match.arg(ebmf_beta_scale)
 
   if (is.null(trait_object)) {
     stop("trait_object is required")
@@ -229,30 +209,6 @@ run_univariate_clustering <- function(trait_object,
   similarity <- snp_similarity_matrix(X_star)
 
   ebmf_x_input <- X_star
-  ebmf_se_input <- NULL
-  if (ebmf_se_mode == "matrix") {
-    if (is.null(pleiotropy$beta_matrix) || is.null(pleiotropy$se_matrix)) {
-      stop("ebmf_se_mode = 'matrix' requires beta and se columns in coloc_groups")
-    }
-    shared_rows <- intersect(
-      rownames(oriented$x_matrix),
-      rownames(pleiotropy$beta_matrix)
-    )
-    beta_oriented <- sweep(
-      pleiotropy$beta_matrix[shared_rows, colnames(X), drop = FALSE],
-      2, oriented$target_signs[colnames(X)], `*`
-    )
-    ebmf_x_input <- beta_oriented[rownames(X), , drop = FALSE]
-    ebmf_se_input <- pleiotropy$se_matrix[
-      rownames(ebmf_x_input), colnames(X), drop = FALSE
-    ]
-    if (ebmf_beta_scale == "trait") {
-      row_scale <- sqrt(rowMeans(ebmf_x_input^2, na.rm = TRUE))
-      row_scale[!is.finite(row_scale) | row_scale <= 0] <- 1
-      ebmf_x_input <- sweep(ebmf_x_input, 1, row_scale, `/`)
-      ebmf_se_input <- sweep(ebmf_se_input, 1, row_scale, `/`)
-    }
-  }
 
   ebmf_fit <- .cluster_snp_profiles_ebmf(
     ebmf_x_input,
@@ -260,9 +216,7 @@ run_univariate_clustering <- function(trait_object,
     lfsr_threshold = ebmf_lfsr_threshold,
     magnitude_threshold = ebmf_magnitude_threshold,
     drop_global = ebmf_drop_global,
-    prior = ebmf_prior,
-    backfit = ebmf_backfit,
-    observed_se_matrix = ebmf_se_input
+    prior = ebmf_prior
   )
 
   return(list(
@@ -307,8 +261,6 @@ run_univariate_clustering <- function(trait_object,
       ebmf_drop_global = ebmf_drop_global,
       ebmf_prior = ebmf_prior,
       ebmf_backfit = ebmf_backfit,
-      ebmf_se_mode = ebmf_se_mode,
-      ebmf_beta_scale = ebmf_beta_scale,
       min_module_size = min_module_size,
       min_mean_internal = min_mean_internal,
       min_connectedness = min_connectedness
@@ -332,8 +284,7 @@ run_univariate_clustering <- function(trait_object,
                                        magnitude_threshold = 0.25,
                                        drop_global = TRUE,
                                        prior = "point_normal",
-                                       backfit = TRUE,
-                                       observed_se_matrix = NULL) {
+                                       backfit = TRUE) {
   beta_matrix <- x_matrix
   se_matrix <- matrix(
     1,
@@ -341,22 +292,14 @@ run_univariate_clustering <- function(trait_object,
     ncol = ncol(beta_matrix),
     dimnames = dimnames(beta_matrix)
   )
-  se_mode <- "unit"
-  if (!is.null(observed_se_matrix)) {
-    stopifnot(identical(dim(beta_matrix), dim(observed_se_matrix)))
-    se_matrix[!is.na(beta_matrix)] <- observed_se_matrix[!is.na(beta_matrix)]
-    se_matrix[is.na(beta_matrix)] <- NA_real_
-    se_mode <- "matrix"
-  } else {
-    se_matrix[is.na(beta_matrix)] <- NA_real_
-  }
+  se_matrix[is.na(beta_matrix)] <- NA_real_
 
   fit_error <- NULL
   flash_fit <- tryCatch(
     run_ebmf(
       beta_matrix = beta_matrix,
       se_matrix = se_matrix,
-      se_mode = se_mode,
+      se_mode = "unit",
       greedy_Kmax = greedy_Kmax,
       backfit = backfit,
       ebnm_fn = .resolve_ebnm_fn(prior),

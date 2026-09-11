@@ -181,11 +181,8 @@
 #' @param log_se_sd Standard deviation (on the log scale) of per-cell standard
 #'   errors, drawn as `se = exp(N(0, log_se_sd))`. Zero (default) gives
 #'   `se = 1` everywhere, so beta equals the z-score. Positive values emulate
-#'   heterogeneous GWAS sample sizes: observed betas keep their raw scale,
-#'   z-scores become noisy rescalings of them, and methods given access to the
-#'   true SEs can down-weight imprecise cells. This is what makes it possible
-#'   to test whether SE-aware clustering (EBMF `ebmf_se_mode = "matrix"`)
-#'   recovers structure better than unit-z clustering.
+#'   heterogeneous GWAS sample sizes: observed betas keep their raw scale while
+#'   z-scores become noisy rescalings of them.
 #' @param snp_driver_groups Number of sub-groups (`>= 1`) into which each
 #'   module's SNPs are partitioned. Group g responds only to driver-subset g
 #'   of the module, so with `snp_driver_groups > 1` SNPs within a module no

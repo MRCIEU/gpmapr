@@ -5,57 +5,86 @@
 \title{Compare EBMF Programs Across Traits}
 \usage{
 compare_program_pairs(
-  program_loadings,
+  program_data,
   n_perm = 1000L,
   fdr_threshold = 0.05,
-  zero_tol = 1e-08,
-  seed = 1
+  seed = 1,
+  min_shared_loci = 3L,
+  min_shared_features = 3L,
+  exclude_target_traits = TRUE,
+  locus_membership = c("high_confidence", "top_k"),
+  top_k = 25L,
+  partial_out_common = TRUE
 )
 }
 \arguments{
-\item{program_loadings}{Either a single extraction result from
-\code{\link[=extract_program_loadings]{extract_program_loadings()}}, a list of such results, or a combined long
-data.frame with columns \code{program_id}, \code{trait_id}, \code{program}, \code{snp_id},
-\code{loading}, and \code{high_confidence} (plus optional \code{trait_name}).}
+\item{program_data}{An extraction result from \code{\link[=extract_program_loadings]{extract_program_loadings()}},
+or a list of such results (one per target trait).}
 
-\item{n_perm}{Number of within-pair loading-label permutations. Defaults to
-\code{1000}.}
+\item{n_perm}{Number of permutation replicates for the per-program null.
+Defaults to \code{1000}.}
 
-\item{fdr_threshold}{BH FDR at or below which a pair is called shared.
+\item{fdr_threshold}{BH FDR at or below which a program is significant.
 Defaults to \code{0.05}.}
 
-\item{zero_tol}{Absolute loading at or below which a cell is treated as
-effectively zero. Entries that are effectively zero for both programs are
-dropped before correlation. Defaults to \code{1e-8}.}
-
 \item{seed}{RNG seed for the permutations.}
+
+\item{min_shared_loci}{Minimum shared \code{coloc_group_id}s for a pair to be a
+locus-matched candidate. Defaults to \code{3}.}
+
+\item{min_shared_features}{Minimum shared background features for the profile
+channel to be testable. Defaults to \code{3}.}
+
+\item{exclude_target_traits}{If \code{TRUE} (default), the two target traits are
+excluded from the shared feature axis before correlating profiles.}
+
+\item{locus_membership}{\code{"high_confidence"} (default; the lFSR / magnitude
+gate) or \code{"top_k"} (top \code{top_k} loci by confidence-weighted loading).}
+
+\item{top_k}{Number of loci per program when \code{locus_membership = "top_k"}.
+Defaults to \code{25}.}
+
+\item{partial_out_common}{If \code{TRUE} (default), regress out each trait's mean
+profile before correlating.}
 }
 \value{
 A list with:
 \itemize{
-\item pairs: one row per cross-trait program pair with \code{program_id_a},
-\code{program_id_b}, \code{trait_id_a}, \code{trait_id_b}, \code{program_a}, \code{program_b},
-\code{n_snps_union}, \code{n_snps_used}, \code{r}, \code{jaccard},
-\code{n_high_conf_shared}, \code{n_high_conf_union}, \code{p_emp}, \code{fdr}, \code{shared},
-and \code{direction} (\code{concordant} / \code{antagonistic})
+\item pairs: one row per cross-trait program pair (with a \code{candidate}
+flag for locus-matched pairs) carrying locus overlap, \code{p_locus},
+\code{profile_r} (raw), \code{profile_r_resid} (after partialling), \code{p_profile},
+\code{q_profile}, \code{direction}, and \code{shared}.
+\item matches: one row per program carrying \code{best_partner},
+\code{best_profile_r}, \code{best_locus_jaccard}, \code{emp_p}, \code{q}, and
+\code{significant}.
 \item settings: settings used
 }
 }
 \description{
-Compare every cross-trait pair of EBMF programs. Program SNP
-loading vectors are aligned on the union of their \code{variant_id}s (absent
-SNPs treated as 0), entries that are effectively zero for both programs are
-dropped, and the primary similarity is the Pearson correlation of the aligned
-vectors. A supporting Jaccard overlap is computed on the high-confidence
-membership sets. Because factor signs are arbitrary across independent fits
-(see \code{\link[=extract_program_loadings]{extract_program_loadings()}}), a positive \code{r} is a concordant
-architecture and a negative \code{r} an antagonistic one.
+Compare every cross-trait pair of EBMF programs with a
+program-specific, calibrated correspondence test. Two channels are used:
 
-A matched null distribution for \code{r} is generated for each pair by permuting
-one program's loadings across the aligned SNP slots, which preserves the
-program's size and loading distribution while breaking the biological
-correspondence between the two programs. The two-sided empirical p-value
-\verb{(1 + #\{|r_null| >= |r_obs|\}) / (1 + n_perm)} is BH-corrected across all
-cross-trait pairs; a pair is \code{shared} when its FDR is at or below
-\code{fdr_threshold}.
+\describe{
+\item{Locus channel}{each program's locus membership is its high-confidence
+set (or top-\code{top_k} loci) of \code{coloc_group_id}s; pairs must share at least
+\code{min_shared_loci} loci. The overlap is tested against a hypergeometric null
+(a random membership set of the same size drawn from that trait's candidate
+loci).}
+\item{Profile channel}{pleiotropic profiles (\code{L}) are aligned on shared
+background \code{feature_trait_id}s and compared with a confidence-weighted
+Pearson correlation. When \code{partial_out_common = TRUE}, each trait's common
+(mean) profile is regressed out first, so correlation reflects
+program-specific rather than trait-wide structure.}
+}
+
+Significance is calibrated \strong{per program}, not per pair: for each program
+the best locus-matched partner is taken (\verb{max |profile_r|}) and compared
+against a permutation null built by shuffling feature labels within programs
+and recomputing the per-program maximum. This accounts for searching over
+partners. Program-level empirical p-values are BH-corrected
+(\code{q}) and a program is \code{significant} when \code{q <= fdr_threshold}. A pair is a
+\code{shared} edge when it is the mutual best match of two significant programs.
+\code{direction} (concordant / antagonistic) is the sign of the deciding profile
+correlation. Both \code{F} and \code{L} are sign-oriented to each target trait by
+\code{\link[=extract_program_loadings]{extract_program_loadings()}}.
 }
