@@ -37,7 +37,7 @@ params:
   n_null: 5
   alpha_membership: 0.05
   n_candidate_tier: 25
-  n_rep: 5
+  n_stability_rep: 5
   frac_traits: 0.8
   stability_top_n: 20
   stability_threshold: 0.5
@@ -46,8 +46,19 @@ params:
   redundancy_threshold: 0.9
   cores: 5
 
-  # Replication settings
-  n_reps: 5
+  # Replication settings. n_sim is the Monte Carlo sample size (ADEMP);
+  # override it at render time for fast test runs, e.g.
+  #   rmarkdown::render(..., params = list(n_sim = 10))
+  n_sim: 200
+  master_seed: 1
+  # Persist the ADEMP estimates/performance datasets when TRUE; output_dir
+  # defaults to tempdir() when empty.
+  write_outputs: false
+  output_dir: ""
+  # quick: fast test mode. Keeps the full null-version grid but caps n_sim at
+  # 3, uses n_null = 1, and disables the stability subsampling. Use for smoke
+  # tests only; the reported Monte Carlo SEs will be large.
+  quick: true
 vignette: >
   %\VignetteIndexEntry{Null simulation study of EBMF programs}
   %\VignetteEngine{knitr::rmarkdown}
@@ -76,8 +87,20 @@ if (requireNamespace("devtools", quietly = TRUE)) {
 library(dplyr)
 library(ggplot2)
 
-n_reps <- as.integer(params$n_reps)
-set.seed(1)
+n_sim <- as.integer(params$n_sim)
+quick <- isTRUE(params$quick)
+if (quick) {
+  n_sim <- min(n_sim, 3L)
+}
+n_null <- if (quick) 1L else as.integer(params$n_null)
+n_stability_rep <- if (quick) 0L else as.integer(params$n_stability_rep)
+# A null fit with 600 traits is dominated by EBMF; shrink the row count in quick
+# mode so smoke tests stay fast. This is a size change, not a design change.
+n_traits <- if (quick) 100L else as.integer(params$n_traits)
+set.seed(params$master_seed)
+# One seed per replicate, reused across every null version (common random
+# numbers), and passed explicitly so parallel workers never touch the RNG state.
+sim_seeds <- sample.int(.Machine$integer.max, n_sim)
 
 clustering_settings <- list(
   min_snp_signals = params$min_snp_signals,
@@ -99,10 +122,10 @@ validation_settings <- list(
   min_module_size = params$min_module_size,
   min_mean_internal = params$min_mean_internal,
   min_connectedness = params$min_connectedness,
-  n_null = params$n_null,
+  n_null = n_null,
   alpha_membership = params$alpha_membership,
   n_candidate_tier = params$n_candidate_tier,
-  n_rep = params$n_rep,
+  n_rep = n_stability_rep,
   frac_traits = params$frac_traits,
   top_n = params$stability_top_n,
   stability_threshold = params$stability_threshold,
@@ -151,6 +174,47 @@ and `n_hub_traits` (dense pleiotropic rows that create a shared global factor).
 Each version below holds everything else at its realistic baseline and varies
 one axis.
 
+## Simulation design (ADEMP)
+
+This null study follows the ADEMP structure of Morris, White and Crowther
+(2019, *Statistics in Medicine* 38:2074-2102, \doi{10.1002/sim.8086}); it is
+the testing-target companion to `investigation-univariate-simulations.html`.
+
+**Aims.** To estimate the **type I error / false-discovery rate** of the EBMF
+program pipeline under a true null, and how that rate depends on background
+realism. This is a *stretch-or-break* aim: find where the gates are fooled.
+
+**Data-generating mechanism.** `simulate_trait()` with `K = 0`, so only the
+oriented target row and unstructured background rows exist. The varied factors
+are `p_active_background`, `background_sparsity_sd`, `background_effect_scale`,
+`noise_sd`, and `n_hub_traits`, each varied one at a time from the realistic
+baseline. The `hub_traits` version is deliberately **not** a pure null: it
+plants dense pleiotropic rows, is reported separately, and is excluded from any
+FDR claim.
+
+**Estimand / target.** The target is the null hypothesis of no planted module;
+under it, any program passing all four gates is a false discovery, so the
+`valid` rate is the pipeline-level false-discovery rate.
+
+**Methods.** Byte-for-byte the same pipeline and thresholds as the module
+study: `run_univariate_clustering()` then `summarise_ebmf_programs()` with the
+four gates (size, internal coherence, connectedness, stability).
+
+**Performance measures.**
+
+- `n programs`: EBMF programs surviving the lFSR/magnitude membership gate.
+- `valid programs`: programs passing all four gates.
+- `valid rate = valid programs / n programs` (program-level false-discovery rate).
+- `background_absorbed = |{background SNPs in valid programs}| / n_background` (SNP-level false-discovery rate).
+- Per-gate pass rates: `size`, `internal_sim`, `connectedness`, `stability`.
+
+**Monte Carlo uncertainty.** Each rate is the mean over `n_sim` replicates
+(default `r n_sim`; override with `params = list(n_sim = ...)` for fast test
+runs), with the replicate as the Monte Carlo unit. Proportions carry MC SE
+`sqrt(p(1-p)/n_sim)` and a 95% Monte Carlo interval; continuous measures carry
+`sd / sqrt(n_sim)`. Common random numbers are used across null versions, and
+the per-replicate seed is recorded in the estimates dataset.
+
 ```{r settings-table}
 settings_to_show <- c(
   "trait_subset", "min_snp_signals", "min_module_size",
@@ -159,12 +223,16 @@ settings_to_show <- c(
   "ebmf_magnitude_threshold", "ebmf_drop_global", "ebmf_prior",
   "ebmf_backfit",
   "min_mean_internal", "min_connectedness",
-  "n_null", "alpha_membership", "n_candidate_tier", "n_rep",
+  "n_null", "alpha_membership", "n_candidate_tier", "n_stability_rep",
   "frac_traits", "stability_top_n", "stability_threshold",
-  "posterior_stat", "posterior_evidence_cap", "redundancy_threshold", "cores"
+  "posterior_stat", "posterior_evidence_cap", "redundancy_threshold", "cores",
+  "n_sim"
 )
 settings_values <- c(clustering_settings, validation_settings)
+settings_values$similarity_threshold <- params$similarity_threshold
+settings_values$n_stability_rep <- n_stability_rep
 settings_values$stability_top_n <- validation_settings$top_n
+settings_values$n_sim <- n_sim
 knitr::kable(
   data.frame(
     parameter = settings_to_show,
@@ -180,7 +248,7 @@ knitr::kable(
 null_base <- list(
   n_coloc_groups = params$n_snps,
   K = 0L,
-  n_traits = params$n_traits,
+  n_traits = n_traits,
   noise_sd = params$noise_sd,
   effect_size = params$effect_size,
   p_active_background = params$p_active_background,
@@ -204,15 +272,20 @@ make_tier_spec <- function(...) {
 
 run_tier_one <- function(spec, rep) {
   dots <- spec
-  dots$seed <- sample.int(.Machine$integer.max, 1)
+  # Common random numbers: the seed depends only on the replicate index, so
+  # every null version sees the same scenario in replicate `rep`.
+  dots$seed <- sim_seeds[[rep]]
   sim <- do.call(simulate_trait, dots)
   res <- do.call(
     run_univariate_clustering,
     c(list(trait_object = sim$trait_object), clustering_settings)
   )
+  # Vary the validation layer's internal randomisation by replicate.
+  vs <- validation_settings
+  vs$seed <- sim_seeds[[rep]]
   smry <- do.call(
     summarise_ebmf_programs,
-    c(list(clustering_result = res, s_matrix = res$s_matrix), validation_settings)
+    c(list(clustering_result = res, s_matrix = res$s_matrix), vs)
   )
   valid_ids <- smry$programs$program[smry$programs$status == "valid"]
   valid_assigned <- smry$assigned |>
@@ -225,6 +298,7 @@ run_tier_one <- function(spec, rep) {
   programs$rep <- rep(rep, nrow(programs))
   list(
     summary = data.frame(
+      sim_seed = dots$seed,
       n_programs = nrow(programs),
       n_valid_programs = length(valid_ids),
       background_absorbed = ev$background_absorbed,
@@ -234,16 +308,17 @@ run_tier_one <- function(spec, rep) {
   )
 }
 
-run_tier <- function(name, label, spec, n_reps) {
+run_tier <- function(name, label, spec, n_sim) {
   n_jobs <- 6L
-  out <- if (n_reps > 1 && .Platform$OS.type != "windows") {
+  out <- if (n_sim > 1 && .Platform$OS.type != "windows") {
     parallel::mclapply(
-      seq_len(n_reps),
+      seq_len(n_sim),
       function(i) run_tier_one(spec, i),
-      mc.cores = min(n_jobs, n_reps)
+      mc.cores = min(n_jobs, n_sim),
+      mc.set.seed = FALSE
     )
   } else {
-    lapply(seq_len(n_reps), function(i) run_tier_one(spec, i))
+    lapply(seq_len(n_sim), function(i) run_tier_one(spec, i))
   }
   list(
     summary = dplyr::bind_rows(lapply(out, `[[`, "summary")) |>
@@ -291,8 +366,22 @@ tier_labels <- c(
   hub_traits = "pleiotropic hub traits (n_hub_traits = 15)"
 )
 
+# Quick test mode runs a representative subset of the null versions; the full
+# set is used when quick = FALSE.
+if (quick) {
+  keep <- intersect(
+    c(
+      "baseline", "background_dense", "strong_background_effects",
+      "high_noise", "hub_traits"
+    ),
+    names(tier_specs)
+  )
+  tier_specs <- tier_specs[keep]
+  tier_labels <- tier_labels[keep]
+}
+
 tier_results <- lapply(names(tier_specs), function(nm) {
-  run_tier(nm, tier_labels[[nm]], tier_specs[[nm]], n_reps)
+  run_tier(nm, tier_labels[[nm]], tier_specs[[nm]], n_sim)
 })
 names(tier_results) <- names(tier_specs)
 
@@ -333,61 +422,131 @@ knitr::kable(
 
 ## Aggregate results
 
-Across all replicates and programs of each version, the table below reports
-the number of programs EBMF produced before validation (`n programs`) and how
-many survived every check (`valid programs`) — under a null these are false
-discoveries. `background absorbed` is the fraction of background SNPs pulled
-into valid programs. The `pct_*` columns are, for each check, the fraction of
-programs that passed it.
+Across all replicates and programs of each version, the tables below report
+the number of programs EBMF produced before validation (`n programs`), how many
+survived every check (`valid programs`), the false-discovery rates
+(`valid rate` at program level, `background absorbed` at SNP level), and the
+per-gate pass rates. Estimates are averages over `r n_sim` replicates and carry
+a **Monte Carlo standard error** in parentheses (ADEMP; Morris, White &
+Crowther 2019): the replicate is the Monte Carlo unit, so every number is an
+estimate with quantified uncertainty.
 
 ```{r aggregate}
-check_rates <- program_checks |>
-  dplyr::group_by(tier) |>
+# Per-replicate rates: the replicate is the Monte Carlo unit for both the
+# false-discovery rate and the individual gates.
+rep_check_rates <- program_checks |>
+  dplyr::group_by(tier, rep) |>
   dplyr::summarise(
-    pct_size = 100 * mean(size_pass),
-    pct_internal_similarity = 100 * mean(internal_similarity_pass),
-    pct_connectedness = 100 * mean(connectedness_pass),
-    pct_stability = if (any(stability_checked)) {
-      100 * mean(stability_pass[stability_checked])
+    n_programs = dplyr::n(),
+    rate_size = mean(size_pass),
+    rate_internal_similarity = mean(internal_similarity_pass),
+    rate_connectedness = mean(connectedness_pass),
+    rate_stability = if (any(stability_checked)) {
+      mean(stability_pass[stability_checked])
     } else {
       NA_real_
     },
-    pct_valid = 100 * mean(status == "valid"),
+    rate_valid = mean(status == "valid"),
     .groups = "drop"
   )
 
-aggregate_results <- tier_summary |>
-  dplyr::group_by(tier) |>
-  dplyr::summarise(
-    mean_programs = mean(n_programs),
-    mean_valid_programs = mean(n_valid_programs),
-    mean_background_absorbed = mean(background_absorbed),
-    .groups = "drop"
-  ) |>
-  dplyr::left_join(check_rates, by = "tier") |>
-  dplyr::mutate(dplyr::across(
-    dplyr::where(is.numeric),
-    ~ ifelse(is.nan(.x), NA_real_, .x)
-  ))
+count_cols <- c("n_programs", "n_valid_programs", "background_absorbed")
+count_mc <- do.call(rbind, lapply(count_cols, function(cl) {
+  out <- ademp_summarise(tier_summary, cl, group_cols = "tier", type = "mean")
+  out$measure <- cl
+  out
+}))
+count_mc$measure <- factor(
+  count_mc$measure,
+  levels = count_cols,
+  labels = c("n programs", "valid programs", "background absorbed")
+)
 
-aggregate_results |>
-  dplyr::mutate(dplyr::across(
-    dplyr::starts_with("pct_"),
-    ~ ifelse(is.na(.x), "-", paste0(round(.x), "%"))
-  )) |>
-  knitr::kable(
-    digits = 2,
-    col.names = c(
-      "version", "n programs", "valid programs",
-      "background absorbed",
-      "size", "internal sim", "connectivity", "stability", "valid"
-    ),
-    caption = "Aggregate false-discovery output by null version: programs found, programs passing every validation check, background SNPs absorbed, and per-check pass rates"
+check_cols <- c(
+  "rate_size", "rate_internal_similarity", "rate_connectedness",
+  "rate_stability", "rate_valid"
+)
+check_mc <- do.call(rbind, lapply(check_cols, function(cl) {
+  out <- ademp_summarise(
+    rep_check_rates, cl, group_cols = "tier", type = "prop"
   )
+  out$measure <- cl
+  out
+}))
+check_mc$measure <- factor(
+  check_mc$measure,
+  levels = check_cols,
+  labels = c("size", "internal sim", "connectivity", "stability", "valid")
+)
+
+format_est_mcse <- function(estimate, mcse, scale = 1, digits = 2) {
+  est <- estimate * scale
+  se <- mcse * scale
+  ifelse(
+    is.na(est), "-",
+    ifelse(
+      is.na(se),
+      formatC(est, digits = digits, format = "f"),
+      paste0(
+        formatC(est, digits = digits, format = "f"), " (",
+        formatC(se, digits = digits, format = "f"), ")"
+      )
+    )
+  )
+}
+
+count_table <- count_mc |>
+  dplyr::mutate(cell = format_est_mcse(estimate, mcse)) |>
+  dplyr::select(tier, measure, cell) |>
+  tidyr::pivot_wider(names_from = measure, values_from = cell)
+
+check_mc_table <- check_mc |>
+  dplyr::mutate(cell = format_est_mcse(estimate, mcse, scale = 100)) |>
+  dplyr::select(tier, measure, cell) |>
+  tidyr::pivot_wider(names_from = measure, values_from = cell)
+
+knitr::kable(
+  count_table,
+  caption = paste0(
+    "Null-version false-discovery output (mean across ", n_sim,
+    " replicates; Monte Carlo SE in parentheses). Under a true null, valid ",
+    "programs are false discoveries and background absorbed is the SNP-level ",
+    "false-discovery rate."
+  )
+)
+
+knitr::kable(
+  check_mc_table,
+  caption = paste0(
+    "Per-gate pass rates by null version (percent; per-replicate rate averaged ",
+    "across ", n_sim, " replicates, Monte Carlo SE in parentheses). The ",
+    "stability rate is over programs re-checked after the size and ",
+    "internal-coherence gates."
+  )
+)
 ```
 
 The `stability` pass rate is computed only over programs that were actually
 re-checked (those passing the size and internal-coherence checks).
+
+```{r pass-rate-plot, fig.height=8, fig.width=9}
+gate_plot_data <- check_mc |>
+  dplyr::filter(measure != "size")
+ggplot2::ggplot(
+  gate_plot_data,
+  ggplot2::aes(x = 100 * estimate, y = tier)
+) +
+  ggplot2::geom_errorbarh(
+    ggplot2::aes(xmin = 100 * conf_low, xmax = 100 * conf_high), height = 0.25
+  ) +
+  ggplot2::geom_point(size = 2) +
+  ggplot2::facet_wrap(~measure, scales = "free_x", ncol = 2) +
+  ggplot2::labs(
+    x = "pass rate (%, 95% Monte Carlo CI)", y = NULL,
+    title = "Validation-gate pass rates under the null"
+  ) +
+  ggplot2::theme_minimal(base_size = 9)
+```
 
 ## Program-level validation checks
 
@@ -451,6 +610,18 @@ for (nm in names(tier_specs)) {
 
 ## Notes for interpreting runs
 
+- **Fast test runs.** A production render is long: `n_sim = 200` over the 11
+  null versions is thousands of EBMF fits, and a single null fit is expensive
+  because there are 600 trait rows. To iterate quickly, override `params`:
+  - `params = list(quick = TRUE)` — smoke test (5 representative versions,
+    `n_sim = 3`, `n_null = 1`, no stability, `n_traits = 100`); about 90 s.
+  - `params = list(n_sim = 5, n_null = 1, n_stability_rep = 0, n_traits = 100)`
+    — full null-version grid with cheap internals and a smaller row count;
+    about 1-2 min.
+  - `params = list(n_sim = 20)` — full-fidelity settings at reduced repetitions
+    (still slow, because of the 600 traits).
+  Lowering `n_null`, `n_stability_rep` and `n_traits` gives the largest
+  speed-up.
 - Under a true null (`K = 0`, no hub traits) any program passing all four
   validation checks is a **false discovery**; the `valid` column is the
   pipeline-level false-positive rate.
@@ -474,3 +645,32 @@ for (nm in names(tier_specs)) {
 - The four checks use the same thresholds as the module simulations
   (`investigation-univariate-simulations.html`), so pass rates here are directly
   comparable to how well the gates separate real modules from background there.
+- Every aggregate number is a Monte Carlo estimate over `n_sim` replicates and
+  is reported with its Monte Carlo SE (ADEMP). Reduce `n_sim` only for test
+  runs; the MC SE in the tables will show the resulting loss of precision.
+- Replicates use common random numbers: the per-replicate seed (`sim_seeds`) is
+  shared across null versions and recorded in `tier_summary$sim_seed`, so the
+  study is reproducible and version-to-version differences are more precise
+  than independent seeds would give.
+
+```{r write-outputs, include=FALSE}
+if (isTRUE(params$write_outputs)) {
+  out_dir <- if (nzchar(params$output_dir)) params$output_dir else tempdir()
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  utils::write.csv(
+    tier_summary, file.path(out_dir, "null-estimates.csv"), row.names = FALSE
+  )
+  utils::write.csv(
+    program_checks, file.path(out_dir, "null-programs.csv"), row.names = FALSE
+  )
+  utils::write.csv(
+    count_mc, file.path(out_dir, "null-performance-counts.csv"),
+    row.names = FALSE
+  )
+  utils::write.csv(
+    check_mc, file.path(out_dir, "null-performance-gates.csv"),
+    row.names = FALSE
+  )
+  message("Wrote simulation outputs to ", out_dir)
+}
+```
