@@ -12,8 +12,8 @@ build_program_families(
 )
 }
 \arguments{
-\item{result}{Either a result from \code{\link[=compare_program_pairs]{compare_program_pairs()}} or its \code{pairs}
-data.frame.}
+\item{result}{Either a result from \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}} or its
+\code{pairs} data.frame.}
 
 \item{program_info}{Optional data.frame with \code{program_id} and \code{trait_id}
 (one row per program). Defaults to the programs appearing in \code{result}.}
@@ -30,7 +30,7 @@ A list with:
 \code{trait_name} (when available), and \code{family}
 \item families: one row per family with \code{family}, \code{n_programs},
 \code{n_traits}, \code{traits}, \code{n_edges}, \code{mean_locus_concordance},
-\code{median_locus_concordance}, \code{mean_profile_r}, \code{n_concordant},
+\code{median_locus_concordance}, \code{mean_concordance_z}, \code{n_concordant},
 \code{n_antagonistic}, and \code{n_shared_loci}
 \item graph: an \code{igraph} object (or \code{NULL} when there are no edges)
 \item edges: the pair table used as edges (after the chosen rule)
@@ -39,13 +39,14 @@ A list with:
 \description{
 Turn a calibrated program-correspondence result into multi-trait
 program families. Programs are nodes and correspondence edges are drawn from
-\code{\link[=compare_program_pairs]{compare_program_pairs()}}.
+\code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}}.
 
 By default (\code{rule = "reciprocal_best_match"}) an edge is used only when it is
 the mutual best match of two significant programs, i.e. the calibrated
-\code{shared} flag, so families are one-to-one correspondences rather than
-transitive chains. \code{rule = "components"} instead uses every locus-matched pair
-whose pair-level \code{q_profile <= fdr_threshold}, reproducing the (transitive)
-connected-components behaviour for comparison. Isolated programs form their
-own size-1 family.
+\code{shared} flag (the primary link tier), so families are one-to-one
+correspondences rather than transitive chains. \code{rule = "components"} instead
+uses every pair whose pair-level \code{q_concordance <= fdr_threshold} (the
+candidate tier as well as the primary one), giving the more permissive,
+transitive connected-components behaviour. Isolated programs form their own
+size-1 family.
 }

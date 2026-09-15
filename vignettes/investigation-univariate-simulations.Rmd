@@ -74,10 +74,13 @@ params:
   # defaults to tempdir() when empty.
   write_outputs: false
   output_dir: ""
-  # quick: fast test mode. Caps n_sim at 3, uses n_null = 1, disables the
-  # stability subsampling, and runs only a representative subset of the input
-  # versions. Use for smoke tests only; the reported Monte Carlo SEs will be
-  # large. Set to FALSE (default) for the full study.
+  # quick: fast test mode. Caps n_sim at 3, uses n_null = 1, and disables the
+  # stability subsampling -- it trades reporting rigour for speed, not
+  # breadth: all input versions (the full generative grid) are always run,
+  # under quick or not. Use for exploring how many input parameters move the
+  # recovery metrics before committing to a full-depth run; the reported
+  # Monte Carlo SEs will be large under quick = TRUE. Set to FALSE for the
+  # full study.
   quick: true
 vignette: >
   %\VignetteIndexEntry{Simulation study of EBMF programs}
@@ -526,12 +529,12 @@ run_tier_one <- function(spec, rep) {
 }
 
 run_tier <- function(name, label, spec, n_sim) {
-  n_jobs <- 4L
+  n_jobs <- 20L
   out <- if (n_sim > 1 && .Platform$OS.type != "windows") {
     parallel::mclapply(
       seq_len(n_sim),
       function(i) run_tier_one(spec, i),
-      mc.cores = min(n_jobs, n_sim),
+      mc.cores = n_jobs,
       mc.set.seed = FALSE
     )
   } else {
@@ -595,15 +598,11 @@ for (a in axes) {
   tier_labels <- c(tier_labels, a$labels)
 }
 
-# Quick test mode runs one representative version per generative axis; the full
-# grid is used when quick = FALSE.
-if (quick) {
-  keep <- intersect(
-    c("background_1", "drivers_1", "spurious_1"), names(tier_specs)
-  )
-  tier_specs <- tier_specs[keep]
-  tier_labels <- tier_labels[keep]
-}
+# All input versions (the full generative grid) are always run, quick or not.
+# `quick` trades reporting rigour for speed (n_sim, n_null, stability, set
+# above), not breadth -- the point of quick mode is to see how many input
+# parameters move the recovery metrics, cheaply, before committing to a
+# full-depth run.
 
 tier_results <- lapply(names(tier_specs), function(nm) {
   run_tier(nm, tier_labels[[nm]], tier_specs[[nm]], n_sim)
@@ -899,12 +898,17 @@ for (nm in names(tier_specs)) {
 - **Fast test runs.** A production render is long: `n_sim = 200` over the 21
   input versions is thousands of EBMF fits, and the cost of a single fit is
   dominated by `summarise_ebmf_programs` (permutation calibration + stability),
-  not by the repetition count alone. To iterate quickly, override `params`:
-  - `params = list(quick = TRUE)` — smoke test (3 representative versions,
-    `n_sim = 3`, `n_null = 1`, no stability); about 15 s.
-  - `params = list(n_sim = 5, n_null = 1, n_stability_rep = 0)` — full 21-version
-    grid with cheap internals; about 1 min.
-  - `params = list(n_sim = 20)` — full-fidelity settings at reduced repetitions.
+  not by the repetition count alone. `quick` (default `TRUE`) trades reporting
+  rigour for speed, not breadth: it always runs the full 21-version grid, but
+  caps `n_sim` at 3, sets `n_null = 1`, and disables stability — about 1 min,
+  and enough to see which input parameters move the recovery metrics before
+  committing to a full-depth run. To iterate quickly, override `params`:
+  - `params = list(quick = TRUE)` (default) — full 21-version grid, cheap
+    internals (`n_sim = 3`, `n_null = 1`, no stability); about 1 min.
+  - `params = list(quick = FALSE, n_sim = 20)` — full 21-version grid at
+    higher fidelity (real `n_null`/stability) but reduced repetitions.
+  - `params = list(quick = FALSE)` — the full study (`n_sim = 200`, full
+    `n_null`/stability); long, intended for a production render.
   Lowering `n_null` and `n_stability_rep` gives the largest speed-up.
 - Each input version comes from iterating the generative parameter arrays in
   the `params` block; arrays are iterated in lock-step with their paired

@@ -610,3 +610,48 @@ pathway_enrichment_api <- function(genes,
   }
   return(response)
 }
+
+#' @title Pathway Mappings API
+#' @description Get the full gene x pathway membership universe from the API
+#' (pathway sizes plus every gene belonging to each pathway), for local
+#' enrichment tests that need the complete pathway gene sets rather than only
+#' the genes returned by the `/v1/pathways/enrichment` overrepresentation
+#' endpoint. Calls `/v1/pathways/raw`, which returns one row per pathway term
+#' with a nested `gene_ids` array, and reshapes it into the flat
+#' `sizes`/`mappings` tables the rest of the package expects.
+#' @param source Optional pathway source to filter by (Reactome, KEGG, or HP)
+#' @return A list with `sizes` (term_id, source, description, pathway_size,
+#'   background_size) and `mappings` (gene_id, term_id, source, description)
+#' @noRd
+pathway_mappings_api <- function(source = NULL) {
+  url <- paste0(getOption("gpmap_url"), "/v1/pathways/raw")
+  if (!is.null(source)) {
+    url <- paste0(url, "?source=", source)
+  }
+
+  http_response <- httr::GET(url, httr::timeout(timeout_seconds))
+  status <- httr::status_code(http_response)
+  response_text <- httr::content(http_response, "text", encoding = "UTF-8")
+  if (status >= 400) {
+    stop("Pathway raw data API request failed (HTTP ", status, "): ", response_text)
+  }
+
+  response <- jsonlite::fromJSON(response_text)
+  terms <- response$terms
+  if (is.null(terms) || !is.data.frame(terms) || nrow(terms) == 0) {
+    return(list(sizes = data.frame(), mappings = data.frame()))
+  }
+
+  sizes <- terms[, c("term_id", "source", "description", "pathway_size", "background_size")]
+
+  n_genes <- lengths(terms$gene_ids)
+  mappings <- data.frame(
+    gene_id = unlist(terms$gene_ids, use.names = FALSE),
+    term_id = rep(terms$term_id, n_genes),
+    source = rep(terms$source, n_genes),
+    description = rep(terms$description, n_genes),
+    stringsAsFactors = FALSE
+  )
+
+  return(list(sizes = sizes, mappings = mappings))
+}

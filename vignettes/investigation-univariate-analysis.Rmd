@@ -9,14 +9,14 @@ vignette: >
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 params:
-  api: "prod"
+  api: "local"
+  include_trans: true
   target_trait_id: 1992
   trait_subset: "phenotypic"
   min_snp_signals: 2
   min_module_size: 3
   compress_method: "asinh"
   compress_scale: 5
-  include_trans: false
   include_situated_gene: false 
   similarity_threshold: 0.2
   ebmf_magnitude_threshold: 0.75
@@ -605,10 +605,8 @@ pathway hits. `specificity = mean |z| in the module / (mean |z| in the rest +
 0.1)` and `abs_mean_z_delta = module - rest` highlight traits that are
 specifically elevated in this module rather than merely large everywhere (which
 ranking by `abs_mean_z` alone would over-emphasise). Pathway enrichment is
-queried across Reactome, KEGG, and Human Phenotype Ontology (HP) with a
-separate call per source: Reactome and KEGG hits are reported side by side as
-**pathways**, and HP terms as **phenotypes**, so the three never compete for
-the same headline.
+queried across Reactome and KEGG with a separate call per source, and the hits
+are reported side by side as **pathways**.
 
 Trait baseline = all SNPs attributed to this trait in the analysis
 (`colnames(S)`), using coloc rows for those SNPs only—not
@@ -674,7 +672,7 @@ if (!has_analysis_groups) {
     groups = clusters_analysis,
     coloc_groups = cg,
     min_group_size = min_module_size,
-    sources = c("KEGG", "Reactome", "HP"),
+    sources = c("KEGG", "Reactome"),
     include_situated_gene = include_situated_gene
   )
 }
@@ -839,7 +837,6 @@ if (!is.null(group_traits) && length(group_traits$by_group) > 0) {
     top_enriched_tissue = .format_enriched_all(group_tissues$by_group, "tissue"),
     top_enriched_reactome = .format_pathways_all(module_enrichment$by_group, "Reactome"),
     top_enriched_kegg = .format_pathways_all(module_enrichment$by_group, "KEGG"),
-    top_enriched_phenotype = .format_pathways_all(module_enrichment$by_group, "HP"),
     stringsAsFactors = FALSE
   )
 
@@ -856,8 +853,7 @@ if (!is.null(group_traits) && length(group_traits$by_group) > 0) {
       top_enriched_category = tidyr::replace_na(top_enriched_category, "none"),
       top_enriched_tissue = tidyr::replace_na(top_enriched_tissue, "none"),
       top_enriched_reactome = tidyr::replace_na(top_enriched_reactome, "none"),
-      top_enriched_kegg = tidyr::replace_na(top_enriched_kegg, "none"),
-      top_enriched_phenotype = tidyr::replace_na(top_enriched_phenotype, "none")
+      top_enriched_kegg = tidyr::replace_na(top_enriched_kegg, "none")
     ) |>
     dplyr::arrange(dplyr::desc(n_snps), as.integer(group)) |>
     dplyr::select(
@@ -867,7 +863,7 @@ if (!is.null(group_traits) && length(group_traits$by_group) > 0) {
   cat("\n\n### Overview of significant annotations across modules\n\n")
   print(knitr::kable(
     overview,
-    caption = "Top 6 module-specific traits and all significant category, tissue, pathway (Reactome and KEGG separately) and phenotype (HP) hits; n_snps = SNPs in the program, n_unique_snps = SNPs not present in any other program; trait values are specificity scores, and FDR is the BH-corrected hypergeometric enrichment (threshold 0.05)",
+    caption = "Top 6 module-specific traits and all significant category, tissue, and pathway (Reactome and KEGG separately) hits; n_snps = SNPs in the program, n_unique_snps = SNPs not present in any other program; trait values are specificity scores, and FDR is the BH-corrected hypergeometric enrichment (threshold 0.05)",
     row.names = FALSE,
     escape = FALSE
   ))
@@ -892,74 +888,199 @@ if (!is.null(group_traits) && length(group_traits$by_group) > 0) {
     module_enrichment$by_group,
     vapply(module_enrichment$by_group, function(x) as.character(x$group), character(1))
   )
+}
+```
 
-  for (x in group_traits$by_group) {
-    grp <- as.character(x$group)
-    cat("\n\n### Module ", grp, " (", x$n_snps, " SNPs)\n\n", sep = "")
+## Step 5.5: Continuous loading-based enrichment (comparison)
 
-    category_x <- categories_by_group[[grp]]
-    tissue_x <- tissues_by_group[[grp]]
-    pathway_x <- pathways_by_group[[grp]]
-    pathway_sub <- function(src) {
-      if (is.null(pathway_x)) {
-        NULL
-      } else {
-        pathway_x$pathways[
-          pathway_x$pathways$source == src,
-          ,
-          drop = FALSE
-        ]
-      }
+Steps above gate SNPs into a module with a hard lFSR/magnitude cutoff
+(`program_summary$assigned`) before testing enrichment. As an alternative,
+`enrich_program_loadings_trait_categories()`, `enrich_program_loadings_tissues()`,
+and `enrich_program_loadings_pathways()` skip that cutoff entirely: every SNP
+with a finite EBMF loading contributes to every program's test, weighted by
+its squared loading, regressed against each category/tissue/pathway's local
+0/1 membership indicator (`lm(loading^2 ~ membership)`), following the
+approach in `scripts/enrichment_via_loadings_example.r`. This section runs
+them on the same `ebmf_result` and `cg` used above, for the same `valid_ids`
+programs, so the two approaches can be compared side by side.
+
+**FDR is pooled across every program tested**, not computed per program: each
+of the three functions runs one regression per program per
+category/tissue/pathway term, then Benjamini-Hochberg-corrects across *every*
+program's tests for that enrichment type in one family — so `fdr` reflects the
+true number of regressions run for this trait, not just the handful tested for
+one program in isolation. For pathways, KEGG and Reactome are pooled into that
+same family rather than corrected separately, so a KEGG hit competes against
+the full KEGG+Reactome, all-programs test count. Trait category, tissue, and
+pathway enrichment remain three separate families — none of the three is
+pooled with another. Because the family is now much larger than a single
+program's test count, `fdr` is more conservative than in earlier renders of
+this vignette; that is the correction working as intended, not a regression.
+Pathway sources here are restricted to KEGG and Reactome (HP is dropped, as
+in Step 5).
+
+```{r step5-5-continuous-enrichment}
+if (!has_analysis_groups) {
+  cat("No reliable modules to interpret.\n")
+  loading_categories <- NULL
+  loading_tissues <- NULL
+  loading_pathways <- NULL
+} else {
+  loading_categories <- enrich_program_loadings_trait_categories(
+    clustering_result = ebmf_result,
+    coloc_groups = cg,
+    snp_key = "variant_id"
+  )
+  loading_tissues <- enrich_program_loadings_tissues(
+    clustering_result = ebmf_result,
+    coloc_groups = cg,
+    snp_key = "variant_id"
+  )
+  pathway_mapping_universe <- tryCatch(
+    pathway_mappings(),
+    error = function(e) {
+      cat("Pathway mappings endpoint unavailable (", conditionMessage(e), "); ",
+          "skipping continuous pathway enrichment.\n", sep = "")
+      NULL
     }
-    annotation <- data.frame(
-      module = paste0("Module ", grp, " (", x$n_snps, " SNPs)"),
-      trait_categories = .format_enrichment_hits(
-          if (is.null(category_x)) NULL else category_x$comparison,
-          "trait_category"
-        ),
-      tissues = .format_enrichment_hits(
-          if (is.null(tissue_x)) NULL else tissue_x$comparison,
-          "tissue"
-        ),
-      reactome = .format_pathway_hits(pathway_sub("Reactome"), with_source = FALSE),
-      kegg = .format_pathway_hits(pathway_sub("KEGG"), with_source = FALSE),
-      phenotypes = .format_pathway_hits(pathway_sub("HP"), with_source = FALSE),
-      stringsAsFactors = FALSE
+  )
+  loading_pathways <- if (is.null(pathway_mapping_universe)) {
+    NULL
+  } else {
+    enrich_program_loadings_pathways(
+      clustering_result = ebmf_result,
+      coloc_groups = cg,
+      mappings = pathway_mapping_universe,
+      snp_key = "variant_id",
+      sources = c("KEGG", "Reactome"),
+      include_situated_gene = include_situated_gene
     )
-    print(knitr::kable(
-      annotation,
-      caption = "Module annotations (enrichment vs trait baseline)",
-      row.names = FALSE,
-      escape = FALSE
-    ))
-
-    traits_to_show <- x$traits |>
-      dplyr::filter(passes_min_specificity) |>
-      dplyr::select(
-        trait_name, trait_category,
-        abs_mean_z, abs_mean_z_delta, specificity, mean_z
-      ) |>
-      dplyr::mutate(
-        abs_mean_z = round(abs_mean_z, 3),
-        abs_mean_z_delta = round(abs_mean_z_delta, 3),
-        specificity = round(specificity, 2),
-        mean_z = round(mean_z, 3)
-      )
-
-    if (nrow(traits_to_show) > 0) {
-      print(knitr::kable(
-        traits_to_show,
-        caption = paste0(
-          "Module-specific traits (specificity >= ", min_specificity,
-          "; module mean |z| / (rest mean |z| + 0.1))"
-        ),
-        row.names = FALSE
-      ))
-    } else {
-      cat("No traits passed the module-specificity cutoff (specificity >= ",
-          min_specificity, ").\n\n", sep = "")
-    }
   }
+}
+```
+
+```{r step5-5-continuous-enrichment-tables, echo=FALSE, results='asis'}
+# Same shape as .format_enriched_all()/.format_pathways_all() above (step5-module-overview),
+# but reading the continuous comparison tables (enrichment effect instead of
+# fold_enrichment) so the two overview tables line up column-for-column.
+.format_continuous_enriched_all <- function(by_program_list, value_col) {
+  vapply(by_program_list, function(x) {
+    hits <- x$comparison
+    if (is.null(hits) || nrow(hits) == 0) {
+      return("none")
+    }
+    hits <- hits[is.finite(hits$fdr) & hits$fdr <= 0.05, , drop = FALSE]
+    if (nrow(hits) == 0) {
+      return("none")
+    }
+    hits <- hits[order(hits$fdr, -hits$enrichment), , drop = FALSE]
+    paste0(
+      hits[[value_col]],
+      " (effect=", signif(hits$enrichment, 2),
+      ", FDR=", signif(hits$fdr, 3), ")",
+      collapse = "<br>"
+    )
+  }, character(1))
+}
+.format_continuous_pathways_all <- function(by_program_list, source) {
+  vapply(by_program_list, function(x) {
+    hits <- x$comparison
+    if (is.null(hits) || nrow(hits) == 0) {
+      return("none")
+    }
+    hits <- hits[
+      hits$source == source & is.finite(hits$fdr) & hits$fdr <= 0.05,
+      ,
+      drop = FALSE
+    ]
+    if (nrow(hits) == 0) {
+      return("none")
+    }
+    hits <- hits[order(hits$fdr), , drop = FALSE]
+    paste0(
+      hits$description, " (effect=", signif(hits$enrichment, 2),
+      ", FDR=", signif(hits$fdr, 3), ")",
+      collapse = "<br>"
+    )
+  }, character(1))
+}
+
+if (!is.null(loading_categories) && length(loading_categories$by_program) > 0) {
+  valid_programs <- as.character(valid_ids)
+  by_program_valid <- function(res) {
+    if (is.null(res)) {
+      return(list())
+    }
+    out <- Filter(
+      function(x) as.character(x$program) %in% valid_programs,
+      res$by_program
+    )
+    stats::setNames(out, vapply(out, function(x) as.character(x$program), character(1)))
+  }
+
+  categories_by_program <- by_program_valid(loading_categories)
+  tissues_by_program <- by_program_valid(loading_tissues)
+  pathways_by_program <- by_program_valid(loading_pathways)
+
+  continuous_enrichment_overview <- data.frame(
+    group = names(categories_by_program),
+    top_enriched_category = .format_continuous_enriched_all(
+      categories_by_program, "trait_category"
+    ),
+    top_enriched_tissue = .format_continuous_enriched_all(
+      tissues_by_program[names(categories_by_program)], "tissue"
+    ),
+    top_enriched_reactome = if (length(pathways_by_program) == 0) {
+      "not available"
+    } else {
+      .format_continuous_pathways_all(
+        pathways_by_program[names(categories_by_program)], "Reactome"
+      )
+    },
+    top_enriched_kegg = if (length(pathways_by_program) == 0) {
+      "not available"
+    } else {
+      .format_continuous_pathways_all(
+        pathways_by_program[names(categories_by_program)], "KEGG"
+      )
+    },
+    stringsAsFactors = FALSE
+  )
+
+  # Same n_snps / n_unique_snps columns as the hard-cutoff overview above, so
+  # the two tables describe the same modules and only the enrichment columns
+  # differ.
+  continuous_overview <- group_traits$summary |>
+    dplyr::select(group, n_snps) |>
+    dplyr::full_join(unique_by_group, by = "group") |>
+    dplyr::full_join(continuous_enrichment_overview, by = "group") |>
+    dplyr::mutate(
+      n_unique_snps = as.integer(tidyr::replace_na(n_unique_snps, 0L)),
+      top_enriched_category = tidyr::replace_na(top_enriched_category, "none"),
+      top_enriched_tissue = tidyr::replace_na(top_enriched_tissue, "none"),
+      top_enriched_reactome = tidyr::replace_na(top_enriched_reactome, "none"),
+      top_enriched_kegg = tidyr::replace_na(top_enriched_kegg, "none")
+    ) |>
+    dplyr::arrange(dplyr::desc(n_snps), as.integer(group))
+
+  cat("\n\n### Overview of significant annotations across modules (continuous, no SNP cutoff)\n\n")
+  print(knitr::kable(
+    continuous_overview,
+    caption = paste0(
+      "Continuous loading-based enrichment (lm(loading^2 ~ membership), no SNP ",
+      "cutoff) for the same modules and n_snps/n_unique_snps as the hard-cutoff ",
+      "overview above. FDR (threshold 0.05) is Benjamini-Hochberg corrected ",
+      "across every program tested for this trait, separately for each of the ",
+      "three enrichment types (categories, tissues, pathways); pathway FDR also ",
+      "pools KEGG and Reactome into that same family rather than correcting them ",
+      "separately. 'effect' is the fitted difference in mean squared loading ",
+      "between member and non-member SNPs (not a fold enrichment, so it isn't ",
+      "directly comparable to FE above, but sign and significance are). Compare ",
+      "row-by-row against the hypergeometric overview."
+    ),
+    row.names = FALSE,
+    escape = FALSE
+  ))
 }
 ```
 

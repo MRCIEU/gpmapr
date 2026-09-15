@@ -1,0 +1,366 @@
+---
+title: "Multi-trait EBMF program correspondence"
+output:
+  rmarkdown::html_vignette:
+    includes:
+      in_header: investigation-wide.html
+vignette: >
+  %\VignetteIndexEntry{Multi-trait EBMF program correspondence}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+## Goal
+
+Take **two (or more) traits**, each already decomposed independently into EBMF
+programs by the univariate pipeline
+([Univariate SNP biological clustering](investigation-snp-clustering.html)),
+and ask: **which programs correspond across traits, and do the loci they share
+push both traits the same way or in opposite directions?**
+
+The runnable implementation is
+[Investigation of multi-trait EBMF program correspondence](investigation-multitrait-programs.html).
+
+This is not a search for how much biology is shared. A trait's candidate SNP
+set is already restricted to that trait's own genome-wide-significant,
+fine-mapped hits, so two only-moderately-correlated traits will typically share
+a small fraction of that universe — that is expected, not a failure of the
+method. The job of this pipeline is to resolve, cleanly and with calibrated
+significance, whatever correspondence *does* exist, and to say honestly
+whether it is concordant or antagonistic.
+
+### Core correspondence preferences
+
+The method should satisfy:
+
+1. **Programs are discovered independently per trait.** No joint
+   factorization across traits. This preserves each trait's own architecture
+   (a program found in trait A is a real object even if trait B never enters
+   the fit) and avoids the missing-data problem a joint approach would create:
+   for two traits whose candidate loci barely overlap, most of a joint
+   matrix's cells would be missing by construction.
+2. **Evidence should scale with the amount of shared architecture, not
+   penalise it.** A pair of programs that co-load on thirty loci should never
+   score below a pair that happens to align tightly on three. This directly
+   targets a defect in an earlier design of this pipeline, which correlated
+   the programs' background-trait profiles: correlation is scale-free, so a
+   handful of degenerately-aligned features could out-rank genuine broad
+   overlap. Measured on a real trait pair, the correlation-based statistic's
+   agreement with locus overlap was `Spearman(|stat|, n_loci_shared) ~ 0.14`;
+   the loading-weighted replacement reaches `~0.7`. See Step 3.
+3. **Two tiers of link strength.** A strict, calibrated one-to-one
+   correspondence (`primary`) plus a looser, uncalibrated-for-search
+   `candidate` tier, because EBMF's soft factorisation means one biological
+   module can legitimately split into more than one program within a trait —
+   a single true correspondence can then look like several plausible
+   candidate pairs on one side.
+4. **Direction is answered twice, on purpose.** Whether two programs' loading
+   patterns line up is a different question from whether the traits' own
+   allele effects move together, and the two can disagree. Both are reported;
+   neither is allowed to silently stand in for the other.
+5. **Biological corroboration is held out.** Annotations play no role in
+   forming a link, so agreement between the two linked programs' independently
+   computed enrichment results is genuine support for the link, not a
+   restatement of the evidence that created it.
+
+```{r workflow-diagram, echo=FALSE, fig.height=8, fig.width=8}
+workflow_dot <- "
+digraph workflow {
+  graph [rankdir=TB bgcolor=transparent fontname=Helvetica nodesep=0.35 ranksep=0.45]
+  node [shape=box style=filled fontname=Helvetica fontsize=10 margin=0.12
+        fillcolor=\"#e1f5fe\" color=\"#01579b\"]
+  S1 [label=\"1. Independent EBMF per trait\\nvalid programs only\"]
+  S2 [label=\"2. Shared locus (coloc-group) universe\\nper trait pair, no lFSR/magnitude gate\"]
+  S3 [label=\"3. Loading-weighted locus concordance\\nsum_l w_l f_a(l) f_b(l)\"]
+  S4 [label=\"4. Calibrated significance, two link tiers\\nprimary (reciprocal best match) / candidate\"]
+  S5 [label=\"5. Direction: concordance sign vs module rg\\nlatent loadings vs observed allele effects\"]
+  S6 [label=\"6. Biological corroboration\\ntrait categories, tissues (pathways planned)\"]
+  S1 -> S2 -> S3 -> S4 -> S5 -> S6
+}
+"
+if (requireNamespace("DiagrammeR", quietly = TRUE)) {
+  DiagrammeR::grViz(workflow_dot)
+}
+```
+
+## Steps
+
+### 1. Independent per-trait EBMF decomposition
+
+Each target trait is run through the univariate pipeline exactly as described
+in [Univariate SNP biological clustering](investigation-snp-clustering.html):
+`run_univariate_clustering()` followed by `summarise_ebmf_programs()`. Only
+programs with `status == "valid"` are carried forward — this analysis is about
+correspondence between traits, not about re-litigating which univariate
+programs are reliable, so invalid programs are dropped before any cross-trait
+comparison is attempted.
+
+`extract_program_loadings()` then sign-orients each program to its own target
+trait, reflecting both the locus loadings (`F_pm`) and the background-trait
+profile (`L_pm`) so that the target-trait loading is positive. This is what
+makes a cross-trait direction call interpretable at all: EBMF's factor sign is
+otherwise arbitrary and independent between the two traits' separate fits, and
+without this anchoring "the same sign" would mean nothing.
+
+Output objects, one set per trait:
+
+- `loadings` — one row per locus x program: `coloc_group_id`, `loading`
+  (sign-oriented `F_pm`), `lfsr`, `high_confidence` (the lFSR/magnitude gate,
+  kept as a label — see Step 2).
+- `profiles` — one row per background-feature x program (`L_pm`); used for
+  the biological-corroboration step, not for the correspondence test itself.
+- `programs` — per-program metadata (`program_id`, `trait_id`, `trait_name`).
+
+### 2. Shared locus universe
+
+Programs are compared at the level of the **`coloc_group_id`** — the shared
+fine-mapped locus — rather than the exact `variant_id`, because each trait
+carries one candidate SNP per coloc group.
+
+For a pair of traits A and B, the locus axis is the **intersection of both
+traits' full candidate-locus universes**: every `coloc_group_id` either
+trait's EBMF fit assigned a nonzero loading to, on either side. No lFSR or
+magnitude threshold is applied here. This is deliberate and is the first place
+this pipeline breaks from a hard-cutoff design: restricting to only the
+`high_confidence` (lFSR/magnitude-gated) loci would shrink an already-small
+shared universe further, for no statistical benefit — the concordance
+statistic in Step 3 down-weights low-confidence loci continuously instead.
+
+`high_confidence` survives only as a **reporting** diagnostic:
+`n_loci_shared` and `jaccard_loci` (the overlap of the two programs'
+high-confidence membership sets) are computed and shown alongside every pair,
+but do not gate the test.
+
+Because each trait's candidate universe is independently restricted to that
+trait's own significant, fine-mapped hits, the shared universe is typically a
+small fraction of either trait's total (in one real run, 72 of 3,408 pooled
+distinct loci — about 2%). This bounds how much cross-trait evidence can exist
+before any statistic is applied, and is worth checking directly (Step 2 of the
+runnable vignette reports it) before interpreting a low link count as a
+negative result.
+
+### 3. Loading-weighted locus concordance
+
+For a candidate pair of programs — program \(a\) from trait A, program \(b\)
+from trait B — score how much they co-load on the shared locus axis:
+
+\[
+\text{concordance}(a,b) = \sum_{l} w_l\, f_a(l)\, f_b(l),
+\qquad w_l = \bigl(1-\text{lfsr}_a(l)\bigr)\bigl(1-\text{lfsr}_b(l)\bigr)
+\]
+
+where \(f_a(l)\) is program \(a\)'s sign-oriented loading at locus \(l\) (zero
+if the program has no support there). This is deliberately **covariance-like,
+not correlation-like**: it is left unnormalised so that evidence accumulates
+with the amount of shared loading. A fully normalised (cosine) version is
+reported alongside as `cosine_loci`, purely as a diagnostic of how tight the
+alignment is — it is never used to rank or decide, because being scale-free it
+cannot tell a pair sharing three loci from a pair sharing thirty, which is
+exactly the failure this design avoids.
+
+`n_eff_loci` — the participation ratio of the per-locus contributions,
+\(\bigl(\sum_l |c_l|\bigr)^2 / \sum_l c_l^2\) where \(c_l\) is locus \(l\)'s
+term in the sum above — is reported so that a large concordance built on two
+or three effectively-independent loci is visibly thin, rather than
+indistinguishable from one built on twenty.
+
+Where several SNPs map to the same `coloc_group_id`, the SNP with the largest
+`|loading|` represents that locus for that program (a deterministic but
+somewhat arbitrary choice; a mean-based alternative has not been checked for
+sensitivity).
+
+Because loadings are sign-oriented to each trait's own target (Step 1),
+`sign(concordance)` gives a first read on direction — but see Step 5: this is
+a statement about loading geometry, not about the traits' own effect
+directions, and the two can disagree.
+
+### 4. Calibrated significance and two link tiers
+
+**Per-pair test.** For each candidate pair, a permutation null is built by
+shuffling the locus labels of program \(b\)'s (loading, confidence) vector —
+so the null preserves \(b\)'s own loading distribution and sparsity — and
+recomputing the concordance. The pair's `concordance_z` standardises the
+observed value against this null's mean and SD; `p_concordance` is the
+two-sided permutation p-value.
+
+**Per-program calibration.** Testing every pair independently and correcting
+across all of them would not account for the search over partners: a program
+in a large trait effectively gets many chances to find a partner that looks
+good by chance. Instead, each program's *single best* partner (by
+`|concordance_z|`) is compared against a **max-statistic permutation null**:
+at each permutation draw, the same shuffle used for the per-pair test is
+standardised the same way and the maximum `|z|` over that program's candidate
+partners is recorded, building a null distribution of "the best partner this
+program would find by chance." The observed best match is compared against
+that null to give an empirical p-value, which is then BH-corrected **across
+programs** to give `matches$q` and `matches$significant`.
+
+**Two link tiers**, both derived from the quantities above but corrected on
+different axes:
+
+- **`primary`** — the pair is the mutual best match of two `significant`
+  programs (`shared = TRUE`). Because `best_partner` is single-valued per
+  program, a program can be part of at most one primary edge, so weakly
+  connected components of the primary-edge graph are always singletons or
+  isolated pairs — never transitive chains. This tier feeds
+  `build_program_families()` directly.
+- **`candidate`** — the pair's own `q_concordance` (Benjamini-Hochberg,
+  computed across **every** cross-trait pair tested in the run — a different,
+  simpler axis than the per-program calibration above) clears
+  `fdr_threshold`, without being a reciprocal best match. These are not
+  corrected for the search over partners and are not used for family-building;
+  they exist because a single true correspondence can legitimately appear as
+  more than one plausible pair when EBMF has split a module across programs
+  on one side. Treat them as leads, not conclusions.
+
+**Program families.** `build_program_families()` (default
+`rule = "reciprocal_best_match"`) builds an undirected graph with every
+program as a node and `primary`-tier pairs as edges; weakly connected
+components are the families. A program with no primary link is its own
+family of one.
+
+### 5. Direction: loading concordance vs module rg
+
+`concordance_z`'s sign answers one question: do two programs' **loading
+patterns** line up. It says nothing about whether the alleles involved push
+the two traits the same way — that is a statement about observed effect
+sizes, not about latent factor geometry, and `module_rg()` answers it
+directly.
+
+For a linked pair, across the shared locus axis (Step 2 — the full candidate
+universe, not just `high_confidence` loci), `module_rg()` correlates the two
+traits' **own** SNP effects, weighting each locus by how strongly the module
+loads on it in both programs and by the precision of the two effect
+estimates:
+
+\[
+w_l = \bigl(1-\text{lfsr}_a(l)\bigr)\bigl(1-\text{lfsr}_b(l)\bigr)\,
+\frac{|f_a(l)\, f_b(l)|}{\text{se}_A(l)^2 + \text{se}_B(l)^2}
+\]
+
+so a locus the module does not load on drops out continuously rather than by
+a threshold, and a locus with high measurement uncertainty in either trait
+contributes less. `rg` is the resulting weighted correlation of \(\beta_A\)
+against \(\beta_B\); its confidence interval is a percentile bootstrap over
+loci (`n_boot`, default 1000).
+
+- `rg > 0` — the alleles that raise trait A also raise trait B, across this
+  module's loci.
+- `rg < 0` — they oppose: the module is antagonistic between the two traits.
+- The CI is load-bearing: **if it spans zero, direction is not established**,
+  regardless of the point estimate. A pair can look strongly linked on
+  `concordance_z` while its `rg` CI is uninformatively wide if the shared
+  locus count is small (`n_loci_rg` reports how many loci actually
+  contributed).
+- `n_allele_mismatch` counts loci dropped because the two traits'
+  `variant_id` disagreed at that locus (which would make a naive sign
+  comparison meaningless). This should be `0` in practice; a nonzero count
+  would mean effect-allele coding differs between the two traits' data at
+  that locus.
+
+`rg_direction` and `direction` (Step 3's concordance sign) are **not**
+guaranteed to agree, because they are answers to different questions — one
+about observed allele effects, one about latent loading structure. Where they
+disagree, `rg` together with its CI is the more directly interpretable claim,
+since it is anchored to actual effect sizes rather than factorisation
+geometry.
+
+**What this does not correct for.** Neither the concordance test nor
+`module_rg()` accounts for sample overlap between the two traits' underlying
+GWAS. If both traits were measured in largely the same cohort (as is often
+the case, e.g. two UK Biobank traits), their effect-size estimation errors are
+correlated, which biases `rg` away from zero even under a true null of no
+shared genetic effect. There is currently no correction for this (the
+GLEANR/cross-trait-LDSC approach is the standard fix); treat `rg` magnitudes
+for same-cohort trait pairs as optimistic until this is addressed. Separately,
+because every shared locus entered *both* traits' candidate universes by
+clearing each trait's own significance and fine-mapping bar, the estimated
+effects at those loci are subject to winner's curse in both directions.
+
+### 6. Interpreting linked programs: biological corroboration
+
+For each linked pair (both tiers), each side's high-confidence SNPs are
+enriched **separately**, against that trait's own full candidate SNP universe
+(not the tiny module itself, and not the other trait), using the existing
+hard-cutoff enrichment functions
+(`enrich_snp_group_trait_categories()`, `enrich_snp_group_tissues()`; pathway
+enrichment via KEGG/Reactome is a planned extension, not yet wired in). FDR
+here is the ordinary hypergeometric BH correction described in
+[Univariate SNP biological clustering](investigation-snp-clustering.html#multiple-testing-correction-for-trait-category-and-tissue-enrichments) —
+corrected across the categories/tissues tested **for that one program**,
+independently on each side. It is not pooled across programs the way the
+continuous univariate enrichment engine is; the two are separate mechanisms
+operating on separate function families.
+
+Because these annotations play no role in forming the link, agreement between
+the two sides is genuine, held-out support that the correspondence is
+biologically real, not a restatement of the loading evidence that created it.
+Disagreement does not disprove the link — it means the link rests on the loci
+alone, which is still meaningful evidence, just unconfirmed by a second,
+independent axis.
+
+One caveat: a program holding a large share of its trait's SNPs is compared
+against a background that is largely itself, so "no significant enrichment"
+for a dominant program is expected rather than informative — it says the
+program is not distinguishable from the trait's overall composition, not that
+it lacks biology.
+
+## Variables to consider
+
+Exposed in the multi-trait vignette today. Parameters fall into two groups:
+those controlling the **correspondence test** itself, and those inherited
+from the **univariate pipeline** that determine what counts as a program at
+all before cross-trait comparison begins.
+
+### Program correspondence parameters
+
+| Parameter | Values | Meaning | Explanation |
+|---|---|---|---|
+| `n_perm` | `200`, `1000`, `3000` | Permutation replicates for both the per-pair and per-program calibration nulls | More replicates resolve finer p-values at the tail. With few replicates, several strong pairs can tie at the same BH floor (e.g. ten pairs tying at `q = 0.018` with `n_perm = 1000`); raising it separates them at the cost of runtime, since both the per-pair and per-program nulls are permutation-based. |
+| `fdr_threshold` | `0.05` | BH threshold defining both program-level significance (`matches$significant`, gating the `primary` tier) and pair-level `q_concordance` (gating the `candidate` tier) | Lowering it tightens both tiers simultaneously; the two tiers are corrected on different axes (per-program max-statistic vs per-pair, across all pairs) so they will not necessarily shrink by the same amount. |
+| `min_shared_loci` | `0` (default), `3` | Reporting-only threshold for the `candidate` column flag | Does **not** gate the concordance test itself (unlike the predecessor function it replaced) — every pair is tested regardless of this value; it only marks which pairs also clear a minimum *high-confidence* locus overlap for context. |
+| `tiers` (in `module_rg()`) | `c("primary", "candidate")` (default), `"primary"`, `NULL` | Which link tiers get an `rg` estimate | Restricting to `"primary"` limits direction estimates to the calibrated, one-to-one tier; `NULL` estimates `rg` for every tested pair regardless of link status. |
+| `n_boot` (in `module_rg()`) | `1000` | Percentile-bootstrap replicates for the `rg` confidence interval | More replicates give a smoother CI estimate; the CI's width is driven mainly by `n_loci_rg`, not `n_boot`, so increasing this rarely changes whether the CI excludes zero. |
+
+### Univariate parameters that flow through
+
+Everything in [Univariate SNP biological clustering](investigation-snp-clustering.html#variables-to-consider)
+applies per trait before this pipeline ever runs, and matters twice over here:
+`ebmf_lfsr_threshold`, `ebmf_magnitude_threshold`, `min_module_size`,
+`min_mean_internal`, `min_connectedness`, and `stability_threshold` together
+decide which programs are `valid` (and therefore eligible for cross-trait
+comparison at all), while `trait_subset`, `include_trans`, `min_snp_signals`,
+and `compress_method` shape the pleiotropy matrix each trait's programs were
+discovered from in the first place. A program that is only marginally valid
+in one trait's own terms is not made more reliable by finding a cross-trait
+partner for it.
+
+## Structure of Results
+
+The multi-trait analogue of the univariate trait/program/SNP levels is
+trait-pair/linked-pair/locus: the question moves from "what structure exists
+within this trait" to "how much of it is shared, is it reliable, and which
+direction does it point."
+
+| Level | Primary question | Main output |
+|---|---|---|
+| **Trait pair** | How much shared candidate architecture exists between these two traits, and how much of it resolves into linked programs? | Size of the shared locus universe (vs. each trait's total), number of valid programs per trait, number of primary/candidate links, number of multi-trait families |
+| **Linked pair / family** | Is this correspondence reliable, and which way does it point? | `concordance_z`, `q_concordance` / `matches$q`, tier (`primary`/`candidate`), `n_eff_loci`, `direction`, `rg` with CI and `rg_direction`, biological-annotation agreement between the two sides |
+| **Locus** | Which loci actually carry the shared signal for this pair? | Per-locus contribution to `concordance` (which loci dominate the sum — worth checking directly when `n_eff_loci` is small), each program's loading at that locus, each trait's own `beta`/`se` there |
+
+As with the univariate framework, the aim is not a single verdict per program
+pair but a layered result: statistical evidence of correspondence and
+direction, kept distinct from the biological annotation used to interpret it.

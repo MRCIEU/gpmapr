@@ -225,216 +225,6 @@ extract_program_loadings <- function(clustering_result,
 }
 
 
-#' @title Compare EBMF Programs Across Traits
-#' @description Compare every cross-trait pair of EBMF programs with a
-#' program-specific, calibrated correspondence test. Two channels are used:
-#'
-#' \describe{
-#'   \item{Locus channel}{each program's locus membership is its high-confidence
-#'   set (or top-`top_k` loci) of `coloc_group_id`s; pairs must share at least
-#'   `min_shared_loci` loci. The overlap is tested against a hypergeometric null
-#'   (a random membership set of the same size drawn from that trait's candidate
-#'   loci).}
-#'   \item{Profile channel}{pleiotropic profiles (`L`) are aligned on shared
-#'   background `feature_trait_id`s and compared with a confidence-weighted
-#'   Pearson correlation. When `partial_out_common = TRUE`, each trait's common
-#'   (mean) profile is regressed out first, so correlation reflects
-#'   program-specific rather than trait-wide structure.}
-#' }
-#'
-#' Significance is calibrated **per program**, not per pair: for each program
-#' the best locus-matched partner is taken (`max |profile_r|`) and compared
-#' against a permutation null built by shuffling feature labels within programs
-#' and recomputing the per-program maximum. This accounts for searching over
-#' partners. Program-level empirical p-values are BH-corrected
-#' (`q`) and a program is `significant` when `q <= fdr_threshold`. A pair is a
-#' `shared` edge when it is the mutual best match of two significant programs.
-#' `direction` (concordant / antagonistic) is the sign of the deciding profile
-#' correlation. Both `F` and `L` are sign-oriented to each target trait by
-#' [extract_program_loadings()].
-#' @param program_data An extraction result from [extract_program_loadings()],
-#'   or a list of such results (one per target trait).
-#' @param n_perm Number of permutation replicates for the per-program null.
-#'   Defaults to `1000`.
-#' @param fdr_threshold BH FDR at or below which a program is significant.
-#'   Defaults to `0.05`.
-#' @param seed RNG seed for the permutations.
-#' @param min_shared_loci Minimum shared `coloc_group_id`s for a pair to be a
-#'   locus-matched candidate. Defaults to `3`.
-#' @param min_shared_features Minimum shared background features for the profile
-#'   channel to be testable. Defaults to `3`.
-#' @param exclude_target_traits If `TRUE` (default), the two target traits are
-#'   excluded from the shared feature axis before correlating profiles.
-#' @param locus_membership `"high_confidence"` (default; the lFSR / magnitude
-#'   gate) or `"top_k"` (top `top_k` loci by confidence-weighted loading).
-#' @param top_k Number of loci per program when `locus_membership = "top_k"`.
-#'   Defaults to `25`.
-#' @param partial_out_common If `TRUE` (default), regress out each trait's mean
-#'   profile before correlating.
-#' @return A list with:
-#'   \itemize{
-#'     \item pairs: one row per cross-trait program pair (with a `candidate`
-#'       flag for locus-matched pairs) carrying locus overlap, `p_locus`,
-#'       `profile_r` (raw), `profile_r_resid` (after partialling), `p_profile`,
-#'       `q_profile`, `direction`, and `shared`.
-#'     \item matches: one row per program carrying `best_partner`,
-#'       `best_profile_r`, `best_locus_jaccard`, `emp_p`, `q`, and
-#'       `significant`.
-#'     \item settings: settings used
-#'   }
-#' @export
-compare_program_pairs <- function(program_data,
-                                  n_perm = 1000L,
-                                  fdr_threshold = 0.05,
-                                  seed = 1,
-                                  min_shared_loci = 3L,
-                                  min_shared_features = 3L,
-                                  exclude_target_traits = TRUE,
-                                  locus_membership = c("high_confidence", "top_k"),
-                                  top_k = 25L,
-                                  partial_out_common = TRUE) {
-  locus_membership <- match.arg(locus_membership)
-  pd <- .normalise_program_data(program_data)
-  loadings <- pd$loadings
-  profiles <- pd$profiles
-  keys <- .program_pair_keys(loadings)
-
-  settings <- list(
-    n_perm = as.integer(n_perm),
-    fdr_threshold = fdr_threshold,
-    seed = seed,
-    min_shared_loci = as.integer(min_shared_loci),
-    min_shared_features = as.integer(min_shared_features),
-    exclude_target_traits = exclude_target_traits,
-    locus_membership = locus_membership,
-    top_k = as.integer(top_k),
-    partial_out_common = partial_out_common
-  )
-
-  if (nrow(keys) == 0) {
-    return(list(
-      pairs = .empty_pairs(),
-      matches = .empty_matches(),
-      settings = settings
-    ))
-  }
-
-  progs <- dplyr::distinct(loadings, program_id, trait_id, trait_name, program)
-  trait_ids_by_program <- stats::setNames(
-    as.character(progs$trait_id), as.character(progs$program_id)
-  )
-  program_index <- stats::setNames(
-    seq_len(nrow(progs)), as.character(progs$program_id)
-  )
-
-  locus_sets <- .program_locus_sets(loadings, locus_membership, top_k)
-  universe_by_trait <- .locus_universe_by_trait(loadings)
-
-  out <- dplyr::bind_rows(lapply(seq_len(nrow(keys)), function(i) {
-    return(.locus_pair_stats(keys[i, , drop = FALSE], locus_sets, universe_by_trait))
-  }))
-  out$candidate <- !is.na(out$n_loci_shared) & out$n_loci_shared >= min_shared_loci
-  out$n_features_shared <- 0L
-  out$n_features_union <- 0L
-  out$profile_r <- NA_real_
-  out$profile_r_resid <- NA_real_
-  out$p_profile <- NA_real_
-
-  max_null <- matrix(
-    -Inf,
-    nrow = as.integer(n_perm),
-    ncol = nrow(progs),
-    dimnames = list(NULL, as.character(progs$program_id))
-  )
-  best <- data.frame(
-    program_id = as.character(progs$program_id),
-    best_partner = NA_character_,
-    best_abs_r = NA_real_,
-    best_row = NA_integer_,
-    stringsAsFactors = FALSE
-  )
-
-  trait_ids <- sort(unique(as.character(progs$trait_id)))
-  set.seed(seed)
-  if (length(trait_ids) >= 2) {
-    trait_pairs <- utils::combn(trait_ids, 2, simplify = FALSE)
-    for (tp in trait_pairs) {
-      res <- .profile_trait_pair(
-        out = out,
-        profiles = profiles,
-        trait_ids_by_program = trait_ids_by_program,
-        program_index = program_index,
-        t_a = tp[[1]],
-        t_b = tp[[2]],
-        n_perm = as.integer(n_perm),
-        min_shared_features = as.integer(min_shared_features),
-        exclude_target_traits = exclude_target_traits,
-        partial_out_common = partial_out_common,
-        max_null = max_null,
-        best = best
-      )
-      out <- res$out
-      max_null <- res$max_null
-      best <- res$best
-    }
-  }
-
-  # Per-program calibrated significance.
-  obs_max <- stats::setNames(
-    best$best_abs_r, as.character(best$program_id)
-  )
-  matched <- which(is.finite(obs_max))
-  emp_p <- stats::setNames(rep(NA_real_, nrow(progs)), as.character(progs$program_id))
-  for (pid in names(matched)) {
-    idx <- program_index[[pid]]
-    null_vals <- max_null[, idx]
-    null_vals <- null_vals[is.finite(null_vals)]
-    if (length(null_vals) > 0) {
-      emp_p[[pid]] <- (1 + sum(null_vals >= obs_max[[pid]])) /
-        (1 + length(null_vals))
-    }
-  }
-  q <- stats::setNames(rep(NA_real_, nrow(progs)), as.character(progs$program_id))
-  ok <- is.finite(emp_p)
-  if (any(ok)) {
-    q[ok] <- stats::p.adjust(emp_p[ok], method = "BH")
-  }
-
-  matches <- progs |>
-    dplyr::mutate(
-      best_partner = best$best_partner[match(
-        as.character(program_id), as.character(best$program_id)
-      )],
-      best_profile_r = best$best_abs_r[match(
-        as.character(program_id), as.character(best$program_id)
-      )],
-      best_locus_jaccard = out$jaccard_loci[best$best_row[match(
-        as.character(program_id), as.character(best$program_id)
-      )]],
-      best_n_loci_shared = out$n_loci_shared[best$best_row[match(
-        as.character(program_id), as.character(best$program_id)
-      )]],
-      emp_p = emp_p[as.character(program_id)],
-      q = q[as.character(program_id)]
-    )
-  matches$significant <- is.finite(matches$q) & matches$q <= fdr_threshold
-
-  out$q_profile <- NA_real_
-  ok_pair <- is.finite(out$p_profile)
-  if (any(ok_pair)) {
-    out$q_profile[ok_pair] <- stats::p.adjust(out$p_profile[ok_pair], method = "BH")
-  }
-  out$direction <- dplyr::case_when(
-    !is.finite(out$profile_r_resid) ~ NA_character_,
-    out$profile_r_resid > 0 ~ "concordant",
-    out$profile_r_resid < 0 ~ "antagonistic",
-    TRUE ~ NA_character_
-  )
-  out$shared <- .mutual_best_mask(out, matches, trait_ids_by_program)
-
-  return(list(pairs = out, matches = matches, settings = settings))
-}
-
 
 .program_locus_sets <- function(loadings, membership = "high_confidence",
                                 top_k = 25L) {
@@ -516,146 +306,6 @@ compare_program_pairs <- function(program_data,
 }
 
 
-.align_profile_matrix <- function(profiles, program_ids, features) {
-  loading <- matrix(
-    NA_real_,
-    nrow = length(features), ncol = length(program_ids),
-    dimnames = list(features, program_ids)
-  )
-  conf <- loading
-  for (j in seq_along(program_ids)) {
-    sub <- profiles[as.character(profiles$program_id) == program_ids[j], , drop = FALSE]
-    idx <- match(features, as.character(sub$feature_trait_id))
-    loading[, j] <- sub$loading[idx]
-    conf[, j] <- .confidence_factor(sub$lfsr[idx])
-  }
-  return(list(loading = loading, conf = conf))
-}
-
-
-.partial_out_common <- function(mat) {
-  if (ncol(mat) < 2) {
-    return(mat)
-  }
-  common <- rowMeans(mat, na.rm = TRUE)
-  if (!is.finite(stats::sd(common, na.rm = TRUE)) ||
-        stats::sd(common, na.rm = TRUE) == 0) {
-    return(mat)
-  }
-  design <- cbind(1, common)
-  resid <- mat
-  for (j in seq_len(ncol(mat))) {
-    y <- mat[, j]
-    if (all(is.finite(y)) && all(is.finite(design))) {
-      resid[, j] <- stats::lm.fit(design, y)$residuals
-    }
-  }
-  return(resid)
-}
-
-
-.profile_trait_pair <- function(out, profiles, trait_ids_by_program, program_index,
-                                t_a, t_b, n_perm, min_shared_features,
-                                exclude_target_traits, partial_out_common,
-                                max_null, best) {
-  progs_a <- names(trait_ids_by_program)[trait_ids_by_program == t_a]
-  progs_b <- names(trait_ids_by_program)[trait_ids_by_program == t_b]
-  features_a <- unique(as.character(
-    profiles$feature_trait_id[as.character(profiles$program_id) %in% progs_a]
-  ))
-  features_b <- unique(as.character(
-    profiles$feature_trait_id[as.character(profiles$program_id) %in% progs_b]
-  ))
-  shared_features <- intersect(features_a, features_b)
-  if (exclude_target_traits) {
-    shared_features <- setdiff(shared_features, c(t_a, t_b))
-  }
-
-  rows <- which(
-    as.character(out$trait_id_a) == t_a & as.character(out$trait_id_b) == t_b
-  )
-  out$n_features_shared[rows] <- length(shared_features)
-  out$n_features_union[rows] <- length(union(features_a, features_b))
-
-  cand_rows <- rows[out$candidate[rows]]
-  if (length(shared_features) < min_shared_features || length(cand_rows) == 0) {
-    return(list(out = out, max_null = max_null, best = best))
-  }
-
-  mat_a <- .align_profile_matrix(profiles, progs_a, shared_features)
-  mat_b <- .align_profile_matrix(profiles, progs_b, shared_features)
-  raw_a <- mat_a
-  raw_b <- mat_b
-  if (partial_out_common) {
-    mat_a$loading <- .partial_out_common(mat_a$loading)
-    mat_b$loading <- .partial_out_common(mat_b$loading)
-  }
-
-  a_idx <- match(as.character(out$program_id_a[cand_rows]), progs_a)
-  b_idx <- match(as.character(out$program_id_b[cand_rows]), progs_b)
-
-  pair_cor <- function(ma, mb, ca, cb) {
-    return(vapply(seq_along(a_idx), function(k) {
-      return(.weighted_pearson(
-        ma[, a_idx[k]], mb[, b_idx[k]], ca[, a_idx[k]] * cb[, b_idx[k]]
-      ))
-    }, numeric(1)))
-  }
-
-  obs_dec <- pair_cor(mat_a$loading, mat_b$loading, mat_a$conf, mat_b$conf)
-  obs_raw <- pair_cor(raw_a$loading, raw_b$loading, raw_a$conf, raw_b$conf)
-  out$profile_r[cand_rows] <- obs_raw
-  out$profile_r_resid[cand_rows] <- obs_dec
-
-  # Track each program's best partner by |deciding correlation|.
-  for (k in seq_along(cand_rows)) {
-    if (!is.finite(obs_dec[k])) next
-    for (pid in c(out$program_id_a[cand_rows[k]], out$program_id_b[cand_rows[k]])) {
-      pos <- match(pid, as.character(best$program_id))
-      if (is.na(best$best_abs_r[pos]) || abs(obs_dec[k]) > best$best_abs_r[pos]) {
-        best$best_abs_r[pos] <- abs(obs_dec[k])
-        best$best_partner[pos] <- setdiff(
-          c(out$program_id_a[cand_rows[k]], out$program_id_b[cand_rows[k]]), pid
-        )[1]
-        best$best_row[pos] <- cand_rows[k]
-      }
-    }
-  }
-
-  n_ge <- integer(length(cand_rows))
-  for (p in seq_len(n_perm)) {
-    dec_perm <- mat_b$loading
-    conf_perm <- mat_b$conf
-    for (j in seq_len(ncol(mat_b$loading))) {
-      idx <- sample.int(nrow(mat_b$loading))
-      dec_perm[, j] <- mat_b$loading[idx, j]
-      conf_perm[, j] <- mat_b$conf[idx, j]
-    }
-    rp <- pair_cor(mat_a$loading, dec_perm, mat_a$conf, conf_perm)
-    ge <- is.finite(rp) & is.finite(obs_dec) & abs(rp) >= abs(obs_dec)
-    n_ge <- n_ge + as.integer(ge)
-
-    for (pa in unique(a_idx)) {
-      vals <- abs(rp[a_idx == pa])
-      vals <- vals[is.finite(vals)]
-      if (length(vals) == 0) next
-      slot <- program_index[[progs_a[pa]]]
-      max_null[p, slot] <- max(max_null[p, slot], max(vals))
-    }
-    for (pb in unique(b_idx)) {
-      vals <- abs(rp[b_idx == pb])
-      vals <- vals[is.finite(vals)]
-      if (length(vals) == 0) next
-      slot <- program_index[[progs_b[pb]]]
-      max_null[p, slot] <- max(max_null[p, slot], max(vals))
-    }
-  }
-  out$p_profile[cand_rows] <- (1 + n_ge) / (1 + n_perm)
-
-  return(list(out = out, max_null = max_null, best = best))
-}
-
-
 .mutual_best_mask <- function(out, matches, trait_ids_by_program) {
   n <- nrow(out)
   shared <- rep(FALSE, n)
@@ -717,17 +367,18 @@ compare_program_pairs <- function(program_data,
 #' @title Build Multi-Trait Program Families
 #' @description Turn a calibrated program-correspondence result into multi-trait
 #' program families. Programs are nodes and correspondence edges are drawn from
-#' [compare_program_pairs()].
+#' [compare_program_pairs_loadings()].
 #'
 #' By default (`rule = "reciprocal_best_match"`) an edge is used only when it is
 #' the mutual best match of two significant programs, i.e. the calibrated
-#' `shared` flag, so families are one-to-one correspondences rather than
-#' transitive chains. `rule = "components"` instead uses every locus-matched pair
-#' whose pair-level `q_profile <= fdr_threshold`, reproducing the (transitive)
-#' connected-components behaviour for comparison. Isolated programs form their
-#' own size-1 family.
-#' @param result Either a result from [compare_program_pairs()] or its `pairs`
-#'   data.frame.
+#' `shared` flag (the primary link tier), so families are one-to-one
+#' correspondences rather than transitive chains. `rule = "components"` instead
+#' uses every pair whose pair-level `q_concordance <= fdr_threshold` (the
+#' candidate tier as well as the primary one), giving the more permissive,
+#' transitive connected-components behaviour. Isolated programs form their own
+#' size-1 family.
+#' @param result Either a result from [compare_program_pairs_loadings()] or its
+#'   `pairs` data.frame.
 #' @param program_info Optional data.frame with `program_id` and `trait_id`
 #'   (one row per program). Defaults to the programs appearing in `result`.
 #' @param fdr_threshold FDR at or below which a `"components"` edge is kept.
@@ -739,7 +390,7 @@ compare_program_pairs <- function(program_data,
 #'       `trait_name` (when available), and `family`
 #'     \item families: one row per family with `family`, `n_programs`,
 #'       `n_traits`, `traits`, `n_edges`, `mean_locus_concordance`,
-#'       `median_locus_concordance`, `mean_profile_r`, `n_concordant`,
+#'       `median_locus_concordance`, `mean_concordance_z`, `n_concordant`,
 #'       `n_antagonistic`, and `n_shared_loci`
 #'     \item graph: an `igraph` object (or `NULL` when there are no edges)
 #'     \item edges: the pair table used as edges (after the chosen rule)
@@ -759,26 +410,18 @@ build_program_families <- function(result,
     pairs <- result
   }
   if (!is.data.frame(pairs) ||
-        !all(c("jaccard_loci", "profile_r_resid", "shared") %in% names(pairs))) {
-    stop("result must come from compare_program_pairs()")
+        !all(c("jaccard_loci", "concordance_z", "shared") %in% names(pairs))) {
+    stop("result must come from compare_program_pairs_loadings()")
   }
 
   if (rule == "reciprocal_best_match") {
     edges <- pairs[pairs$shared, , drop = FALSE]
   } else {
     edges <- pairs[
-      pairs$candidate & is.finite(pairs$q_profile) &
-        pairs$q_profile <= fdr_threshold,
+      is.finite(pairs$q_concordance) & pairs$q_concordance <= fdr_threshold,
       ,
       drop = FALSE
     ]
-  }
-  if (nrow(edges) > 0) {
-    edges$locus_concordance <- edges$jaccard_loci
-    edges$profile_r <- edges$profile_r_resid
-  } else {
-    edges$locus_concordance <- numeric(0)
-    edges$profile_r <- numeric(0)
   }
 
   if (!is.null(matches)) {
@@ -813,10 +456,10 @@ build_program_families <- function(result,
     graph, "locus_concordance", value = edges$locus_concordance
   )
   graph <- igraph::set_edge_attr(
-    graph, "profile_r", value = edges$profile_r
+    graph, "concordance_z", value = edges$concordance_z
   )
   graph <- igraph::set_edge_attr(
-    graph, "weight", value = abs(edges$profile_r)
+    graph, "weight", value = abs(edges$concordance_z)
   )
   components <- igraph::components(graph, mode = "weak")
 
@@ -1087,7 +730,7 @@ build_program_families <- function(result,
       ,
       drop = FALSE
     ]
-    profile_r <- edges$profile_r
+    concordance_z <- edges$concordance_z
     traits <- sort(unique(nodes$trait_id[nodes$family == fam]))
     return(data.frame(
       family = fam,
@@ -1097,9 +740,9 @@ build_program_families <- function(result,
       n_edges = nrow(edges),
       mean_locus_concordance = .safe_stat(edges$locus_concordance, mean),
       median_locus_concordance = .safe_stat(edges$locus_concordance, stats::median),
-      mean_profile_r = .safe_stat(profile_r, mean),
-      n_concordant = sum(profile_r > 0, na.rm = TRUE),
-      n_antagonistic = sum(profile_r < 0, na.rm = TRUE),
+      mean_concordance_z = .safe_stat(concordance_z, mean),
+      n_concordant = sum(concordance_z > 0, na.rm = TRUE),
+      n_antagonistic = sum(concordance_z < 0, na.rm = TRUE),
       n_shared_loci = sum(edges$n_loci_shared, na.rm = TRUE),
       stringsAsFactors = FALSE
     ))
@@ -1199,12 +842,6 @@ build_program_families <- function(result,
     jaccard_loci = numeric(0),
     p_locus = numeric(0),
     candidate = logical(0),
-    n_features_shared = integer(0),
-    n_features_union = integer(0),
-    profile_r = numeric(0),
-    profile_r_resid = numeric(0),
-    p_profile = numeric(0),
-    q_profile = numeric(0),
     direction = character(0),
     shared = logical(0),
     stringsAsFactors = FALSE
@@ -1219,7 +856,7 @@ build_program_families <- function(result,
     trait_name = character(0),
     program = integer(0),
     best_partner = character(0),
-    best_profile_r = numeric(0),
+    best_concordance_z = numeric(0),
     best_locus_jaccard = numeric(0),
     best_n_loci_shared = integer(0),
     emp_p = numeric(0),
@@ -1239,7 +876,7 @@ build_program_families <- function(result,
     n_edges = integer(0),
     mean_locus_concordance = numeric(0),
     median_locus_concordance = numeric(0),
-    mean_profile_r = numeric(0),
+    mean_concordance_z = numeric(0),
     n_concordant = integer(0),
     n_antagonistic = integer(0),
     n_shared_loci = integer(0),
