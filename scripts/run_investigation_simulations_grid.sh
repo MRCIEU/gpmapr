@@ -18,8 +18,10 @@
 # hits) for every run, so each analysis parameter is evaluated across the full
 # battery of input versions.
 #
-# Development settings below are intentionally small. For final results,
-# increase n_reps / n_null / n_rep as appropriate.
+# These are production settings, intended for the HPC run. The vignette must
+# also be rendered with quick = FALSE (passed below) so stability is actually
+# exercised: it was disabled in every simulation run so far, while being the
+# most influential gate on real data.
 
 set -euo pipefail
 
@@ -60,11 +62,40 @@ magnitude_thresholds=(0.25 0.5 0.75)
 
 similarity_thresholds=(0.2 0.5)
 
-module_size_thresholds=(2 5)
+module_size_thresholds=(2 3 5)
 
-connectedness_thresholds=(0.25 0.5)
+# The coherence gate replaces min_mean_internal / min_connectedness, which were
+# absolute thresholds sitting below the real similarity graph's own baseline.
+# What needs calibrating now is the BH level and the permutation count.
+coherence_q_thresholds=(0.01 0.05 0.10)
 
-stability_thresholds=(0.3 0.7)
+stability_thresholds=(0.3 0.5 0.7)
+
+# greedy_Kmax was binding at 50 (null fits returned 49-50 factors, real BMI
+# returned exactly 50). Confirm where it stops binding.
+greedy_kmax_values=(50 100 200)
+
+# Background realism. background_corr = 0 is the old independent, random-signed
+# background, which contributes nothing to SNP-SNP similarity; snp_pleiotropy_sd
+# is the per-SNP analogue of background_sparsity_sd. Both are needed to move the
+# simulated similarity graph towards the real one -- see
+# simulated_graph_diagnostics() and real_bmi_graph_targets().
+# CROSSED, not one-at-a-time: varying either axis alone never reaches the target
+# regime (every one-at-a-time arm gives random_set_pass_rate <= 0.245 against the
+# real 0.935). Entries are "snp_pleiotropy_sd:background_corr".
+#
+# Unlike the null study, p_active_background is NOT overridden here: this
+# vignette already iterates it as a generative axis crossed with trait_overlap
+# ([0.00, 0.02, 0.05, 0.07]), so each render below evaluates the realism setting
+# at every background density. Overriding it would collapse that grid. The
+# p_active_background = 0.02 versions are the ones that land nearest the real
+# similarity graph -- check each render's graph-diagnostics table.
+realism_grid=(
+  0:0
+  1.0:0.6
+  1.5:0.9
+  2.0:0.9
+)
 
 # ---------------------------------------------------------------------------
 # Rendering helper
@@ -92,9 +123,14 @@ n_rep <- as.integer(args[[4]])
 overrides <- args[-(1:4)]
 
 params <- list(
-  n_reps = n_reps,
+  # The vignettes declare n_sim / n_stability_rep; n_reps / n_rep are the old
+  # names and rmarkdown rejects params it has not declared.
+  n_sim = n_reps,
   n_null = n_null,
-  n_rep = n_rep
+  n_stability_rep = n_rep,
+  # Full-depth run: quick = TRUE caps n_sim at 3 and disables the stability
+  # subsampling entirely, which is how every simulation so far was rendered.
+  quick = FALSE
 )
 
 for (x in overrides) {
@@ -178,11 +214,11 @@ for value in "${module_size_thresholds[@]}"; do
 
 done
 
-for value in "${connectedness_thresholds[@]}"; do
+for value in "${coherence_q_thresholds[@]}"; do
 
   render_one \
-    "V_connectedness_${value}" \
-    "min_connectedness=${value}"
+    "V_coherenceq_${value}" \
+    "coherence_q=${value}"
 
 done
 
@@ -191,6 +227,36 @@ for value in "${stability_thresholds[@]}"; do
   render_one \
     "V_stability_${value}" \
     "stability_threshold=${value}"
+
+done
+
+for value in "${greedy_kmax_values[@]}"; do
+
+  render_one \
+    "V_kmax_${value}" \
+    "ebmf_greedy_Kmax=${value}"
+
+done
+
+# ---------------------------------------------------------------------------
+# Investigation G: generative realism of the similarity graph
+#
+# The simulated similarity graph does not resemble a real one: a random SNP set
+# clears the old 0.3 internal-similarity gate essentially never in simulation
+# and about 94% of the time on real BMI data, so the null study could not
+# detect that the gate was uninformative. These two axes are what move it.
+# Every render reports simulated_graph_diagnostics() against
+# real_bmi_graph_targets(); pick the pairing that lands nearest the targets.
+# ---------------------------------------------------------------------------
+
+for combo in "${realism_grid[@]}"; do
+
+  IFS=: read -r snp_sd bg_corr <<< "${combo}"
+
+  render_one \
+    "G_realism_snpsd${snp_sd}_corr${bg_corr}" \
+    "snp_pleiotropy_sd=${snp_sd}" \
+    "background_corr=${bg_corr}"
 
 done
 
@@ -203,3 +269,7 @@ ls -1 investigation-univariate-simulations_E_*.html
 echo ""
 echo "Investigation V: program validation parameters:"
 ls -1 investigation-univariate-simulations_V_*.html
+
+echo ""
+echo "Investigation G: generative realism:"
+ls -1 investigation-univariate-simulations_G_*.html

@@ -463,9 +463,10 @@ select_ebmf_comparison_run <- function(comparison, min_total_pve = 0.01) {
 #' @param min_total_pve Require this total PVE before dropping anything.
 #'   Defaults to \code{0.01}.
 #' @param min_pve_share Candidate if the factor explains at least this share of
-#'   total PVE and soft-assigns at least 50\% of SNPs. Defaults to \code{0.4}.
+#'   total PVE, regardless of how many SNPs it soft-assigns. Defaults to
+#'   \code{0.4}.
 #' @param min_soft_frac Candidate if the factor soft-assigns at least this
-#'   fraction of SNPs. Defaults to \code{0.85}.
+#'   fraction of SNPs. Defaults to \code{0.25}.
 #' @param max_drop Maximum number of factors to return. Defaults to 1.
 #' @return Integer vector of 1-based factor indices to pass to
 #'   \code{remove_ebmf_factors()}, possibly empty.
@@ -474,7 +475,7 @@ identify_ebmf_global_factors <- function(flash_fit,
                                          membership = NULL,
                                          min_total_pve = 0.01,
                                          min_pve_share = 0.4,
-                                         min_soft_frac = 0.85,
+                                         min_soft_frac = 0.25,
                                          max_drop = 1L) {
   if (!inherits(flash_fit, "flash")) {
     stop("flash_fit must be a flash object from run_ebmf()")
@@ -501,10 +502,12 @@ identify_ebmf_global_factors <- function(flash_fit,
     soft_frac <- as.numeric(colSums(membership) / nrow(membership))
   }
 
-  candidates <- which(
-    soft_frac >= min_soft_frac |
-      (share >= min_pve_share & soft_frac >= 0.5)
-  )
+  # A mega-factor shows up either as very broad membership or as a factor that
+  # carries a dominant share of the fitted signal. The PVE-share branch is
+  # deliberately independent of soft_frac: the real BMI mega-factor held 40% of
+  # the factor strength on only 27% of SNPs, so requiring broad membership as
+  # well as high PVE let it through.
+  candidates <- which(soft_frac >= min_soft_frac | share >= min_pve_share)
   if (length(candidates) == 0) {
     return(integer(0))
   }

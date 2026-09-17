@@ -221,7 +221,6 @@ test_that("flipped signs restart for each module", {
     noise_sd = 0,
     effect_size = 5,
     effect_tail = 0,
-    p_negative = NULL,
     seed = 10
   )
   cg <- sim$trait_object$coloc_groups
@@ -270,7 +269,6 @@ test_that("n_traits controls the total number of simulated traits", {
     n_traits_per_module = 3,
     n_traits = 20,
     background_sparsity_sd = 0,
-    n_hub_traits = 0L,
     seed = 33
   )
   p <- sim$ground_truth$parameters
@@ -291,7 +289,6 @@ test_that("n_traits_per_module can vary per module", {
     module_sizes = c(10, 20, 30),
     n_traits_per_module = c(2, 5, 8),
     background_sparsity_sd = 0,
-    n_hub_traits = 0L,
     seed = 44
   )
   counts <- lengths(sim$ground_truth$driver_traits)
@@ -357,7 +354,7 @@ test_that("background_effect_scale scales background magnitude relative to effec
       n_traits_per_module = 5, n_background_traits = 60,
       background_effect_scale = scale, effect_size = effect_size,
       p_active_background = 0.05, background_sparsity_sd = 0,
-      n_hub_traits = 0L, seed = seed
+      seed = seed
     )
     cg <- sim$trait_object$coloc_groups
     b <- cg[!cg$trait_name %in% unlist(sim$ground_truth$driver_traits) &
@@ -380,7 +377,7 @@ test_that("background_effect_scale scales background magnitude relative to effec
     n_coloc_groups = 200, K = 1, module_sizes = 40,
     n_traits_per_module = 5, n_background_traits = 60,
     effect_size = 6, p_structural_zero = 0, effect_tail = 0,
-    background_sparsity_sd = 0, n_hub_traits = 0L, seed = 4
+    background_sparsity_sd = 0, seed = 4
   )
   cg <- sim$trait_object$coloc_groups
   drv <- cg[cg$trait_name %in% unlist(sim$ground_truth$driver_traits), ]
@@ -426,28 +423,6 @@ test_that("background_sparsity_sd gives heavy-tailed per-trait observation count
   expect_gt(max(cnt), 5 * median(cnt))
 })
 
-test_that("n_hub_traits plants dense, mutually correlated background traits", {
-  s <- simulate_trait(
-    n_coloc_groups = 200, K = 1, module_sizes = 30,
-    n_traits_per_module = 10, n_background_traits = 60,
-    n_hub_traits = 10, hub_snp_fraction = c(0.3, 1),
-    p_active_background = 0.03, effect_size = 6,
-    background_sparsity_sd = 0, seed = 9
-  )
-  cg <- s$trait_object$coloc_groups
-  cnt <- table(cg$trait_id[cg$trait_name != "Simulated target trait"])
-  hub_cut <- quantile(cnt, 0.85)
-  dense_rows <- names(cnt)[cnt >= hub_cut]
-  expect_gt(length(dense_rows), 4)
-  tids <- sort(unique(cg$trait_id))
-  mat <- matrix(NA_real_, nrow = length(tids),
-                ncol = length(unique(cg$variant_id)),
-                dimnames = list(tids, sort(unique(cg$variant_id))))
-  mat[cbind(as.character(cg$trait_id), as.character(cg$variant_id))] <- cg$beta
-  cc <- cor(t(mat[dense_rows, , drop = FALSE]), use = "pairwise.complete.obs")
-  expect_gt(median(abs(cc[upper.tri(cc)])), 0.3)
-})
-
 test_that("target_pattern = 'dense' gives a positive significant target row at every SNP", {
   s <- simulate_trait(
     n_coloc_groups = 100, K = 1, module_sizes = 20,
@@ -458,18 +433,6 @@ test_that("target_pattern = 'dense' gives a positive significant target row at e
     s$trait_object$coloc_groups$trait_name == "Simulated target trait", ]
   expect_equal(length(unique(trow$variant_id)), 100)
   expect_true(all(trow$beta > 0))
-})
-
-test_that("p_negative flips an approximate fraction of driver cell signs", {
-  s <- simulate_trait(
-    n_coloc_groups = 100, K = 1, module_sizes = 40,
-    n_traits_per_module = 10, n_background_traits = 10,
-    p_structural_zero = 0, noise_sd = 0.1,
-    p_negative = 0.2, seed = 13
-  )
-  cg <- s$trait_object$coloc_groups
-  d <- cg[cg$trait_name %in% unlist(s$ground_truth$driver_traits), ]
-  expect_true(abs(mean(d$beta < 0) - 0.2) < 0.08)
 })
 
 test_that("overlap = 'partial' shares boundary SNPs between adjacent modules", {
@@ -505,5 +468,63 @@ test_that("simulate_trait defaults are deterministic and realistic", {
   expect_lt(quantile(bg_beta, 0.25), 4.5)
   expect_equal(s1$ground_truth$parameters$background_effect_scale, 0.75)
   expect_equal(s1$ground_truth$parameters$target_pattern, "dense")
-  expect_equal(s1$ground_truth$parameters$p_negative, 0.05)
+})
+
+test_that(".v_measure separates splitting from mixing", {
+  truth <- c(rep("modA", 10), rep("modB", 10))
+
+  perfect <- c(rep("p1", 10), rep("p2", 10))
+  expect_equal(gpmapr:::.v_measure(truth, perfect), 1)
+
+  # Split: each planted module recovered as two pure programs. Homogeneity is
+  # perfect, so V stays high -- ARI punishes this much harder.
+  split <- c(rep("p1", 5), rep("p2", 5), rep("p3", 5), rep("p4", 5))
+  v_split <- gpmapr:::.v_measure(truth, split)
+  ari_split <- gpmapr:::.adjusted_rand_index(truth, split)
+  expect_gt(v_split, 0.6)
+  expect_gt(v_split, ari_split)
+
+  # Mix: every program contains both modules. This is a real error and both
+  # measures should collapse.
+  mixed <- rep(c("p1", "p2"), 10)
+  expect_lt(gpmapr:::.v_measure(truth, mixed), 0.05)
+})
+
+test_that("evaluate_univariate_simulation scores both planted levels", {
+  sim <- simulate_trait(
+    n_coloc_groups = 60, K = 2, module_sizes = c(12, 12),
+    n_traits_per_module = 4, n_traits = 80, snp_driver_groups = 2,
+    p_active_background = 0.02, seed = 3
+  )
+  expect_false(is.null(sim$ground_truth$driver_group_of_snp))
+
+  # Predict the driver-group partition exactly: the finer level should score
+  # perfectly while the module level registers the split.
+  dg <- sim$ground_truth$driver_group_of_snp
+  dg <- dg[dg > 0]
+  pred <- data.frame(
+    snp_id = names(dg),
+    program = as.integer(factor(dg)),
+    abs_loading = 1,
+    stringsAsFactors = FALSE
+  )
+  ev <- evaluate_univariate_simulation(sim, pred)
+
+  expect_equal(ev$ari_driver_groups, 1)
+  expect_equal(ev$v_driver_groups, 1)
+  # Perfectly pure programs, so module-level homogeneity is intact even though
+  # each module is split across two programs.
+  expect_equal(ev$v_structured, 1, tolerance = 0.35)
+  expect_lt(ev$ari_structured, ev$ari_driver_groups)
+  # No background SNP carries any loading in this prediction.
+  expect_equal(ev$background_weight, 0)
+})
+
+test_that("background_weight is NA only when loadings are absent", {
+  sim <- simulate_trait(n_coloc_groups = 40, K = 1, module_sizes = 10,
+                        n_traits = 60, p_active_background = 0.02, seed = 4)
+  members <- names(sim$ground_truth$module_of_snp)[1:10]
+  no_loading <- data.frame(snp_id = members, program = 1L,
+                           stringsAsFactors = FALSE)
+  expect_true(is.na(evaluate_univariate_simulation(sim, no_loading)$background_weight))
 })

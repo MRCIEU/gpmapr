@@ -65,6 +65,11 @@ test_that("enrich_program_loadings_trait_categories recovers a planted signal", 
   expect_true(comp1$enrichment[1] > 0)
   expect_true(comp1$p[1] < 1e-10)
   expect_true(all(diff(comp1$fdr) >= -1e-12))
+  # r_squared is a bounded, cross-program-comparable effect size -- the
+  # planted strong signal should explain a large share of the variance.
+  expect_true("r_squared" %in% names(comp1))
+  expect_true(all(comp1$r_squared >= 0 & comp1$r_squared <= 1))
+  expect_true(comp1$r_squared[1] > 0.5)
 })
 
 
@@ -93,8 +98,9 @@ test_that("enrich_program_loadings_pathways recovers a planted signal via genes"
   expect_setequal(
     names(comp1),
     c("term_id", "source", "description", "enrichment", "se", "z", "p", "fdr",
-      "n_snps", "n_category_snps")
+      "r_squared", "n_snps", "n_category_snps")
   )
+  expect_true(all(comp1$r_squared >= 0 & comp1$r_squared <= 1))
 })
 
 

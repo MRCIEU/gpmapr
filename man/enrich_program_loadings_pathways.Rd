@@ -49,8 +49,16 @@ A list with:
 \itemize{
 \item by_program: list of per-program results (\code{program}, \code{n_snps},
 \code{comparison} with columns term_id, source, description, enrichment,
-se, z, p, fdr, n_snps, n_category_snps; \code{fdr} is corrected across
-every program and source tested -- \code{source} is a label only)
+se, z, p, fdr, r_squared, n_snps, n_category_snps; \code{fdr} is corrected
+across every program and source tested -- \code{source} is a label only.
+\code{r_squared} is the fraction of this program's squared-loading
+variance the pathway term explains -- unlike \code{enrichment} it is
+bounded in \link{0, 1} and comparable across programs and sources, which
+is what makes a fixed threshold on it (e.g. Cohen's 1988 benchmarks:
+0.01 small, 0.09 medium, 0.25 large) meaningful. It is not an
+independent effect-size-vs-power axis here: with \code{n_snps} roughly
+fixed per program, \code{r_squared} is close to a monotonic function of
+\code{p}.
 \item summary: one row per program (\code{n_pathways_tested}, \code{n_enriched},
 \code{top_pathway})
 \item mappings: the \code{pathway_mappings()} result used

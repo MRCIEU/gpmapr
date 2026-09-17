@@ -25,7 +25,18 @@ A list with:
 unassigned SNPs as their own predicted class
 \item ari_structured: ARI over module SNPs only (background excluded)
 \item background_absorbed: fraction of background SNPs placed into
-predicted programs (higher = more hallucinated structure)
+predicted programs (higher = more hallucinated structure). This floors
+at 0 whenever the lFSR/magnitude gate keeps background SNPs out, which
+it usually does; prefer \code{background_weight}.
+\item background_weight: share of the predicted programs' total loading
+mass sitting on background SNPs — the same idea without the floor
+\item v_structured: V-measure over module SNPs, the harmonic mean of
+homogeneity and completeness. Unlike ARI it distinguishes mixing two
+planted modules (a real error) from splitting one (which is correct
+when the planted truth is hierarchical)
+\item ari_driver_groups / v_driver_groups: the same scores against the
+finer planted partition (\code{ground_truth$driver_group_of_snp}), \code{NA}
+unless the simulation used \code{snp_driver_groups > 1}
 \item coverage: fraction of all SNPs placed into predicted programs
 \item module_recall: named numeric vector; for each planted module, the
 largest fraction of its SNPs contained in any single predicted program.

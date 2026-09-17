@@ -77,11 +77,16 @@ test_that("stability scores EBMF programs across trait subsamples", {
       abs_loading > r$res$parameters$ebmf_magnitude_threshold
     ) |>
     dplyr::count(program, name = "n_filtered")
+  # The reference set is size-relative: capped at top_n, but never more than
+  # half the program's filtered SNPs, so programs are matched on comparable
+  # fractions of themselves rather than on a flat top_n that makes replication
+  # track program size.
+  n_filtered <- filtered_counts$n_filtered[
+    match(out$program, filtered_counts$program)
+  ]
   expect_equal(
     out$n_ref,
-    pmin(5L, filtered_counts$n_filtered[
-      match(out$program, filtered_counts$program)
-    ])
+    pmax(1L, pmin(5L, as.integer(ceiling(n_filtered / 2))))
   )
 })
 
@@ -123,7 +128,7 @@ test_that("summarise_ebmf_programs folds filters and additional scores", {
   expect_true(all(is.na(ps$programs$factor_strength_per_snp) |
                     ps$programs$factor_strength_per_snp >= 0))
   expect_true(all(ps$programs$status == "valid" |
-                    grepl("^(size|internal_similarity|connectedness|stability|redundancy)",
+                    grepl("^(size|coherence|stability|redundancy)",
                           ps$programs$status)))
   expect_true(is.null(ps$factor_correlation) || is.matrix(ps$factor_correlation))
   expect_true(all(c(
@@ -160,7 +165,7 @@ test_that("factor strength is reported but does not gate status", {
                           ps$programs$factor_strength /
                             sqrt(ps$programs$n_snps_filtered)) < tol))
   expect_true(all(ps$programs$status == "valid" |
-                    grepl("^(size|internal_similarity|connectedness|stability|redundancy)",
+                    grepl("^(size|coherence|stability|redundancy)",
                           ps$programs$status)))
 })
 

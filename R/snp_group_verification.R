@@ -159,6 +159,11 @@ summarise_snp_group_traits <- function(trait_matrix,
 #' @inheritParams summarise_snp_group_traits
 #' @param specificity_eps Pseudocount in the specificity denominator. Defaults
 #'   to 0.1.
+#' @param min_rest_snps_with_signal Minimum number of SNPs outside the module
+#'   at which a trait must be observed before it gets a specificity score. A
+#'   trait seen only inside the module has an essentially empty denominator, so
+#'   the ratio measures sparsity rather than specificity; such traits get `NA`.
+#'   Defaults to `2`.
 #' @param min_specificity Soft threshold used to set
 #'   `passes_min_specificity` on ranked traits (default 1.25). Does not filter
 #'   the returned table.
@@ -175,7 +180,8 @@ summarise_module_specific_traits <- function(trait_matrix,
                                              min_snps_with_signal = 3L,
                                              n_categories = 2L,
                                              specificity_eps = 0.1,
-                                             min_specificity = 1.25) {
+                                             min_specificity = 1.25,
+                                             min_rest_snps_with_signal = 2L) {
   if (!is.matrix(trait_matrix)) {
     stop("trait_matrix must be a matrix")
   }
@@ -238,6 +244,9 @@ summarise_module_specific_traits <- function(trait_matrix,
     )
 
     rest_lookup <- stats::setNames(traits_rest$abs_mean_z, traits_rest$trait_id)
+    rest_n_lookup <- stats::setNames(
+      traits_rest$n_snps_with_signal, traits_rest$trait_id
+    )
     traits_all <- traits_mod |>
       dplyr::mutate(
         abs_mean_z_rest = as.numeric(rest_lookup[as.character(trait_id)]),
@@ -246,7 +255,23 @@ summarise_module_specific_traits <- function(trait_matrix,
           0,
           abs_mean_z_rest
         ),
-        specificity = abs_mean_z / (abs_mean_z_rest + specificity_eps),
+        n_snps_with_signal_rest = as.integer(
+          rest_n_lookup[as.character(trait_id)]
+        ),
+        n_snps_with_signal_rest = dplyr::if_else(
+          is.na(n_snps_with_signal_rest),
+          0L,
+          n_snps_with_signal_rest
+        ),
+        # A trait observed at few or no SNPs outside the module has an
+        # essentially empty denominator, so abs_mean_z / specificity_eps
+        # returns a huge ratio that reflects sparsity, not specificity. Such
+        # traits get NA rather than a score that would top every ranking.
+        specificity = dplyr::if_else(
+          n_snps_with_signal_rest >= min_rest_snps_with_signal,
+          abs_mean_z / (abs_mean_z_rest + specificity_eps),
+          NA_real_
+        ),
         abs_mean_z_delta = abs_mean_z - abs_mean_z_rest,
         passes_min_specificity = is.finite(specificity) &
           specificity >= min_specificity
@@ -295,7 +320,8 @@ summarise_module_specific_traits <- function(trait_matrix,
     summary = summary_df,
     min_group_size = as.integer(min_group_size),
     min_specificity = min_specificity,
-    specificity_eps = specificity_eps
+    specificity_eps = specificity_eps,
+    min_rest_snps_with_signal = as.integer(min_rest_snps_with_signal)
   ))
 }
 

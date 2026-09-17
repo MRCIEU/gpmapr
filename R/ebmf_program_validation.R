@@ -8,17 +8,19 @@
 #'
 #' Filters applied (a program must pass all four to get `status == "valid"`):
 #' \itemize{
-#'   \item **Size / internal coherence** — at least `min_module_size`
-#'   EBMF-supported SNPs (`n_snps`), mean internal SNP similarity
-#'   `>= min_mean_internal`, and pair connectedness `>= min_connectedness` on
-#'   the SNP similarity graph. The mean (and median) pairwise similarity and
-#'   the connectedness score come from the existing SNP-SNP similarity
-#'   framework; `min_module_size` ensures the metrics are computed on enough
-#'   filtered SNPs to be meaningful. `n_snps_filtered` reports the subset of
-#'   EBMF-supported SNPs that also passes the lFSR/magnitude filter.
-#'   Each component is reported as its own pass column — `size_pass`,
-#'   `internal_similarity_pass`, `connectedness_pass` — and `internal_pass`
-#'   combines all three.
+#'   \item **Size** — at least `min_module_size` SNPs passing the
+#'   lFSR/magnitude filter (`n_snps_filtered`). This is an interpretability
+#'   floor, not a discriminating gate: a two-SNP program cannot be annotated.
+#'   \item **Coherence** — the program's loading vector must be aligned with
+#'   the SNP similarity graph more than a random reassignment of the same
+#'   loadings would be (`coherence_q < coherence_q_threshold`, from
+#'   `calibrate_program_coherence()`). This uses every SNP weighted by its
+#'   squared posterior loading, so it does not depend on the lFSR/magnitude
+#'   cutoff, and it is calibrated against the graph's own null, so it transfers
+#'   between datasets whose similarity baselines differ. `size_pass` and
+#'   `coherence_pass` are reported separately and `internal_pass` combines them.
+#'   The hard-gated `mean_internal_similarity` and `connectedness` are still
+#'   reported for comparison but no longer decide `status`.
 #'   \item **Trait-subsampling stability** — the top-loading SNPs must be
 #'   recovered with replication `>= stability_threshold` when `1 - frac_traits`
 #'   of the traits are held out and flashier is refit. Because this refits
@@ -60,10 +62,16 @@
 #'   `0.2`.
 #' @param min_module_size Minimum assigned SNPs for the coherence metrics to be
 #'   meaningful and for `size_pass`. Defaults to `5`.
-#' @param min_mean_internal Minimum mean internal SNP similarity for
-#'   `internal_pass`. Defaults to `0.3`.
-#' @param min_connectedness Minimum pair-connectedness for `internal_pass`.
-#'   Defaults to `0.5`.
+#' @param min_mean_internal Minimum mean internal SNP similarity. Reported as
+#'   `internal_similarity_pass` for comparison with earlier runs; it no longer
+#'   gates `status`. Defaults to `0.3`.
+#' @param min_connectedness Minimum pair-connectedness. Reported as
+#'   `connectedness_pass` for comparison; it no longer gates `status`. Defaults
+#'   to `0.5`.
+#' @param coherence_n_perm Permutations per program for the loading-permutation
+#'   coherence null. Defaults to `2000`.
+#' @param coherence_q_threshold BH-adjusted q below which `coherence_pass` is
+#'   TRUE. Defaults to `0.05`.
 #' @param n_null Number of permutation nulls for membership calibration.
 #' @param alpha_membership Membership FDR level passed to
 #'   `calibrate_ebmf_programs()` for `core` cell labelling.
@@ -86,7 +94,9 @@
 #' @param redundancy_threshold Maximum absolute factor-loading correlation with
 #'   another program before `redundant` is flagged.
 #' @param snp_redundancy_threshold Maximum reciprocal SNP-containment
-#'   (`max_pair_redundancy`) before `redundancy_pass` fails. Defaults to `0.9`.
+#'   (`max_pair_redundancy`) before `redundancy_pass` fails. Defaults to `0.75`;
+#'   at `0.9` the check never bound on real data, where the observed maximum
+#'   containment was `0.5`.
 #' @param seed RNG seed.
 #' @param cores Number of cores for the parallel trait-subsample refits (passed
 #'   to `stability_ebmf_programs()`). Defaults to `1` (serial).
@@ -109,6 +119,8 @@ summarise_ebmf_programs <- function(clustering_result,
                                     min_module_size = 5L,
                                     min_mean_internal = 0.3,
                                     min_connectedness = 0.5,
+                                    coherence_n_perm = 2000L,
+                                    coherence_q_threshold = 0.05,
                                     n_null = 10,
                                     alpha_membership = 0.05,
                                     n_candidate_tier = 25L,
@@ -119,7 +131,7 @@ summarise_ebmf_programs <- function(clustering_result,
                                     posterior_stat = c("median", "mean"),
                                     posterior_evidence_cap = 50,
                                     redundancy_threshold = 0.9,
-                                    snp_redundancy_threshold = 0.9,
+                                    snp_redundancy_threshold = 0.75,
                                     seed = 1,
                                     cores = 1,
                                     verbose = TRUE) {
@@ -204,11 +216,43 @@ summarise_ebmf_programs <- function(clustering_result,
       internal_similarity_pass = is.finite(mean_internal_similarity) &
         mean_internal_similarity >= min_mean_internal,
       connectedness_pass = is.finite(connectedness) &
-        connectedness >= min_connectedness,
-      internal_pass = size_pass & internal_similarity_pass & connectedness_pass
+        connectedness >= min_connectedness
     )
 
   fit <- clustering_result$cluster_details$flash_fit
+
+  # Loading-weighted coherence against a permutation null. This is the gate;
+  # the hard-gated mean_internal_similarity / connectedness above are retained
+  # for comparison but no longer decide status.
+  coherence_cal <- calibrate_program_coherence(
+    s_matrix,
+    f_pm = if (is.null(fit)) NULL else fit$F_pm,
+    n_perm = coherence_n_perm,
+    edge_threshold = edge_threshold,
+    seed = seed
+  )
+  coherence_columns <- c(
+    "weighted_internal", "weighted_quorum", "n_eff",
+    "coherence_emp_p", "coherence_q", "quorum_emp_p", "quorum_q"
+  )
+  if (nrow(coherence_cal) == 0) {
+    for (column in coherence_columns) {
+      out[[column]] <- rep(NA_real_, nrow(out))
+    }
+  } else {
+    out <- out |>
+      dplyr::left_join(coherence_cal, by = "program")
+  }
+  out$coherence_pass <- is.finite(out$coherence_q) &
+    out$coherence_q < coherence_q_threshold
+  out$quorum_pass <- is.finite(out$quorum_q) &
+    out$quorum_q < coherence_q_threshold
+  # The weighted mean and the weighted quorum measure different things --
+  # average alignment versus how many pairs clear the edge threshold -- and once
+  # null-calibrated they do not always agree. Only the mean gates; this flags
+  # where the two readings diverge.
+  out$shape_disagreement <- out$coherence_pass != out$quorum_pass
+  out$internal_pass <- out$size_pass & out$coherence_pass
   obs_input <- clustering_result$ebmf_input
   if (is.null(obs_input)) {
     obs_input <- clustering_result$x_star
@@ -314,8 +358,7 @@ summarise_ebmf_programs <- function(clustering_result,
 
   pass_cols <- cbind(
     size = out$size_pass,
-    internal_similarity = out$internal_similarity_pass,
-    connectedness = out$connectedness_pass,
+    coherence = out$coherence_pass,
     stability = out$stability_pass,
     redundancy = out$redundancy_pass
   )
@@ -350,6 +393,8 @@ summarise_ebmf_programs <- function(clustering_result,
       min_module_size = as.integer(min_module_size),
       min_mean_internal = min_mean_internal,
       min_connectedness = min_connectedness,
+      coherence_n_perm = as.integer(coherence_n_perm),
+      coherence_q_threshold = coherence_q_threshold,
       n_null = n_null,
       alpha_membership = alpha_membership,
       n_candidate_tier = as.integer(n_candidate_tier),
@@ -411,6 +456,185 @@ summarise_ebmf_programs <- function(clustering_result,
     n_internal_pairs = n_pairs,
     stringsAsFactors = FALSE
   ))
+}
+
+
+# Loading-weighted coherence of one program on the SNP similarity graph.
+#
+# Unlike .program_internal_coherence(), which first binarises the program with
+# the lFSR/magnitude gate and then averages over the surviving SNPs, this uses
+# *every* SNP, weighted by w (normally the squared posterior loading). The
+# statistics are the weighted analogues of the hard-gated ones:
+#
+#   weighted_internal = sum_{i!=j} w_i w_j S_ij / sum_{i!=j} w_i w_j
+#   weighted_quorum   = the same with S replaced by 1{|S| >= edge_threshold}
+#
+# With w normalised to sum 1 and the diagonal of S set to 1, both reduce to
+# (w'Sw - sum w_i^2) / (1 - sum w_i^2).
+#
+# n_eff = 1 / sum(w_i^2) is the participation ratio: the weighted analogue of
+# program size, and the number to read when asking how many SNPs a program is
+# really resting on.
+.program_loading_coherence <- function(s_matrix, w, edge_threshold) {
+  empty <- data.frame(
+    weighted_internal = NA_real_,
+    weighted_quorum = NA_real_,
+    n_eff = NA_real_,
+    stringsAsFactors = FALSE
+  )
+  w <- .normalise_coherence_weights(w)
+  if (is.null(w)) {
+    return(empty)
+  }
+  sum_sq <- sum(w^2)
+  denom <- 1 - sum_sq
+  # n_eff stays reportable even when the coherence statistics are not: a
+  # program whose weight sits on a single SNP has no off-diagonal pairs, and
+  # n_eff = 1 alongside NA coherence says exactly that.
+  if (!is.finite(denom) || denom <= 0) {
+    empty$n_eff <- 1 / sum_sq
+    return(empty)
+  }
+  s_diag1 <- s_matrix
+  s_diag1[!is.finite(s_diag1)] <- 0
+  diag(s_diag1) <- 1
+  adjacency <- (abs(s_diag1) >= edge_threshold) * 1
+  diag(adjacency) <- 1
+  return(data.frame(
+    weighted_internal = (sum(w * (s_diag1 %*% w)) - sum_sq) / denom,
+    weighted_quorum = (sum(w * (adjacency %*% w)) - sum_sq) / denom,
+    n_eff = 1 / sum_sq,
+    stringsAsFactors = FALSE
+  ))
+}
+
+
+# Non-negative weights summing to 1, or NULL when the program carries no
+# usable loading mass.
+.normalise_coherence_weights <- function(w) {
+  w <- as.numeric(w)
+  w[!is.finite(w) | w < 0] <- 0
+  total <- sum(w)
+  if (!is.finite(total) || total <= 0) {
+    return(NULL)
+  }
+  return(w / total)
+}
+
+
+#' @title Permutation-Calibrate EBMF Program Coherence
+#' @description Test whether each program's loading vector is aligned with the
+#' SNP similarity graph more than a random reassignment of the same loadings
+#' would be. For every program the weights `w = F_pm[, k]^2` are permuted across
+#' the SNP index `n_perm` times and the loading-weighted coherence recomputed,
+#' giving an empirical p-value and a BH-adjusted q-value.
+#'
+#' This replaces comparing `mean_internal_similarity` to an absolute constant.
+#' Because permuting `w` preserves its distribution, the null is automatically
+#' matched on program size and on the shape of the loading vector, so the same
+#' threshold transfers between datasets whose similarity graphs have different
+#' baselines — which absolute thresholds do not.
+#' @param s_matrix SNP-by-SNP similarity matrix.
+#' @param f_pm SNP-by-program posterior mean loading matrix (`flash_fit$F_pm`).
+#' @param n_perm Number of permutations per program. Defaults to `2000`.
+#' @param edge_threshold Absolute similarity defining an edge for the weighted
+#'   quorum statistic. Defaults to `0.2`.
+#' @param seed RNG seed.
+#' @param chunk_size Permutations evaluated per matrix product, bounding peak
+#'   memory. Defaults to `500`.
+#' @return A dataframe with one row per program: `program`,
+#'   `weighted_internal`, `weighted_quorum`, `n_eff`, `coherence_emp_p`,
+#'   `coherence_q`, `quorum_emp_p` and `quorum_q`.
+#' @export
+calibrate_program_coherence <- function(s_matrix,
+                                        f_pm,
+                                        n_perm = 2000L,
+                                        edge_threshold = 0.2,
+                                        seed = 1,
+                                        chunk_size = 500L) {
+  empty <- data.frame(
+    program = integer(0),
+    weighted_internal = numeric(0),
+    weighted_quorum = numeric(0),
+    n_eff = numeric(0),
+    coherence_emp_p = numeric(0),
+    coherence_q = numeric(0),
+    quorum_emp_p = numeric(0),
+    quorum_q = numeric(0),
+    stringsAsFactors = FALSE
+  )
+  if (is.null(s_matrix) || is.null(f_pm) || ncol(f_pm) == 0) {
+    return(empty)
+  }
+  n_perm <- as.integer(n_perm)
+  chunk_size <- max(1L, as.integer(chunk_size))
+
+  snps <- intersect(rownames(f_pm), colnames(s_matrix))
+  if (length(snps) < 3) {
+    return(empty)
+  }
+  s_sub <- s_matrix[snps, snps, drop = FALSE]
+  s_sub[!is.finite(s_sub)] <- 0
+  diag(s_sub) <- 1
+  adjacency <- (abs(s_sub) >= edge_threshold) * 1
+  diag(adjacency) <- 1
+  f_sub <- f_pm[snps, , drop = FALSE]
+
+  n <- length(snps)
+  set.seed(seed)
+  rows <- lapply(seq_len(ncol(f_sub)), function(k) {
+    w <- .normalise_coherence_weights(f_sub[, k]^2)
+    if (is.null(w)) {
+      return(data.frame(
+        program = k, weighted_internal = NA_real_, weighted_quorum = NA_real_,
+        n_eff = NA_real_, coherence_emp_p = NA_real_, quorum_emp_p = NA_real_,
+        stringsAsFactors = FALSE
+      ))
+    }
+    sum_sq <- sum(w^2)
+    denom <- 1 - sum_sq
+    if (!is.finite(denom) || denom <= 0) {
+      return(data.frame(
+        program = k, weighted_internal = NA_real_, weighted_quorum = NA_real_,
+        n_eff = 1 / sum_sq, coherence_emp_p = NA_real_,
+        quorum_emp_p = NA_real_, stringsAsFactors = FALSE
+      ))
+    }
+    obs_int <- (sum(w * (s_sub %*% w)) - sum_sq) / denom
+    obs_quo <- (sum(w * (adjacency %*% w)) - sum_sq) / denom
+
+    # A permutation preserves sum(w^2), so the denominator is constant and the
+    # null is evaluated in chunks of the permuted weight matrix.
+    ge_int <- 0L
+    ge_quo <- 0L
+    remaining <- n_perm
+    while (remaining > 0) {
+      this_chunk <- min(chunk_size, remaining)
+      perm <- matrix(
+        w[unlist(lapply(seq_len(this_chunk), function(i) sample.int(n)))],
+        nrow = n
+      )
+      null_int <- (colSums(perm * (s_sub %*% perm)) - sum_sq) / denom
+      null_quo <- (colSums(perm * (adjacency %*% perm)) - sum_sq) / denom
+      ge_int <- ge_int + sum(null_int >= obs_int, na.rm = TRUE)
+      ge_quo <- ge_quo + sum(null_quo >= obs_quo, na.rm = TRUE)
+      remaining <- remaining - this_chunk
+    }
+    return(data.frame(
+      program = k,
+      weighted_internal = obs_int,
+      weighted_quorum = obs_quo,
+      n_eff = 1 / sum_sq,
+      coherence_emp_p = (1 + ge_int) / (1 + n_perm),
+      quorum_emp_p = (1 + ge_quo) / (1 + n_perm),
+      stringsAsFactors = FALSE
+    ))
+  })
+  out <- dplyr::bind_rows(rows)
+  out$coherence_q <- stats::p.adjust(out$coherence_emp_p, method = "BH")
+  out$quorum_q <- stats::p.adjust(out$quorum_emp_p, method = "BH")
+  out$program <- as.integer(out$program)
+  return(out[, names(empty), drop = FALSE])
 }
 
 

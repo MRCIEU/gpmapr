@@ -15,7 +15,8 @@ summarise_module_specific_traits(
   min_snps_with_signal = 3L,
   n_categories = 2L,
   specificity_eps = 0.1,
-  min_specificity = 1.25
+  min_specificity = 1.25,
+  min_rest_snps_with_signal = 2L
 )
 }
 \arguments{
@@ -48,6 +49,12 @@ to 0.1.}
 \item{min_specificity}{Soft threshold used to set
 \code{passes_min_specificity} on ranked traits (default 1.25). Does not filter
 the returned table.}
+
+\item{min_rest_snps_with_signal}{Minimum number of SNPs outside the module
+at which a trait must be observed before it gets a specificity score. A
+trait seen only inside the module has an essentially empty denominator, so
+the ratio measures sparsity rather than specificity; such traits get \code{NA}.
+Defaults to \code{2}.}
 }
 \value{
 A list with \code{by_group} and \code{summary} (same shape as

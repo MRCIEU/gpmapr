@@ -1,0 +1,515 @@
+---
+title: "Simulation study of multi-trait program correspondence"
+output:
+  rmarkdown::html_vignette:
+    includes:
+      in_header: investigation-wide.html
+params:
+  # --- generative structure -------------------------------------------------
+  n_loci_per_trait: 200
+  n_shared_loci: 80
+  K_shared: 3
+  K_specific: 2
+  module_size: 15
+  n_drivers_per_program: 8
+  n_background_traits: 300
+  effect_size: 6
+  noise_sd: 1
+  p_structural_zero: 0
+  # --- background realism ---------------------------------------------------
+  p_active_background: 0.02
+  background_sparsity_sd: 1.2
+  background_effect_scale: 0.5
+  background_corr: 0
+  snp_pleiotropy_sd: 0
+  # --- the two axes this study exists to separate ---------------------------
+  # Crossed, not varied one at a time: the whole question is how the two
+  # statistics behave as locus overlap falls while profile overlap is held up.
+  locus_overlap: [0.0, 0.25, 0.5, 1.0]
+  profile_overlap: [0.4, 0.8]
+  # --- cross-trait comparison ----------------------------------------------
+  n_perm: 1000
+  fdr_threshold: 0.05
+  # --- replication ----------------------------------------------------------
+  n_sim: 50
+  master_seed: 1
+  # quick: fast test mode. Caps n_sim at 2 and lowers the permutation counts.
+  # All input versions are always run. Set FALSE for the full study.
+  quick: true
+vignette: >
+  %\VignetteIndexEntry{Simulation study of multi-trait program correspondence}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, collapse = TRUE, comment = "#>", message = FALSE,
+  warning = FALSE, out.width = "100%", fig.align = "center"
+)
+```
+
+```{r libraries}
+pkg_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("devtools", quietly = TRUE)) {
+  devtools::load_all(pkg_root, quiet = TRUE)
+} else {
+  library(gpmapr)
+}
+library(dplyr)
+
+quick <- isTRUE(params$quick)
+n_sim <- if (quick) min(as.integer(params$n_sim), 2L) else as.integer(params$n_sim)
+n_perm <- if (quick) 300L else as.integer(params$n_perm)
+coherence_perm <- if (quick) 300L else 2000L
+
+# Shared EBMF settings, from the same file the univariate and real-data studies
+# read, so the per-trait discovery step here is the same discovery step used
+# everywhere else.
+ebmf_settings <- resolve_ebmf_settings(params)
+settings_signature <- ebmf_settings_signature(ebmf_settings)
+
+set.seed(params$master_seed)
+sim_seeds <- sample.int(.Machine$integer.max, n_sim)
+
+generative_base <- list(
+  n_loci_per_trait = as.integer(params$n_loci_per_trait),
+  n_shared_loci = as.integer(params$n_shared_loci),
+  K_shared = as.integer(params$K_shared),
+  K_specific = as.integer(params$K_specific),
+  module_size = as.integer(params$module_size),
+  n_drivers_per_program = as.integer(params$n_drivers_per_program),
+  n_background_traits = as.integer(params$n_background_traits),
+  effect_size = params$effect_size,
+  noise_sd = params$noise_sd,
+  p_structural_zero = params$p_structural_zero,
+  p_active_background = params$p_active_background,
+  background_sparsity_sd = params$background_sparsity_sd,
+  background_effect_scale = params$background_effect_scale,
+  background_corr = params$background_corr,
+  snp_pleiotropy_sd = params$snp_pleiotropy_sd
+)
+```
+
+This vignette asks one question with known ground truth: **when two traits share a
+biological program, which cross-trait statistic finds it?**
+
+There are two candidates, and they make different assumptions.
+`compare_program_pairs_loadings()` scores a pair of programs as an inner product
+over the loci both traits carry. `compare_program_pairs_profiles()` scores them
+over the background studies both traits load on. The first requires the shared
+program to act at the *same variants* in both traits; the second does not.
+
+That difference is not testable on real data, because there the truth is unknown
+and the two axes have very different sizes (for BMI and height, 73 shared loci
+against 656 shared background studies) so any disagreement is uninterpretable.
+Here both axes are planted deliberately and independently:
+`simulate_trait_pair()` controls **locus overlap** (what fraction of a shared
+program's SNPs are the same locus in both traits) separately from **profile
+overlap** (what fraction of its driver studies are the same).
+
+The decisive cell of the design is **low locus overlap with high profile
+overlap**: a program genuinely shared between the traits, acting at different
+variants in each. If the profile axis recovers it there and the locus axis does
+not, the profile axis earns its place. If it does not, the locus axis is
+sufficient and the extra statistic should be dropped.
+
+## Simulation design (ADEMP)
+
+Following Morris, White and Crowther (2019, *Statistics in Medicine* 38:2074-2102),
+as the univariate studies do.
+
+**Aims.** (i) Establish whether the trait-profile axis recovers shared programs
+that the locus axis cannot, as a function of locus overlap. (ii) Measure the
+false-discovery rate of each axis when nothing is shared.
+
+**Data-generating mechanism.** `simulate_trait_pair()`. Two target traits each
+carry `n_loci_per_trait` loci, of which `n_shared_loci` sit in a pool both
+traits carry; `K_shared` programs are planted in both traits and `K_specific` in
+only one. For a shared program, `locus_overlap` sets the fraction of its SNPs
+drawn from the shared pool (the rest are private to each trait) and
+`profile_overlap` the fraction of its driver studies common to both. Half the
+shared programs are planted antagonistic (the second trait's driver effects
+flipped) so direction is scoreable in both senses. Background studies are drawn
+from one pool shared by both traits, so the feature axis intersects.
+
+**Estimand / target.** The planted cross-trait correspondence
+(`ground_truth$correspondence`): which program in trait A is the same program as
+which in trait B, and whether it is concordant or antagonistic. This is a
+selection-plus-sign target, not a parameter.
+
+**Methods.** Two comparators on identical data, which is the point of the study:
+`compare_program_pairs_profiles()` and `compare_program_pairs_loadings()`, each
+after the same per-trait discovery (`run_univariate_clustering()` then
+`summarise_ebmf_programs()`, at the shared settings). Only `primary`-tier links
+are scored, that being the calibrated one-to-one claim.
+
+**Performance measures.** Discovered programs are mapped onto planted programs by
+`map_programs_to_planted()` -- on SNP membership for the locus axis and on
+loading-weighted driver overlap for the feature axis, because the feature table
+is dense and a set overlap would reject a perfect match. Then
+`evaluate_multitrait_simulation()` reports:
+
+- `precision` = true-positive links / discovered links. A method that links
+  everything is penalised.
+- `recall` = planted shared programs recovered / `K_shared`. Credited once per
+  planted program, so EBMF factor splitting cannot inflate it.
+- `sign_accuracy` = fraction of true-positive links whose reported direction
+  matches the planted direction. Scored on true positives only: a link that is
+  not real has no meaningful direction.
+- Under the null (`K_shared = 0`) every link is a false discovery, so `n_links`
+  is the FDR numerator directly.
+
+**Monte Carlo uncertainty.** Every estimate is a mean over `n_sim` replicates
+with a Monte Carlo standard error; the replicate is the MC unit. Common random
+numbers are used -- one seed vector shared across all input versions -- so
+version-to-version differences are estimated more precisely than with
+independent seeds.
+
+```{r settings-table}
+knitr::kable(
+  data.frame(
+    parameter = c(names(generative_base), "locus_overlap", "profile_overlap",
+                  "n_sim", "n_perm", "fdr_threshold", "quick",
+                  "ebmf_settings_signature"),
+    value = c(
+      vapply(generative_base, function(x) paste(x, collapse = ", "), character(1)),
+      paste(params$locus_overlap, collapse = ", "),
+      paste(params$profile_overlap, collapse = ", "),
+      n_sim, n_perm, params$fdr_threshold, quick, settings_signature
+    ),
+    stringsAsFactors = FALSE
+  ),
+  row.names = FALSE,
+  caption = paste0(
+    "Active settings. ebmf_settings_signature identifies the shared analysis ",
+    "settings this run resolved from _ebmf_settings.yml; two studies carrying ",
+    "the same signature were run on the same discovery settings."
+  )
+)
+```
+
+```{r run-helpers}
+discover_one_trait <- function(trait_object, trait_id) {
+  res <- run_univariate_clustering(
+    trait_object,
+    target_trait_id = as.integer(trait_id),
+    trait_subset = ebmf_settings$trait_subset,
+    min_snp_signals = as.integer(ebmf_settings$min_snp_signals),
+    compress_method = ebmf_settings$compress_method,
+    compress_scale = as.numeric(ebmf_settings$compress_scale),
+    ebmf_lfsr_threshold = as.numeric(ebmf_settings$ebmf_lfsr_threshold),
+    ebmf_magnitude_threshold = as.numeric(ebmf_settings$ebmf_magnitude_threshold),
+    ebmf_greedy_Kmax = as.integer(ebmf_settings$ebmf_greedy_Kmax),
+    ebmf_prior = ebmf_settings$ebmf_prior,
+    ebmf_backfit = isTRUE(ebmf_settings$ebmf_backfit),
+    min_module_size = as.integer(ebmf_settings$min_module_size)
+  )
+  smry <- summarise_ebmf_programs(
+    res, s_matrix = res$s_matrix,
+    edge_threshold = as.numeric(ebmf_settings$similarity_threshold),
+    min_module_size = as.integer(ebmf_settings$min_module_size),
+    coherence_n_perm = coherence_perm,
+    coherence_q_threshold = as.numeric(ebmf_settings$coherence_q),
+    n_null = 2, n_rep = 0, verbose = FALSE
+  )
+  return(extract_program_loadings(res, smry, valid_only = TRUE))
+}
+
+run_one_replicate <- function(spec, seed) {
+  # modifyList, not c(): the null version overrides K_shared, and c() would pass
+  # it twice.
+  sp <- do.call(
+    simulate_trait_pair,
+    c(utils::modifyList(generative_base, spec), list(seed = seed))
+  )
+  extraction <- lapply(names(sp$traits), function(tid) {
+    discover_one_trait(sp$traits[[tid]], tid)
+  })
+  names(extraction) <- names(sp$traits)
+
+  loadings <- dplyr::bind_rows(lapply(extraction, function(x) x$loadings))
+  profiles <- dplyr::bind_rows(lapply(extraction, function(x) x$profiles))
+  if (nrow(loadings) == 0) {
+    return(NULL)
+  }
+
+  prof <- compare_program_pairs_profiles(
+    extraction, n_perm = n_perm, fdr_threshold = params$fdr_threshold, seed = 1
+  )
+  loci <- compare_program_pairs_loadings(
+    extraction, n_perm = n_perm, fdr_threshold = params$fdr_threshold, seed = 1
+  )
+
+  map_profile <- map_programs_to_planted(profiles, sp$ground_truth, by = "drivers")
+  map_locus <- map_programs_to_planted(loadings, sp$ground_truth, by = "snps")
+
+  axis_rows <- dplyr::bind_rows(
+    cbind(
+      axis = "profile",
+      evaluate_multitrait_simulation(prof$pairs, map_profile, sp$ground_truth)
+    ),
+    cbind(
+      axis = "locus",
+      evaluate_multitrait_simulation(loci$pairs, map_locus, sp$ground_truth)
+    )
+  )
+  axis_rows$n_valid_a <- length(unique(extraction[[1]]$loadings$program_id))
+  axis_rows$n_valid_b <- length(unique(extraction[[2]]$loadings$program_id))
+  axis_rows$n_features_shared <- {
+    u <- shared_feature_universe(extraction)
+    if (nrow(u) > 0) u$n_features_shared[1] else NA_integer_
+  }
+  return(axis_rows)
+}
+
+mc_summary <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) == 0) {
+    return(list(est = NA_real_, se = NA_real_, n = 0L))
+  }
+  return(list(
+    est = mean(x),
+    se = if (length(x) > 1) stats::sd(x) / sqrt(length(x)) else NA_real_,
+    n = length(x)
+  ))
+}
+
+fmt_mc <- function(x, digits = 2) {
+  s <- mc_summary(x)
+  if (!is.finite(s$est)) {
+    return("--")
+  }
+  if (!is.finite(s$se)) {
+    return(formatC(s$est, format = "f", digits = digits))
+  }
+  return(sprintf(
+    "%s (%s)", formatC(s$est, format = "f", digits = digits),
+    formatC(s$se, format = "f", digits = digits)
+  ))
+}
+```
+
+```{r build-versions}
+versions <- list()
+for (po in as.numeric(params$profile_overlap)) {
+  for (lo in as.numeric(params$locus_overlap)) {
+    versions[[length(versions) + 1L]] <- list(
+      label = sprintf("locus_overlap = %.2f, profile_overlap = %.2f", lo, po),
+      family = "shared",
+      spec = list(locus_overlap = lo, profile_overlap = po)
+    )
+  }
+}
+# The null: two traits with programs of their own and no correspondence. Any
+# link is a false discovery, so this is the FDR arm.
+versions[[length(versions) + 1L]] <- list(
+  label = "null: K_shared = 0 (no shared programs)",
+  family = "null",
+  spec = list(locus_overlap = 0, profile_overlap = 0, K_shared = 0L)
+)
+```
+
+```{r run-study}
+replicate_errors <- list()
+results <- dplyr::bind_rows(lapply(seq_along(versions), function(v) {
+  spec <- versions[[v]]$spec
+  rows <- dplyr::bind_rows(lapply(seq_len(n_sim), function(r) {
+    out <- tryCatch(
+      run_one_replicate(spec, sim_seeds[[r]]),
+      error = function(e) {
+        # Recorded rather than swallowed: a version that silently drops every
+        # replicate would otherwise render as an empty row.
+        replicate_errors[[length(replicate_errors) + 1L]] <<- data.frame(
+          version = versions[[v]]$label, rep = r,
+          message = conditionMessage(e), stringsAsFactors = FALSE
+        )
+        NULL
+      }
+    )
+    if (is.null(out)) {
+      return(NULL)
+    }
+    out$rep <- r
+    return(out)
+  }))
+  if (nrow(rows) == 0) {
+    return(NULL)
+  }
+  rows$version <- versions[[v]]$label
+  rows$family <- versions[[v]]$family
+  return(rows)
+}))
+```
+
+```{r replicate-errors, results='asis'}
+if (length(replicate_errors) > 0) {
+  err <- dplyr::bind_rows(replicate_errors)
+  print(knitr::kable(
+    err |>
+      dplyr::group_by(version, message) |>
+      dplyr::summarise(n_failed = dplyr::n(), .groups = "drop"),
+    row.names = FALSE,
+    caption = paste0(
+      "Replicates that failed. Any row here means the version below is ",
+      "reported on fewer replicates than n_sim, or not at all."
+    )
+  ))
+}
+```
+
+## Does the profile axis recover programs the locus axis cannot?
+
+This is the headline table. Read the `locus_overlap = 0` rows first: there the
+two traits share a program but **no loci**, so the locus axis has nothing to form
+an inner product over, while the same program is still visible in the driver
+profile.
+
+```{r headline}
+shared_res <- results[results$family == "shared", , drop = FALSE]
+if (nrow(shared_res) == 0) {
+  cat("No replicates completed.\n\n")
+} else {
+  tbl <- shared_res |>
+    dplyr::group_by(version, axis) |>
+    dplyr::summarise(
+      links = fmt_mc(n_links, 1),
+      recall = fmt_mc(recall),
+      precision = fmt_mc(precision),
+      sign_accuracy = fmt_mc(sign_accuracy),
+      .groups = "drop"
+    ) |>
+    tidyr::pivot_wider(
+      names_from = axis,
+      values_from = c(links, recall, precision, sign_accuracy)
+    ) |>
+    dplyr::arrange(version)
+  print(knitr::kable(
+    tbl, row.names = FALSE,
+    caption = paste0(
+      "Link recovery by axis and input version (mean over ", n_sim,
+      " replicates, Monte Carlo SE in parentheses). recall is over planted ",
+      "shared programs, precision over discovered links, and sign_accuracy is ",
+      "computed on true-positive links only."
+    )
+  ))
+}
+```
+
+```{r headline-plot, fig.height=3.6}
+if (requireNamespace("ggplot2", quietly = TRUE) && nrow(shared_res) > 0) {
+  plot_df <- shared_res |>
+    dplyr::group_by(version, axis) |>
+    dplyr::summarise(
+      recall = mean(recall, na.rm = TRUE),
+      se = stats::sd(recall, na.rm = TRUE) / sqrt(dplyr::n()),
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(
+      locus_overlap = as.numeric(sub(".*locus_overlap = ([0-9.]+).*", "\\1", version)),
+      profile_overlap = sub(".*profile_overlap = ", "", version)
+    )
+  print(
+    ggplot2::ggplot(
+      plot_df,
+      ggplot2::aes(locus_overlap, recall, colour = axis, group = axis)
+    ) +
+      ggplot2::geom_line() +
+      ggplot2::geom_point(size = 2) +
+      ggplot2::facet_wrap(~ paste("profile overlap", profile_overlap)) +
+      ggplot2::scale_y_continuous(limits = c(0, 1)) +
+      ggplot2::labs(
+        x = "locus overlap (fraction of a shared program's SNPs common to both traits)",
+        y = "recall of planted shared programs", colour = "axis"
+      ) +
+      ggplot2::theme_minimal()
+  )
+}
+```
+
+## False discoveries when nothing is shared
+
+Under `K_shared = 0` the two traits have programs of their own and no
+correspondence, so every reported link is a false discovery and `links` is the
+FDR numerator directly.
+
+```{r null-arm}
+null_res <- results[results$family == "null", , drop = FALSE]
+if (nrow(null_res) == 0) {
+  cat("The null arm produced no completed replicates.\n\n")
+} else {
+  print(knitr::kable(
+    null_res |>
+      dplyr::group_by(axis) |>
+      dplyr::summarise(
+        false_links = fmt_mc(n_links, 2),
+        reps_with_any_link = sprintf(
+          "%d of %d", sum(n_links > 0), dplyr::n()
+        ),
+        .groups = "drop"
+      ),
+    row.names = FALSE,
+    caption = paste0(
+      "False-discovery output with no shared programs planted. false_links is ",
+      "the mean number of primary-tier links per replicate (Monte Carlo SE in ",
+      "parentheses); any value above 0 is a false discovery."
+    )
+  ))
+}
+```
+
+## Scale of each comparison
+
+Context for the tables above: how many programs survived per-trait validation,
+and how wide each matching axis was.
+
+```{r scale}
+if (nrow(results) > 0) {
+  print(knitr::kable(
+    results |>
+      dplyr::filter(axis == "profile") |>
+      dplyr::group_by(version) |>
+      dplyr::summarise(
+        valid_programs_trait_a = fmt_mc(n_valid_a, 1),
+        valid_programs_trait_b = fmt_mc(n_valid_b, 1),
+        shared_features = fmt_mc(n_features_shared, 0),
+        .groups = "drop"
+      ),
+    row.names = FALSE,
+    caption = paste0(
+      "Programs surviving per-trait validation and the size of the shared ",
+      "feature axis, per input version. A version where few programs survive ",
+      "validation cannot support either comparison, whatever the recall ",
+      "columns say."
+    )
+  ))
+}
+```
+
+## Notes for interpreting runs
+
+- **The two axes are scored on identical data.** Any difference between them is
+  a property of the statistics, not of the simulation, which is why this
+  comparison is meaningful even where the absolute recall numbers depend on the
+  generative settings.
+- **Recall is credited per planted program, not per link.** EBMF splits one
+  planted module into several factors, so counting links would reward splitting.
+- **`sign_accuracy` is conditional on a true positive.** A high value alongside a
+  low recall means the few links found were directionally right, not that
+  direction is well recovered overall.
+- **The mapping differs by axis by necessity.** The SNP table is sparse and maps
+  by set overlap; the feature table is dense (every background study carries some
+  loading on every program) so it maps by loading-weighted share against the
+  evenly-spread expectation. Using a set overlap on the dense table rejects even
+  a perfect match.
+- **Background realism is off by default.** `background_corr` and
+  `snp_pleiotropy_sd` default to 0, reproducing the historical independent,
+  random-signed background. The headline contrast between the two axes is
+  structural and largely insensitive to that, but the **null arm is not**: an FDR
+  measured in an unrealistic noise regime is as weak here as it is in the
+  univariate null study. Run the realism arms of the grid script before quoting
+  the FDR.
+- **Sample overlap is not simulated.** Two real target traits from the same
+  cohort share participants, which biases cross-trait statistics away from the
+  null. Nothing here reproduces that, so these FDRs are optimistic for
+  same-cohort pairs.

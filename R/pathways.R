@@ -357,8 +357,16 @@ enrich_snp_group_pathways <- function(groups,
 #'   \itemize{
 #'     \item by_program: list of per-program results (`program`, `n_snps`,
 #'       `comparison` with columns term_id, source, description, enrichment,
-#'       se, z, p, fdr, n_snps, n_category_snps; `fdr` is corrected across
-#'       every program and source tested -- `source` is a label only)
+#'       se, z, p, fdr, r_squared, n_snps, n_category_snps; `fdr` is corrected
+#'       across every program and source tested -- `source` is a label only.
+#'       `r_squared` is the fraction of this program's squared-loading
+#'       variance the pathway term explains -- unlike `enrichment` it is
+#'       bounded in [0, 1] and comparable across programs and sources, which
+#'       is what makes a fixed threshold on it (e.g. Cohen's 1988 benchmarks:
+#'       0.01 small, 0.09 medium, 0.25 large) meaningful. It is not an
+#'       independent effect-size-vs-power axis here: with `n_snps` roughly
+#'       fixed per program, `r_squared` is close to a monotonic function of
+#'       `p`.
 #'     \item summary: one row per program (`n_pathways_tested`, `n_enriched`,
 #'       `top_pathway`)
 #'     \item mappings: the `pathway_mappings()` result used
@@ -411,7 +419,8 @@ enrich_program_loadings_pathways <- function(clustering_result,
   empty_comparison <- data.frame(
     term_id = character(0), source = character(0), description = character(0),
     enrichment = numeric(0), se = numeric(0), z = numeric(0), p = numeric(0),
-    fdr = numeric(0), n_snps = integer(0), n_category_snps = integer(0),
+    fdr = numeric(0), r_squared = numeric(0), n_snps = integer(0),
+    n_category_snps = integer(0),
     stringsAsFactors = FALSE
   )
 
@@ -449,7 +458,7 @@ enrich_program_loadings_pathways <- function(clustering_result,
       comparison <- comparison |>
         dplyr::left_join(pathway_labels, by = c("term_id", "source")) |>
         dplyr::select(
-          term_id, source, description, enrichment, se, z, p,
+          term_id, source, description, enrichment, se, z, p, r_squared,
           n_snps, n_category_snps
         )
     } else {
@@ -468,7 +477,7 @@ enrich_program_loadings_pathways <- function(clustering_result,
       comparison$fdr <- pooled_fdr[(offset + 1L):(offset + n)]
       comparison <- comparison |>
         dplyr::select(
-          term_id, source, description, enrichment, se, z, p, fdr,
+          term_id, source, description, enrichment, se, z, p, fdr, r_squared,
           n_snps, n_category_snps
         ) |>
         dplyr::arrange(fdr, p)

@@ -11,6 +11,8 @@ summarise_ebmf_programs(
   min_module_size = 5L,
   min_mean_internal = 0.3,
   min_connectedness = 0.5,
+  coherence_n_perm = 2000L,
+  coherence_q_threshold = 0.05,
   n_null = 10,
   alpha_membership = 0.05,
   n_candidate_tier = 25L,
@@ -21,7 +23,7 @@ summarise_ebmf_programs(
   posterior_stat = c("median", "mean"),
   posterior_evidence_cap = 50,
   redundancy_threshold = 0.9,
-  snp_redundancy_threshold = 0.9,
+  snp_redundancy_threshold = 0.75,
   seed = 1,
   cores = 1,
   verbose = TRUE
@@ -39,11 +41,19 @@ Defaults to \code{clustering_result$s_matrix}.}
 \item{min_module_size}{Minimum assigned SNPs for the coherence metrics to be
 meaningful and for \code{size_pass}. Defaults to \code{5}.}
 
-\item{min_mean_internal}{Minimum mean internal SNP similarity for
-\code{internal_pass}. Defaults to \code{0.3}.}
+\item{min_mean_internal}{Minimum mean internal SNP similarity. Reported as
+\code{internal_similarity_pass} for comparison with earlier runs; it no longer
+gates \code{status}. Defaults to \code{0.3}.}
 
-\item{min_connectedness}{Minimum pair-connectedness for \code{internal_pass}.
-Defaults to \code{0.5}.}
+\item{min_connectedness}{Minimum pair-connectedness. Reported as
+\code{connectedness_pass} for comparison; it no longer gates \code{status}. Defaults
+to \code{0.5}.}
+
+\item{coherence_n_perm}{Permutations per program for the loading-permutation
+coherence null. Defaults to \code{2000}.}
+
+\item{coherence_q_threshold}{BH-adjusted q below which \code{coherence_pass} is
+TRUE. Defaults to \code{0.05}.}
 
 \item{n_null}{Number of permutation nulls for membership calibration.}
 
@@ -77,7 +87,9 @@ preserving the ordering. Defaults to \code{50}.}
 another program before \code{redundant} is flagged.}
 
 \item{snp_redundancy_threshold}{Maximum reciprocal SNP-containment
-(\code{max_pair_redundancy}) before \code{redundancy_pass} fails. Defaults to \code{0.9}.}
+(\code{max_pair_redundancy}) before \code{redundancy_pass} fails. Defaults to \code{0.75};
+at \code{0.9} the check never bound on real data, where the observed maximum
+containment was \code{0.5}.}
 
 \item{seed}{RNG seed.}
 
@@ -109,17 +121,19 @@ pass/fail flags and an overall \code{status}.
 
 Filters applied (a program must pass all four to get \code{status == "valid"}):
 \itemize{
-\item \strong{Size / internal coherence} — at least \code{min_module_size}
-EBMF-supported SNPs (\code{n_snps}), mean internal SNP similarity
-\verb{>= min_mean_internal}, and pair connectedness \verb{>= min_connectedness} on
-the SNP similarity graph. The mean (and median) pairwise similarity and
-the connectedness score come from the existing SNP-SNP similarity
-framework; \code{min_module_size} ensures the metrics are computed on enough
-filtered SNPs to be meaningful. \code{n_snps_filtered} reports the subset of
-EBMF-supported SNPs that also passes the lFSR/magnitude filter.
-Each component is reported as its own pass column — \code{size_pass},
-\code{internal_similarity_pass}, \code{connectedness_pass} — and \code{internal_pass}
-combines all three.
+\item \strong{Size} — at least \code{min_module_size} SNPs passing the
+lFSR/magnitude filter (\code{n_snps_filtered}). This is an interpretability
+floor, not a discriminating gate: a two-SNP program cannot be annotated.
+\item \strong{Coherence} — the program's loading vector must be aligned with
+the SNP similarity graph more than a random reassignment of the same
+loadings would be (\code{coherence_q < coherence_q_threshold}, from
+\code{calibrate_program_coherence()}). This uses every SNP weighted by its
+squared posterior loading, so it does not depend on the lFSR/magnitude
+cutoff, and it is calibrated against the graph's own null, so it transfers
+between datasets whose similarity baselines differ. \code{size_pass} and
+\code{coherence_pass} are reported separately and \code{internal_pass} combines them.
+The hard-gated \code{mean_internal_similarity} and \code{connectedness} are still
+reported for comparison but no longer decide \code{status}.
 \item \strong{Trait-subsampling stability} — the top-loading SNPs must be
 recovered with replication \verb{>= stability_threshold} when \code{1 - frac_traits}
 of the traits are held out and flashier is refit. Because this refits

@@ -313,7 +313,7 @@ stability_ebmf_programs <- function(clustering_result,
       keep_membership(posterior$lfsr, posterior$abs_loading)
     s <- posterior$snp_id[rows]
     loading <- posterior$abs_loading[rows]
-    s[order(-loading)][seq_len(min(top_n, length(s)))]
+    s[order(-loading)][seq_len(.stability_ref_size(top_n, length(s)))]
   })
   names(ref_sets) <- sort(unique(posterior$program))
 
@@ -329,7 +329,11 @@ stability_ebmf_programs <- function(clustering_result,
       greedy_Kmax = params$ebmf_greedy_Kmax,
       lfsr_threshold = params$ebmf_lfsr_threshold,
       magnitude_threshold = params$ebmf_magnitude_threshold,
-      drop_global = FALSE,
+      # Must match the main fit. With drop_global = FALSE the refits keep a
+      # global factor the reference fit had removed, so programs resembling it
+      # lose their top-loading SNPs to that factor and their replication is
+      # depressed for a structural reason rather than a stability one.
+      drop_global = isTRUE(params$ebmf_drop_global),
       prior = params$ebmf_prior,
       backfit = params$ebmf_backfit
     )$details$flash_fit
@@ -350,7 +354,7 @@ stability_ebmf_programs <- function(clustering_result,
       }
       ids <- ids[keep]
       loading <- abs_loading[keep]
-      ids[order(-loading)][seq_len(min(top_n, length(ids)))]
+      ids[order(-loading)][seq_len(.stability_ref_size(top_n, length(ids)))]
     })
   }
 
@@ -394,4 +398,17 @@ stability_ebmf_programs <- function(clustering_result,
   }))
 
   return(scores[order(-scores$replication), , drop = FALSE])
+}
+
+
+# Size of the top-loading reference set used for stability matching. A flat
+# top_n measures programs on different fractions of themselves -- a 7-SNP
+# program is matched on all 7 of itself while a 265-SNP program is matched on
+# its top 20 -- which makes replication track program size rather than
+# stability. Capping at half the program's SNPs keeps the fraction comparable.
+.stability_ref_size <- function(top_n, n_available) {
+  if (n_available <= 0) {
+    return(0L)
+  }
+  return(as.integer(max(1L, min(as.integer(top_n), ceiling(n_available / 2)))))
 }

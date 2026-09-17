@@ -25,11 +25,11 @@ simulate_trait(
   p_active_background = 0.08,
   background_sparsity_sd = 1.2,
   background_effect_scale = 0.75,
+  background_corr = 0,
+  n_bg_factors = 4L,
+  snp_pleiotropy_sd = 0,
   effect_tail = 0.4,
-  n_hub_traits = NULL,
-  hub_snp_fraction = c(0.3, 1),
   target_pattern = c("dense", "module"),
-  p_negative = 0.05,
   overlap_fraction = 0.2,
   snps_per_trait = NULL,
   traits_per_snp = NULL,
@@ -129,7 +129,9 @@ per-trait multipliers on the background activation probabilities. Zero
 gives every background trait the same density; positive values
 draw heavy-tailed per-trait rates so most background traits are observed
 at only a couple of SNPs while a tail is much denser, matching the
-per-trait sparsity distribution of real pleiotropy matrices.
+per-trait sparsity distribution of real pleiotropy matrices. The
+multipliers are normalised to mean 1, so this varies the \emph{shape} of the
+per-trait density distribution at a constant mean density.
 Default 1.2.}
 
 \item{background_effect_scale}{Relative magnitude of unstructured
@@ -143,6 +145,25 @@ relative effect-size parameter, not a significance threshold: it changes
 the \emph{distribution} of background magnitudes without clipping or
 guaranteeing significance. Default 0.75.}
 
+\item{background_corr}{How strongly background traits share low-rank
+structure over SNPs, between 0 and 1. At \code{0} (default) background effects
+are independent with random signs, so they contribute nothing to SNP-SNP
+similarity and the induced similarity graph sits near zero. Real
+pleiotropy matrices have correlated background traits and a similarity
+baseline around 0.35 even with the target row removed; raising this is
+what reproduces that. See \code{simulated_graph_diagnostics()}.}
+
+\item{n_bg_factors}{Number of latent components making up the shared
+background structure when \code{background_corr > 0}. Default 4.}
+
+\item{snp_pleiotropy_sd}{Standard deviation (on the log scale) of per-SNP
+multipliers on the background activation probabilities -- the column-wise
+analogue of \code{background_sparsity_sd}, normalised to mean 1. Zero (default)
+observes every SNP at about the same number of traits. Real SNPs vary
+widely, and that heterogeneity is what produces both sparse SNPs with high
+pairwise cosines and SNP pairs sharing no traits at all. See
+\code{simulated_graph_diagnostics()}.}
+
 \item{effect_tail}{Standard deviation (on the log scale) of a per-\emph{trait}
 lognormal multiplier applied to a driver trait's effects across all of its
 module's SNPs. Zero keeps every driver trait at (approximately)
@@ -151,30 +172,12 @@ across-trait heterogeneity of real modules (different driver traits have
 different typical effect sizes) while preserving the correlation of a
 trait's values across the SNPs it drives. Default 0.4.}
 
-\item{n_hub_traits}{Number of background traits planted as pleiotropic
-\strong{hubs}: dense rows (observed at a fraction of SNPs drawn from
-\code{hub_snp_fraction}) whose cells are significant and mostly positive in
-the oriented frame (sign flips follow \code{p_negative}), creating the global
-baseline similarity and mega-factor structure that competes with the
-planted modules — the way real pleiotropy matrices contain a core of
-highly pleiotropic traits hitting most loci with target-aligned effects.
-\code{NULL} (default) auto-plants ~3\% of background traits (clamped to the
-number of background traits available); set to \code{0L} to disable.}
-
-\item{hub_snp_fraction}{Range \code{c(min, max)} of the fraction of SNPs at
-which each hub trait is observed. Defaults to \code{c(0.3, 1)}.}
-
 \item{target_pattern}{Target-trait row regime: \code{"dense"} (default) gives
 the target trait a significant, heavy-tailed positive z-score at \strong{every}
 SNP (magnitude \code{effect_size[1] * lognormal(0, 0.5)}), matching a real
 target-trait row in the oriented frame — informative about nothing but its
 own strength; \code{"module"} gives the target trait elevated signal at module
 SNPs and noise elsewhere.}
-
-\item{p_negative}{Probability that an individual driver cell within module
-support has its sign flipped, emulating the minority of cells that
-disagree with the target-trait orientation in real data. Default 0.05.
-Set to \code{NULL} to keep the \code{sign_pattern} regime untouched.}
 
 \item{overlap_fraction}{Fraction of each module's SNPs (for \code{overlap = "partial"}) borrowed from the previous module's core, giving modules
 soft SNP boundaries and non-empty \code{multi_module_snps} without full
@@ -237,17 +240,16 @@ the accompanying ground truth supports recovery scoring via
 
 By default the generative parameters are calibrated to the messy marginals
 of a real pleiotropy matrix: driver effects are heavy-tailed across traits
-(\code{effect_tail = 0.4}) with a minority of cells disagreeing with the target
-orientation (\code{p_negative = 0.05}), background densities are heavy-tailed
-per trait (\code{background_sparsity_sd = 1.2}), a proportion of pleiotropic
-\strong{hub} traits is planted automatically (\code{n_hub_traits = NULL}), and the
-target row is dense and significant at every SNP (\code{target_pattern = "dense"}). Unstructured background associations are drawn from a
-standardised heavy-tailed distribution scaled relative to the planted
-modules by \code{background_effect_scale} (a relative effect-size parameter, not
-a significance threshold). Simulations built this way are genuinely hard —
+(\code{effect_tail = 0.4}), background densities are heavy-tailed per trait
+(\code{background_sparsity_sd = 1.2}), and the target row is dense and
+significant at every SNP (\code{target_pattern = "dense"}). Unstructured
+background associations are drawn from a standardised heavy-tailed
+distribution scaled relative to the planted modules by
+\code{background_effect_scale} (a relative effect-size parameter, not a
+significance threshold). Simulations built this way are genuinely hard —
 recovery is partial and noisy rather than trivially perfect, so the
 validation gates and parameter trade-offs can actually be tested. Each
-realism knob can be turned off individually (e.g. \code{background_effect_scale = 0}, \code{n_hub_traits = 0L}).
+realism knob can be turned off individually (e.g. \code{background_effect_scale = 0}).
 
 Structure: \code{n_coloc_groups} SNPs (one coloc group / locus each) define the
 total number of SNPs (trait x SNP matrix columns). \code{K} module regions are

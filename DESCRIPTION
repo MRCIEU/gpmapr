@@ -21,7 +21,8 @@ Imports:
     parallel,
     readr,
     tidyLPA,
-    tidyr
+    tidyr,
+    yaml
 Suggests: 
     DiagrammeR,
     ggplot2,

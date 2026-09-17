@@ -226,3 +226,120 @@ test_that("build_program_families accepts the concordance result unchanged", {
   # locus_concordance now populates the family metric that was silently NA.
   expect_true(is.finite(fam$families$mean_locus_concordance[1]))
 })
+
+# --- Profile axis ----------------------------------------------------------
+
+# Two traits, two programs each. Program 1 of each trait shares a trait
+# PROFILE (the same background studies load on it, same sign) but acts at
+# DISJOINT loci. Program 2 of each is unrelated noise. This is the case the
+# locus axis cannot see by construction and the profile axis exists for.
+make_profile_fixture <- function(n_features = 40, seed = 1) {
+  set.seed(seed)
+  shared_profile <- stats::rnorm(n_features)
+  mk_loadings <- function(tid, loci) {
+    dplyr::bind_rows(lapply(1:2, function(k) {
+      data.frame(
+        program_id = paste0(tid, ":", k), trait_id = tid,
+        trait_name = paste0("trait", tid), program = k,
+        snp_id = loci, coloc_group_id = loci, chr = 1L, bp = seq_along(loci),
+        loading = stats::rnorm(length(loci)), abs_loading = 1,
+        lfsr = 0.01, high_confidence = TRUE, stringsAsFactors = FALSE
+      )
+    }))
+  }
+  mk_profiles <- function(tid) {
+    feats <- paste0("f", seq_len(n_features))
+    dplyr::bind_rows(
+      data.frame(
+        program_id = paste0(tid, ":1"), trait_id = tid,
+        trait_name = paste0("trait", tid), program = 1L,
+        feature_trait_id = feats, feature_trait_name = feats,
+        loading = shared_profile + stats::rnorm(n_features, 0, 0.1),
+        lfsr = 0.01, stringsAsFactors = FALSE
+      ),
+      data.frame(
+        program_id = paste0(tid, ":2"), trait_id = tid,
+        trait_name = paste0("trait", tid), program = 2L,
+        feature_trait_id = feats, feature_trait_name = feats,
+        loading = stats::rnorm(n_features), lfsr = 0.01,
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+  list(
+    list(loadings = mk_loadings("1992", paste0("locusA", 1:12)),
+         profiles = mk_profiles("1992")),
+    list(loadings = mk_loadings("1993", paste0("locusB", 1:12)),
+         profiles = mk_profiles("1993"))
+  )
+}
+
+test_that("shared_feature_universe reports both axes", {
+  pd <- make_profile_fixture()
+  u <- shared_feature_universe(pd)
+  expect_equal(nrow(u), 1)
+  expect_equal(u$n_features_shared, 40)
+  # The loci are disjoint by construction, which is the whole point.
+  expect_equal(u$n_loci_shared, 0)
+  expect_gt(u$n_features_shared, u$n_loci_shared)
+})
+
+test_that("profile axis links programs the locus axis cannot see", {
+  pd <- make_profile_fixture()
+
+  prof <- compare_program_pairs_profiles(pd, n_perm = 499, seed = 2)
+  link <- prof$pairs[
+    prof$pairs$program_id_a == "1992:1" & prof$pairs$program_id_b == "1993:1", 
+  ]
+  expect_equal(nrow(link), 1)
+  expect_equal(link$link_tier, "primary")
+  expect_equal(link$direction, "concordant")
+  expect_gt(link$n_features_axis, 30)
+
+  # The unrelated pair must not link.
+  noise <- prof$pairs[
+    prof$pairs$program_id_a == "1992:2" & prof$pairs$program_id_b == "1993:2", 
+  ]
+  expect_true(is.na(noise$link_tier) || noise$link_tier != "primary")
+
+  # Same data on the locus axis: the shared programs have no loci in common,
+  # so there is nothing to score.
+  loci <- compare_program_pairs_loadings(pd, n_perm = 199, seed = 2)
+  expect_true(all(loci$pairs$n_loci_axis == 0))
+  expect_true(all(is.na(loci$pairs$concordance_z)))
+})
+
+test_that("profile concordance is sign-aware", {
+  pd <- make_profile_fixture()
+  # Flip trait 1993's program 1 profile: the pair should still link, but as
+  # antagonistic rather than concordant.
+  flip <- pd[[2]]$profiles$program_id == "1993:1"
+  pd[[2]]$profiles$loading[flip] <- -pd[[2]]$profiles$loading[flip]
+
+  prof <- compare_program_pairs_profiles(pd, n_perm = 499, seed = 2)
+  link <- prof$pairs[
+    prof$pairs$program_id_a == "1992:1" & prof$pairs$program_id_b == "1993:1", 
+  ]
+  expect_equal(link$direction, "antagonistic")
+  expect_lt(link$concordance_z, 0)
+})
+
+test_that("module_rg uses only the module's own loci", {
+  # Two programs claiming 4 of the 20 shared loci. The old behaviour used all
+  # 20 for every pair, so n_loci_rg was identical across pairs regardless of
+  # what the programs actually claimed.
+  loci <- paste0("cg", 1:20)
+  mk <- function(tid, claimed) {
+    data.frame(
+      program_id = paste0(tid, ":1"), trait_id = tid,
+      trait_name = paste0("t", tid), program = 1L,
+      snp_id = loci, coloc_group_id = loci, chr = 1L, bp = seq_along(loci),
+      loading = 1, abs_loading = 1, lfsr = 0.01,
+      high_confidence = loci %in% claimed, stringsAsFactors = FALSE
+    )
+  }
+  ld <- dplyr::bind_rows(mk("1", loci[1:4]), mk("2", loci[3:6]))
+  axis <- gpmapr:::.module_locus_axis(ld, "1:1", "2:1", "1", "2")
+  expect_setequal(axis, loci[1:6])
+  expect_lt(length(axis), length(gpmapr:::.shared_locus_axis(ld, "1", "2")))
+})

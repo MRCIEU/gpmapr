@@ -8,19 +8,17 @@
 #'
 #' By default the generative parameters are calibrated to the messy marginals
 #' of a real pleiotropy matrix: driver effects are heavy-tailed across traits
-#' (`effect_tail = 0.4`) with a minority of cells disagreeing with the target
-#' orientation (`p_negative = 0.05`), background densities are heavy-tailed
-#' per trait (`background_sparsity_sd = 1.2`), a proportion of pleiotropic
-#' **hub** traits is planted automatically (`n_hub_traits = NULL`), and the
-#' target row is dense and significant at every SNP (`target_pattern =
-#' "dense"`). Unstructured background associations are drawn from a
-#' standardised heavy-tailed distribution scaled relative to the planted
-#' modules by `background_effect_scale` (a relative effect-size parameter, not
-#' a significance threshold). Simulations built this way are genuinely hard —
+#' (`effect_tail = 0.4`), background densities are heavy-tailed per trait
+#' (`background_sparsity_sd = 1.2`), and the target row is dense and
+#' significant at every SNP (`target_pattern = "dense"`). Unstructured
+#' background associations are drawn from a standardised heavy-tailed
+#' distribution scaled relative to the planted modules by
+#' `background_effect_scale` (a relative effect-size parameter, not a
+#' significance threshold). Simulations built this way are genuinely hard —
 #' recovery is partial and noisy rather than trivially perfect, so the
 #' validation gates and parameter trade-offs can actually be tested. Each
 #' realism knob can be turned off individually (e.g. `background_effect_scale =
-#' 0`, `n_hub_traits = 0L`).
+#' 0`).
 #'
 #' Structure: `n_coloc_groups` SNPs (one coloc group / locus each) define the
 #' total number of SNPs (trait x SNP matrix columns). `K` module regions are
@@ -123,8 +121,26 @@
 #'   gives every background trait the same density; positive values
 #'   draw heavy-tailed per-trait rates so most background traits are observed
 #'   at only a couple of SNPs while a tail is much denser, matching the
-#'   per-trait sparsity distribution of real pleiotropy matrices.
+#'   per-trait sparsity distribution of real pleiotropy matrices. The
+#'   multipliers are normalised to mean 1, so this varies the *shape* of the
+#'   per-trait density distribution at a constant mean density.
 #'   Default 1.2.
+#' @param background_corr How strongly background traits share low-rank
+#'   structure over SNPs, between 0 and 1. At `0` (default) background effects
+#'   are independent with random signs, so they contribute nothing to SNP-SNP
+#'   similarity and the induced similarity graph sits near zero. Real
+#'   pleiotropy matrices have correlated background traits and a similarity
+#'   baseline around 0.35 even with the target row removed; raising this is
+#'   what reproduces that. See `simulated_graph_diagnostics()`.
+#' @param n_bg_factors Number of latent components making up the shared
+#'   background structure when `background_corr > 0`. Default 4.
+#' @param snp_pleiotropy_sd Standard deviation (on the log scale) of per-SNP
+#'   multipliers on the background activation probabilities -- the column-wise
+#'   analogue of `background_sparsity_sd`, normalised to mean 1. Zero (default)
+#'   observes every SNP at about the same number of traits. Real SNPs vary
+#'   widely, and that heterogeneity is what produces both sparse SNPs with high
+#'   pairwise cosines and SNP pairs sharing no traits at all. See
+#'   `simulated_graph_diagnostics()`.
 #' @param background_effect_scale Relative magnitude of unstructured
 #'   background (and spurious off-support) associations compared with the
 #'   planted module effect size. Background magnitudes are drawn from a
@@ -142,27 +158,12 @@
 #'   across-trait heterogeneity of real modules (different driver traits have
 #'   different typical effect sizes) while preserving the correlation of a
 #'   trait's values across the SNPs it drives. Default 0.4.
-#' @param n_hub_traits Number of background traits planted as pleiotropic
-#'   **hubs**: dense rows (observed at a fraction of SNPs drawn from
-#'   `hub_snp_fraction`) whose cells are significant and mostly positive in
-#'   the oriented frame (sign flips follow `p_negative`), creating the global
-#'   baseline similarity and mega-factor structure that competes with the
-#'   planted modules — the way real pleiotropy matrices contain a core of
-#'   highly pleiotropic traits hitting most loci with target-aligned effects.
-#'   `NULL` (default) auto-plants ~3% of background traits (clamped to the
-#'   number of background traits available); set to `0L` to disable.
-#' @param hub_snp_fraction Range `c(min, max)` of the fraction of SNPs at
-#'   which each hub trait is observed. Defaults to `c(0.3, 1)`.
 #' @param target_pattern Target-trait row regime: `"dense"` (default) gives
 #'   the target trait a significant, heavy-tailed positive z-score at **every**
 #'   SNP (magnitude `effect_size[1] * lognormal(0, 0.5)`), matching a real
 #'   target-trait row in the oriented frame — informative about nothing but its
 #'   own strength; `"module"` gives the target trait elevated signal at module
 #'   SNPs and noise elsewhere.
-#' @param p_negative Probability that an individual driver cell within module
-#'   support has its sign flipped, emulating the minority of cells that
-#'   disagree with the target-trait orientation in real data. Default 0.05.
-#'   Set to `NULL` to keep the `sign_pattern` regime untouched.
 #' @param overlap_fraction Fraction of each module's SNPs (for `overlap =
 #'   "partial"`) borrowed from the previous module's core, giving modules
 #'   soft SNP boundaries and non-empty `multi_module_snps` without full
@@ -226,11 +227,11 @@ simulate_trait <- function(n_coloc_groups = 100,
                            p_active_background = 0.08,
                            background_sparsity_sd = 1.2,
                            background_effect_scale = 0.75,
+                           background_corr = 0,
+                           n_bg_factors = 4L,
+                           snp_pleiotropy_sd = 0,
                            effect_tail = 0.4,
-                           n_hub_traits = NULL,
-                           hub_snp_fraction = c(0.3, 1),
                            target_pattern = c("dense", "module"),
-                           p_negative = 0.05,
                            overlap_fraction = 0.2,
                            snps_per_trait = NULL,
                            traits_per_snp = NULL,
@@ -340,26 +341,6 @@ simulate_trait <- function(n_coloc_groups = 100,
   scalar_nonneg(effect_tail, "effect_tail")
   scalar_nonneg(background_sparsity_sd, "background_sparsity_sd")
   scalar_nonneg(background_effect_scale, "background_effect_scale")
-  n_hub_traits_auto <- is.null(n_hub_traits)
-  if (!n_hub_traits_auto) {
-    if (!is.numeric(n_hub_traits) || length(n_hub_traits) != 1L ||
-        !is.finite(n_hub_traits) || n_hub_traits < 0 ||
-        n_hub_traits != floor(n_hub_traits)) {
-      stop("n_hub_traits must be NULL or a non-negative integer")
-    }
-    n_hub_traits <- as.integer(n_hub_traits)
-  }
-  if (!is.numeric(hub_snp_fraction) || length(hub_snp_fraction) != 2L ||
-      any(!is.finite(hub_snp_fraction)) || any(hub_snp_fraction < 0) ||
-      any(hub_snp_fraction > 1) || hub_snp_fraction[1] > hub_snp_fraction[2]) {
-    stop("hub_snp_fraction must be c(min, max) within [0, 1] with min <= max")
-  }
-  if (!is.null(p_negative)) {
-    if (!is.numeric(p_negative) || length(p_negative) != 1L ||
-        !is.finite(p_negative) || p_negative < 0 || p_negative > 1) {
-      stop("p_negative must be NULL or a number between 0 and 1")
-    }
-  }
   if (!is.numeric(overlap_fraction) || length(overlap_fraction) != 1L ||
       !is.finite(overlap_fraction) || overlap_fraction < 0 ||
       overlap_fraction > 1) {
@@ -488,6 +469,7 @@ simulate_trait <- function(n_coloc_groups = 100,
     }
   }
 
+  driver_group_of_snp <- NULL
   if (n_driver_rows > 0) {
     n_shared_per_module <- floor(n_traits_per_module * driver_sharing)
     n_groups <- max(1L, as.integer(snp_driver_groups))
@@ -497,6 +479,20 @@ simulate_trait <- function(n_coloc_groups = 100,
         idx <- geometry$memberships[[m]]
         g <- cut(seq_along(idx), breaks = n_groups, labels = FALSE)
         snp_groups[[m]] <- stats::setNames(g, colnames(M)[idx])
+      }
+      # The finer level of the planted truth. With snp_driver_groups > 1 each
+      # module is split into sub-groups that different driver traits act on, so
+      # the truth is hierarchical and a method that recovers the sub-groups is
+      # not wrong -- scoring it only against module_of_snp reports that as a
+      # failure. evaluate_univariate_simulation() scores against both levels.
+      driver_group_of_snp <- stats::setNames(
+        rep(0L, ncol(M)), colnames(M)
+      )
+      for (m in seq_len(K)) {
+        g <- snp_groups[[m]]
+        if (!is.null(g)) {
+          driver_group_of_snp[names(g)] <- as.integer(m * 100L + g)
+        }
       }
     }
     drivers_per_group <- n_traits_per_module / n_groups
@@ -546,9 +542,6 @@ simulate_trait <- function(n_coloc_groups = 100,
           }
           vals <- effect_size[m] * roster$effect_mult[pos[k]] * effect_z *
             trait_scale + stats::rnorm(n_fill, 0, noise_sd)
-          if (!is.null(p_negative)) {
-            vals <- ifelse(stats::runif(n_fill) < p_negative, -vals, vals)
-          }
           M[row, in_module] <- ifelse(active, vals, NA_real_)
           filled <- c(filled, in_module)
         }
@@ -567,86 +560,61 @@ simulate_trait <- function(n_coloc_groups = 100,
   }
   if (n_bg_traits > 0) {
     bg_rate_mult <- if (background_sparsity_sd > 0) {
-      stats::rlnorm(n_bg_traits, 0, background_sparsity_sd)
+      # Normalised to mean 1. Without dividing by exp(sd^2/2) the lognormal
+      # multiplier also raises the *mean* background density (about 2x at
+      # sd = 1.2 and 5x at sd = 1.8), so the background_sparsity_sd axis would
+      # confound per-trait heterogeneity with overall density instead of
+      # varying shape at a constant mean.
+      stats::rlnorm(n_bg_traits, 0, background_sparsity_sd) /
+        exp(background_sparsity_sd^2 / 2)
     } else {
       NULL
     }
-    hub_idx <- integer(0)
-    hub_scale <- NULL
-    hub_latent <- NULL
-    if (n_hub_traits_auto) {
-      # Realism default: plant ~3% of background traits as pleiotropic hubs.
-      n_hub_traits <- as.integer(round(0.03 * n_bg_traits))
-    }
-    if (n_hub_traits > 0) {
-      bg_positions <- seq_len(n_bg_traits)
-      hub_candidates <- bg_positions
-      if (length(hub_candidates) < n_hub_traits) {
-        if (n_hub_traits_auto) {
-          n_hub_traits <- length(hub_candidates)
-        } else {
-          stop(
-            "n_hub_traits (", n_hub_traits, ") exceeds the ",
-            "background traits available (", length(hub_candidates), ")"
-          )
-        }
-      }
-      if (n_hub_traits > 0) {
-        hub_idx <- sample(hub_candidates, n_hub_traits)
-      # Per-hub magnitude scale and a shared per-SNP strength latent: dense,
-      # mostly-positive (in the oriented frame) rows that are also mutually
-      # correlated through the shared latent, so they read as one global
-      # factor competing with the modules — the way real pleiotropy matrices
-      # contain a core of traits hitting most loci with target-aligned effects.
-        hub_scale <- stats::rlnorm(n_hub_traits, 0, 0.25)
-        # Wide shared per-SNP latent so hub rows are strongly mutually
-        # correlated despite per-cell sign flips.
-        hub_latent <- stats::rlnorm(n_snps, 0, 0.9)
-      }
+    # Shared low-rank structure across background traits. Drawn once and reused
+    # by every background row, so two SNPs loading on the same component are
+    # similar to each other. Without this, background effects are independent
+    # and random-signed and contribute nothing at all to SNP-SNP similarity,
+    # which leaves the simulated similarity graph near zero while a real one
+    # sits around 0.35.
+    bg_components <- .sim_background_components(
+      n_snps = n_snps,
+      n_bg_traits = n_bg_traits,
+      n_bg_factors = n_bg_factors,
+      background_corr = background_corr
+    )
+    # Per-SNP pleiotropy multiplier, the column-wise analogue of
+    # bg_rate_mult. Real SNPs differ enormously in how many traits they
+    # associate with, and that heterogeneity is what produces sparse SNPs whose
+    # few shared traits give high pairwise cosines, alongside pairs that share
+    # no traits at all. Without it every SNP is observed at about the same
+    # number of traits and the similarity distribution has no upper tail.
+    snp_rate_mult <- if (snp_pleiotropy_sd > 0) {
+      stats::rlnorm(n_snps, 0, snp_pleiotropy_sd) /
+        exp(snp_pleiotropy_sd^2 / 2)
+    } else {
+      rep(1, n_snps)
     }
     for (t in seq_along(bg_tids)) {
       row <- as.character(bg_tids[t])
-      if (n_hub_traits > 0 && t %in% hub_idx) {
-        h <- match(t, hub_idx)
-        hub_frac <- stats::runif(
-          1,
-          min = hub_snp_fraction[1],
-          max = hub_snp_fraction[2]
-        )
-        act <- stats::runif(n_snps) < hub_frac
-        vals <- rep(NA_real_, n_snps)
-        # Magnitude rides the shared per-SNP latent (hub rows correlate) on
-        # the module effect scale; the per-hub scale sets each trait's
-        # typical size.
-        hub_mag <- hub_scale[h] * hub_latent * effect_size[1]
-        hub_sign <- if (!is.null(p_negative)) {
-          ifelse(stats::runif(n_snps) < p_negative, -1, 1)
-        } else {
-          rep(1, n_snps)
-        }
-        vals[act] <- hub_sign[act] * hub_mag[act] +
-          stats::rnorm(sum(act), 0, noise_sd)
-        M[row, ] <- vals
+      base_prob <- p_active_background
+      act_prob <- if (!is.null(bg_rate_mult)) {
+        base_prob * bg_rate_mult[t]
       } else {
-        base_prob <- p_active_background
-        act_prob <- if (!is.null(bg_rate_mult)) {
-          min(1, base_prob * bg_rate_mult[t])
-        } else {
-          base_prob
-        }
-        act <- stats::runif(n_snps) < act_prob
-        vals <- rep(NA_real_, n_snps)
-        # Background magnitudes come from the standardised heavy-tailed
-        # distribution scaled relative to the module effect size; they are not
-        # floored at a significance threshold.
-        n_act <- sum(act)
-        if (n_act > 0) {
-          vals[act] <- .sim_background_effects(
-            n_act, background_effect_scale, effect_size[1]
-          )
-        }
-        M[row, ] <- vals
+        base_prob
       }
+      act <- stats::runif(n_snps) < pmin(1, act_prob * snp_rate_mult)
+      vals <- rep(NA_real_, n_snps)
+      # Background magnitudes come from the standardised heavy-tailed
+      # distribution scaled relative to the module effect size; they are not
+      # floored at a significance threshold.
+      n_act <- sum(act)
+      if (n_act > 0) {
+        vals[act] <- .sim_background_effects(
+          n_act, background_effect_scale, effect_size[1],
+          shared = if (is.null(bg_components)) NULL else bg_components[t, act]
+        )
+      }
+      M[row, ] <- vals
     }
   }
 
@@ -696,6 +664,9 @@ simulate_trait <- function(n_coloc_groups = 100,
     trait_object = trait_object,
     ground_truth = list(
       module_of_snp = stats::setNames(module_of, colnames(M)),
+      # NULL unless snp_driver_groups > 1; otherwise the finer partition, with
+      # 0 for background SNPs and m*100 + g for SNP group g of module m.
+      driver_group_of_snp = driver_group_of_snp,
       multi_module_snps = multi_snps,
       module_memberships = memberships_named,
       driver_traits = stats::setNames(driver_names, sprintf("module_%d", seq_len(K))),
@@ -727,11 +698,11 @@ simulate_trait <- function(n_coloc_groups = 100,
         p_active_background = p_active_background,
         background_sparsity_sd = background_sparsity_sd,
         background_effect_scale = background_effect_scale,
+        background_corr = background_corr,
+        n_bg_factors = as.integer(n_bg_factors),
+        snp_pleiotropy_sd = snp_pleiotropy_sd,
         effect_tail = effect_tail,
-        n_hub_traits = n_hub_traits,
-        hub_snp_fraction = hub_snp_fraction,
         target_pattern = target_pattern,
-        p_negative = p_negative,
         overlap_fraction = overlap_fraction,
         annotation_noise = annotation_noise,
         log_se_sd = log_se_sd,
@@ -758,18 +729,70 @@ simulate_trait <- function(n_coloc_groups = 100,
 }
 
 
-.sim_background_effects <- function(n, background_effect_scale, effect_size) {
+.sim_background_effects <- function(n, background_effect_scale, effect_size,
+                                    shared = NULL) {
   # Relative-to-module background magnitudes. Draws from a standardised
   # heavy-tailed distribution (exponential with mean ~1, independent of the
   # module effect size) and scales it by background_effect_scale * effect_size,
   # so background_effect_scale is interpretable regardless of effect_size.
   # This sets the *distribution* of background magnitudes; it is not a
   # significance floor, so no hard minimum z-score is imposed.
+  #
+  # `shared` is the trait's value on the low-rank background structure at each
+  # active SNP. When supplied it sets the sign (and tilts the magnitude), which
+  # is what makes two SNPs loading on the same component similar. When NULL the
+  # signs are independent, reproducing the original behaviour exactly.
   if (n <= 0) {
     return(numeric(0))
   }
   mag <- background_effect_scale * effect_size * stats::rexp(n, rate = 1)
-  return(sign(stats::rnorm(n)) * mag)
+  if (is.null(shared)) {
+    return(sign(stats::rnorm(n)) * mag)
+  }
+  signal <- as.numeric(shared) + stats::rnorm(n)
+  return(sign(signal) * mag)
+}
+
+
+# Low-rank structure shared across background traits: n_bg_factors latent
+# components over SNPs, with each background trait loading on them. Returns a
+# n_bg_traits x n_snps matrix scaled so background_corr controls how strongly
+# the shared structure dominates the independent noise in
+# .sim_background_effects(). background_corr = 0 returns NULL, which restores
+# the original independent random-sign background.
+.sim_background_components <- function(n_snps, n_bg_traits, n_bg_factors,
+                                       background_corr) {
+  if (!is.finite(background_corr) || background_corr <= 0 ||
+        n_bg_traits <= 0 || n_bg_factors <= 0) {
+    return(NULL)
+  }
+  n_bg_factors <- as.integer(min(n_bg_factors, n_snps))
+
+  # A general pleiotropy axis, positive for every trait and every SNP. After
+  # the matrix is oriented to the target trait this is what gives the
+  # similarity graph a positive baseline. It is kept separate from, and
+  # stronger than, the specific components because a purely random low-rank
+  # structure correlates SNP pairs with random sign, so the mean similarity
+  # averages to zero -- the regime the simulator was in before, and not the one
+  # real data is in.
+  general <- outer(
+    abs(stats::rnorm(n_bg_traits)) + 0.5,
+    abs(stats::rnorm(n_snps)) + 0.5
+  )
+  general <- general / mean(general)
+
+  # Specific components: block structure that makes particular SNP sets cohere
+  # beyond the general axis.
+  specific <- (
+    matrix(stats::rnorm(n_bg_traits * n_bg_factors), nrow = n_bg_traits) %*%
+      matrix(stats::rnorm(n_bg_factors * n_snps), nrow = n_bg_factors)
+  ) / sqrt(n_bg_factors)
+
+  # background_corr -> 1 makes the shared structure dominate the unit-variance
+  # noise added in .sim_background_effects(), so the sign of a background cell
+  # becomes essentially determined by the structure rather than independent.
+  strength <- background_corr / sqrt(max(1e-8, 1 - background_corr^2))
+  return(strength * (general + specific))
 }
 
 
@@ -1146,4 +1169,130 @@ simulate_trait <- function(n_coloc_groups = 100,
   cg <- cg[order(cg$coloc_group_id, cg$trait_id), , drop = FALSE]
   rownames(cg) <- NULL
   return(cg)
+}
+
+#' @title Similarity-Graph Diagnostics For A Pleiotropy Matrix
+#' @description Summarise the SNP similarity graph a pleiotropy matrix induces,
+#' so a simulated matrix can be compared with a real one on the statistics the
+#' validation gates actually see. Matching per-trait sparsity and magnitude
+#' marginals is not sufficient: what matters for program validation is the
+#' distribution of pairwise similarities, which depends on how often two SNPs
+#' are observed on the same traits at all.
+#'
+#' The reference values in `real_bmi_graph_targets()` were measured on the BMI
+#' pleiotropy matrix; a simulator that does not land near them is not testing
+#' the gates in the regime they are used in.
+#' @param x_matrix Trait-by-SNP matrix of z-scores, with `NA` for unobserved
+#'   cells, as produced by `simulate_trait()` or `build_pleiotropy_matrix()`.
+#' @param target_trait_id Row name of the target trait, used for orientation
+#'   and for the target-removed comparison.
+#' @param compress_scale asinh compression scale. Defaults to `5`.
+#' @param probe_size SNP-set size used for the random-set pass rate. Defaults
+#'   to `44`.
+#' @param probe_threshold Mean internal similarity a random set is tested
+#'   against. Defaults to `0.3`, the absolute threshold this diagnostic exists
+#'   to show is uninformative on a real graph.
+#' @param n_probe Random sets drawn for the pass rate. Defaults to `400`.
+#' @param seed RNG seed.
+#' @return A one-row dataframe of graph statistics.
+#' @export
+simulated_graph_diagnostics <- function(x_matrix,
+                                        target_trait_id,
+                                        compress_scale = 5,
+                                        probe_size = 44L,
+                                        probe_threshold = 0.3,
+                                        n_probe = 400L,
+                                        seed = 1) {
+  target_row <- as.character(target_trait_id)
+  if (!target_row %in% rownames(x_matrix)) {
+    stop("target_trait_id not found in x_matrix rownames")
+  }
+  graph_of <- function(mat) {
+    oriented <- orient_pleiotropy_matrix(
+      mat,
+      target_trait_id = target_row,
+      z_target = x_matrix[target_row, ]
+    )$x_matrix
+    compressed <- compress_effect_matrix(
+      oriented, method = "asinh", asinh_scale = compress_scale
+    )
+    return(snp_similarity_matrix(compressed)$s_matrix)
+  }
+
+  s_all <- graph_of(x_matrix)
+  off <- s_all[upper.tri(s_all)]
+  off <- off[is.finite(off)]
+
+  observed <- !is.na(x_matrix)
+  overlap <- crossprod(observed * 1L)
+  overlap_off <- overlap[upper.tri(overlap)]
+
+  without_target <- x_matrix[rownames(x_matrix) != target_row, , drop = FALSE]
+  mean_no_target <- if (nrow(without_target) > 0) {
+    s_nt <- graph_of(without_target)
+    nt <- s_nt[upper.tri(s_nt)]
+    mean(nt[is.finite(nt)])
+  } else {
+    NA_real_
+  }
+
+  set.seed(seed)
+  n <- ncol(s_all)
+  probe_size <- as.integer(min(probe_size, n))
+  probe <- if (probe_size >= 2) {
+    vapply(seq_len(n_probe), function(i) {
+      idx <- sample.int(n, probe_size)
+      sub <- s_all[idx, idx]
+      mean(sub[upper.tri(sub)], na.rm = TRUE)
+    }, numeric(1))
+  } else {
+    numeric(0)
+  }
+
+  return(data.frame(
+    n_snps = n,
+    n_traits = nrow(x_matrix),
+    density = mean(observed),
+    median_pair_overlap = stats::median(overlap_off),
+    frac_pairs_zero_overlap = mean(overlap_off == 0),
+    mean_similarity = mean(off),
+    median_similarity = stats::median(off),
+    mean_similarity_no_target = mean_no_target,
+    random_set_mean_internal = if (length(probe)) mean(probe) else NA_real_,
+    random_set_pass_rate = if (length(probe)) {
+      mean(probe >= probe_threshold)
+    } else {
+      NA_real_
+    },
+    stringsAsFactors = FALSE
+  ))
+}
+
+
+#' @title Real Similarity-Graph Calibration Targets
+#' @description Graph statistics measured on the BMI pleiotropy matrix (1002
+#' traits x 970 SNPs, `trait_subset = "phenotypic"`, `min_snp_signals = 2`).
+#' These are the values `simulated_graph_diagnostics()` should land near for a
+#' simulation to exercise the validation gates in the regime real data puts
+#' them in.
+#'
+#' The two that matter most are `median_pair_overlap` (a real SNP pair shares
+#' only about three traits, so each cosine rests on very little) and
+#' `mean_similarity_no_target` (real background traits are correlated with each
+#' other, so similarity survives removing the target row).
+#' @return A one-row dataframe with the same columns as
+#'   `simulated_graph_diagnostics()` returns, where measured.
+#' @export
+real_bmi_graph_targets <- function() {
+  return(data.frame(
+    density = 0.0198,
+    median_pair_overlap = 3,
+    frac_pairs_zero_overlap = 0.214,
+    mean_similarity = 0.348,
+    median_similarity = 0.323,
+    mean_similarity_no_target = 0.284,
+    random_set_mean_internal = 0.348,
+    random_set_pass_rate = 0.935,
+    stringsAsFactors = FALSE
+  ))
 }

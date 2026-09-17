@@ -16,7 +16,7 @@ run_univariate_clustering(
   max_snp_fraction = 0.8,
   compress_method = c("none", "asinh"),
   compress_scale = 2,
-  ebmf_greedy_Kmax = 50L,
+  ebmf_greedy_Kmax = 100L,
   ebmf_lfsr_threshold = 0.01,
   ebmf_magnitude_threshold = 0.25,
   ebmf_drop_global = TRUE,

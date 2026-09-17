@@ -84,7 +84,7 @@ run_univariate_clustering <- function(trait_object,
                                       max_snp_fraction = 0.8,
                                       compress_method = c("none", "asinh"),
                                       compress_scale = 2,
-                                      ebmf_greedy_Kmax = 50L,
+                                      ebmf_greedy_Kmax = 100L,
                                       ebmf_lfsr_threshold = 0.01,
                                       ebmf_magnitude_threshold = 0.25,
                                       ebmf_drop_global = TRUE,
@@ -216,7 +216,8 @@ run_univariate_clustering <- function(trait_object,
     lfsr_threshold = ebmf_lfsr_threshold,
     magnitude_threshold = ebmf_magnitude_threshold,
     drop_global = ebmf_drop_global,
-    prior = ebmf_prior
+    prior = ebmf_prior,
+    backfit = ebmf_backfit
   )
 
   return(list(
@@ -326,6 +327,10 @@ run_univariate_clustering <- function(trait_object,
     ))
   }
 
+  # Recorded before any global factor is removed, so the cap check below asks
+  # what the greedy search itself produced.
+  n_greedy_factors <- flash_fit$n_factors
+
   dropped_global <- integer(0)
   if (drop_global && flash_fit$n_factors > 0) {
     preliminary <- extract_ebmf_clusters(
@@ -357,7 +362,14 @@ run_univariate_clustering <- function(trait_object,
       membership = membership,
       n_programs = extracted$n_programs,
       n_multi_program = extracted$n_multi_program,
-      dropped_global_factors = dropped_global
+      dropped_global_factors = dropped_global,
+      greedy_Kmax = as.integer(greedy_Kmax),
+      # TRUE when the greedy search stopped because it hit the cap rather than
+      # because it ran out of factors worth adding -- i.e. K was set by
+      # greedy_Kmax, not by the data. Raise the cap and refit if so.
+      greedy_Kmax_reached = isTRUE(
+        (n_greedy_factors + length(dropped_global)) >= as.integer(greedy_Kmax)
+      )
     )
   ))
 }

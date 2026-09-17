@@ -102,11 +102,7 @@ if (requireNamespace("DiagrammeR", quietly = TRUE)) {
 
 Each target trait is run through the univariate pipeline exactly as described
 in [Univariate SNP biological clustering](investigation-snp-clustering.html):
-`run_univariate_clustering()` followed by `summarise_ebmf_programs()`. Only
-programs with `status == "valid"` are carried forward — this analysis is about
-correspondence between traits, not about re-litigating which univariate
-programs are reliable, so invalid programs are dropped before any cross-trait
-comparison is attempted.
+`run_univariate_clustering()` followed by `summarise_ebmf_programs()`.
 
 `extract_program_loadings()` then sign-orients each program to its own target
 trait, reflecting both the locus loadings (`F_pm`) and the background-trait
@@ -118,10 +114,15 @@ without this anchoring "the same sign" would mean nothing.
 Output objects, one set per trait:
 
 - `loadings` — one row per locus x program: `coloc_group_id`, `loading`
-  (sign-oriented `F_pm`), `lfsr`, `high_confidence` (the lFSR/magnitude gate,
-  kept as a label — see Step 2).
-- `profiles` — one row per background-feature x program (`L_pm`); used for
-  the biological-corroboration step, not for the correspondence test itself.
+  (sign-oriented `F_pm`, the **SNP**-loading matrix), `lfsr` (the matching
+  `F_lfsr`), `high_confidence` (the lFSR/magnitude gate, kept as a label —
+  see Step 2). This is the table Steps 2-5 (the correspondence test itself)
+  operate on.
+- `profiles` — one row per background-feature x program (`L_pm`/`L_lfsr`, the
+  **trait**-loading matrix — which background traits drive a program, not
+  which SNPs). Used only for the biological-corroboration step (Step 6), not
+  for the correspondence test. See [Univariate SNP biological clustering](investigation-snp-clustering.html#fit-the-ebmf-latent-program-model)
+  for what `F`/`L`, `_pm`/`_lfsr` mean.
 - `programs` — per-program metadata (`program_id`, `trait_id`, `trait_name`).
 
 ### 2. Shared locus universe
@@ -163,7 +164,13 @@ from trait B — score how much they co-load on the shared locus axis:
 \]
 
 where \(f_a(l)\) is program \(a\)'s sign-oriented loading at locus \(l\) (zero
-if the program has no support there). This is deliberately **covariance-like,
+if the program has no support there) — this is `F_pm`, the SNP-loading matrix
+from `loadings` in Step 1, and \(\text{lfsr}_a(l)\) is the matching `F_lfsr`.
+Both are locus-level quantities from the *SNP*-loading matrix `F`; the
+*trait*-loading matrix `L_pm`/`L_lfsr` (which background traits drive a
+program — see [Univariate SNP biological clustering](investigation-snp-clustering.html#fit-the-ebmf-latent-program-model))
+plays no part in this test, only in Step 6's biological corroboration via
+`profiles`. This is deliberately **covariance-like,
 not correlation-like**: it is left unnormalised so that evidence accumulates
 with the amount of shared loading. A fully normalised (cosine) version is
 reported alongside as `cosine_loci`, purely as a diagnostic of how tight the

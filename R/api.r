@@ -7,6 +7,7 @@ timeout_seconds <- 360
 #' @return The previous `gpmap_url` option value (invisibly), as from `options()`.
 #' @export
 select_api <- function(api = c("production", "local", "dev")) {
+  message("Selecting GPMap API: ", api)
   api <- match.arg(api)
   if (api %in% c("local", "dev")) {
     api_option <- options("gpmap_url" = "http://localhost:8000")

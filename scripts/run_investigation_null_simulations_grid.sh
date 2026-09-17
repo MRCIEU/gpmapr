@@ -6,8 +6,11 @@
 # The vignette's internal null versions all shift with the baseline parameters
 # overridden below.
 #
-# Development settings below are intentionally small. For final results,
-# increase n_reps / n_null / n_rep as appropriate.
+# Production settings for the HPC run. quick = FALSE is passed below so the
+# stability gate is actually exercised -- it was never evaluated in any
+# simulation, while being the most influential gate on real data. The stability
+# threshold should be read off this study's replication distribution rather than
+# assumed.
 
 set -euo pipefail
 
@@ -42,16 +45,43 @@ background_sds=(0 0.6 1.2 1.8)
 background_scales=(0.25 0.5 1 1.5)
 
 # ---------------------------------------------------------------------------
+# Generative realism of the similarity graph
+#
+# background_corr = 0 (the old default) gives background traits independent,
+# random-signed effects, which contribute nothing to SNP-SNP similarity: the
+# simulated graph sits near zero while a real one sits around 0.35, and a random
+# SNP set clears the old 0.3 gate ~0% of the time in simulation against ~94% on
+# real BMI data. Under that regime a null study cannot fail, so the reported
+# FDR = 0 was close to un-failable by construction.
+#
+# snp_pleiotropy_sd is the per-SNP analogue of background_sparsity_sd and is
+# what brings the median pairwise trait overlap down from ~52 to the real ~3.
+#
+# Each render reports simulated_graph_diagnostics() against
+# real_bmi_graph_targets(). The null FDR is only meaningful for the settings
+# that land near those targets.
+# ---------------------------------------------------------------------------
+
+# CROSSED, not one-at-a-time. Varying either axis alone from the baseline
+# p_active_background = 0.1 never reaches the target regime: every one-at-a-time
+# arm gives random_set_pass_rate between 0.000 and 0.245 against the real 0.935,
+# because the baseline is far too dense (median pairwise trait overlap ~15
+# against the real ~3). The three axes have to move together. Each entry below is
+# "p_active_background:snp_pleiotropy_sd:background_corr".
+realism_grid=(
+  0.10:0:0
+  0.02:1.0:0.6
+  0.02:1.5:0.9
+  0.02:2.0:0.9
+  0.01:1.5:0.9
+  0.01:2.0:0.9
+)
+
+# ---------------------------------------------------------------------------
 # Noise (noise_sd)
 # ---------------------------------------------------------------------------
 
 noise_sds=(0.25 0.5 1 2 4)
-
-# ---------------------------------------------------------------------------
-# Pleiotropic hub traits (n_hub_traits)
-# ---------------------------------------------------------------------------
-
-hub_traits=(0 5 15 30)
 
 # ---------------------------------------------------------------------------
 # Rendering helper
@@ -79,9 +109,12 @@ n_rep <- as.integer(args[[4]])
 overrides <- args[-(1:4)]
 
 params <- list(
-  n_reps = n_reps,
+  # The vignettes declare n_sim / n_stability_rep; n_reps / n_rep are the old
+  # names and rmarkdown rejects params it has not declared.
+  n_sim = n_reps,
   n_null = n_null,
-  n_rep = n_rep
+  n_stability_rep = n_rep,
+  quick = FALSE
 )
 
 for (x in overrides) {
@@ -164,15 +197,15 @@ for value in "${noise_sds[@]}"; do
 
 done
 
-# ===========================================================================
-# Pleiotropic hub traits
-# ===========================================================================
+for combo in "${realism_grid[@]}"; do
 
-for value in "${hub_traits[@]}"; do
+  IFS=: read -r p_act snp_sd bg_corr <<< "${combo}"
 
   render_one \
-    "hubs${value}" \
-    "n_hub_traits=${value}"
+    "realism_p${p_act}_snpsd${snp_sd}_corr${bg_corr}" \
+    "p_active_background=${p_act}" \
+    "snp_pleiotropy_sd=${snp_sd}" \
+    "background_corr=${bg_corr}"
 
 done
 
@@ -195,5 +228,7 @@ echo "Null noise:"
 ls -1 investigation-univariate-null-simulations_noise*.html
 
 echo ""
-echo "Null hub traits:"
-ls -1 investigation-univariate-null-simulations_hubs*.html
+echo "Similarity-graph realism (crossed density x per-SNP heterogeneity x background correlation):"
+echo "Read random_set_pass_rate in each render's graph-diagnostics table; the"
+echo "null FDR is only meaningful for arms that land near the real targets."
+ls -1 investigation-univariate-null-simulations_realism*.html

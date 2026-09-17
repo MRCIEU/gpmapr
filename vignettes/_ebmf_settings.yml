@@ -1,0 +1,41 @@
+# Canonical EBMF analysis and program-validation settings.
+#
+# Every investigation vignette resolves its shared settings from this file via
+# resolve_ebmf_settings(), so the simulation, null-simulation, univariate and
+# multi-trait studies cannot drift apart. A vignette parameter supplied at
+# render time (e.g. by the scripts/run_investigation_*_grid.sh grids) overrides
+# the value here; anything not supplied falls back to it.
+#
+# Entries marked REVISED BY HPC are provisional: the recalibrated simulation
+# and null studies are expected to replace them once those runs complete.
+
+# --- EBMF fit -------------------------------------------------------------
+ebmf_prior: point_laplace
+ebmf_backfit: true
+# Membership only. lFSR no longer gates programs; program validity comes from
+# the loading-permutation coherence null.
+ebmf_lfsr_threshold: 0.05
+# Membership only. REVISED BY HPC (swept over 0.3 / 0.5 / 0.75).
+ebmf_magnitude_threshold: 0.5
+# REVISED BY HPC. Raised from 50, which was binding: null fits returned 49-50
+# factors and real BMI returned exactly 50, so K was set by the cap.
+ebmf_greedy_Kmax: 100
+
+# --- Pleiotropy matrix ----------------------------------------------------
+trait_subset: phenotypic
+min_snp_signals: 2
+compress_method: asinh
+compress_scale: 5
+# Must match between the univariate and multi-trait studies or they factorise
+# different matrices and their programs are not comparable.
+include_trans: true
+
+# --- Program validation ---------------------------------------------------
+# Interpretability floor, not a discriminating gate: a 2-SNP program cannot be
+# annotated. Pass rates for this check are ~100% in every study.
+min_module_size: 3
+# Edge threshold for the weighted quorum statistic.
+similarity_threshold: 0.2
+# Loading-permutation coherence null.
+coherence_n_perm: 2000
+coherence_q: 0.05

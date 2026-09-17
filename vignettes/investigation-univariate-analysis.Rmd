@@ -91,22 +91,29 @@ max_snp_fraction <- 0.8
 top_n_traits <- 10L
 min_specificity <- 1.25
 
-trait_subset <- params$trait_subset
-min_module_size <- as.integer(params$min_module_size)
-min_snp_signals <- as.integer(params$min_snp_signals)
-compress_method <- params$compress_method
-compress_scale <- as.numeric(params$compress_scale)
-include_trans <- isTRUE(params$include_trans)
+# Shared analysis settings come from vignettes/_ebmf_settings.yml so the
+# simulation, null-simulation, univariate and multi-trait studies cannot drift
+# apart; anything supplied in params (e.g. by the HPC grid scripts) wins.
+ebmf_settings <- resolve_ebmf_settings(params)
+settings_signature <- ebmf_settings_signature(ebmf_settings)
+
+trait_subset <- ebmf_settings$trait_subset
+min_module_size <- as.integer(ebmf_settings$min_module_size)
+min_snp_signals <- as.integer(ebmf_settings$min_snp_signals)
+compress_method <- ebmf_settings$compress_method
+compress_scale <- as.numeric(ebmf_settings$compress_scale)
+include_trans <- isTRUE(ebmf_settings$include_trans)
 include_situated_gene <- isTRUE(params$include_situated_gene)
-similarity_threshold <- as.numeric(params$similarity_threshold)
-ebmf_lfsr_threshold <- as.numeric(params$ebmf_lfsr_threshold)
-ebmf_prior <- params$ebmf_prior
-ebmf_backfit <- isTRUE(params$ebmf_backfit)
-ebmf_magnitude_threshold <- if (is.na(params$ebmf_magnitude_threshold)) {
-  NA_real_
-} else {
-  as.numeric(params$ebmf_magnitude_threshold)
-}
+similarity_threshold <- as.numeric(ebmf_settings$similarity_threshold)
+ebmf_lfsr_threshold <- as.numeric(ebmf_settings$ebmf_lfsr_threshold)
+ebmf_prior <- ebmf_settings$ebmf_prior
+ebmf_backfit <- isTRUE(ebmf_settings$ebmf_backfit)
+ebmf_magnitude_threshold <- as.numeric(
+  ebmf_settings$ebmf_magnitude_threshold
+)
+coherence_n_perm <- as.integer(ebmf_settings$coherence_n_perm)
+coherence_q_threshold <- as.numeric(ebmf_settings$coherence_q)
+ebmf_greedy_Kmax <- as.integer(ebmf_settings$ebmf_greedy_Kmax)
 associations <- params$associations
 min_mean_internal <- as.numeric(params$min_mean_internal)
 min_connectedness <- as.numeric(params$min_connectedness)
@@ -149,6 +156,9 @@ knitr::kable(
     stability_threshold = stability_threshold,
     posterior_stat = posterior_stat,
     posterior_evidence_cap = posterior_evidence_cap,
+    coherence_n_perm = coherence_n_perm,
+    coherence_q = coherence_q_threshold,
+    ebmf_greedy_Kmax = ebmf_greedy_Kmax,
     redundancy_threshold = redundancy_threshold,
     cores = cores,
     associations = associations,
@@ -302,6 +312,7 @@ ebmf_result <- run_univariate_clustering(
   compress_scale = compress_scale,
   ebmf_lfsr_threshold = ebmf_lfsr_threshold,
   ebmf_magnitude_threshold = ebmf_magnitude_threshold,
+  ebmf_greedy_Kmax = ebmf_greedy_Kmax,
   ebmf_prior = ebmf_prior,
   ebmf_backfit = ebmf_backfit,
   min_module_size = min_module_size,
@@ -351,8 +362,30 @@ an overall `status`:
   (`redundancy_pass = FALSE`) when `max_pair_redundancy >= 0.9`, i.e. it
   captures essentially the same SNP set as another program.
 
-A program is `valid` if it passes all four filters (`size`, `internal`,
+A program is `valid` if it passes all four filters (`size`, `coherence`,
 `stability`, `redundancy`); the failure reason is recorded in `status`.
+
+`coherence` is the gate that decides whether a program is more than a random
+set of SNPs. It weights **every** SNP by its squared posterior loading -- so it
+does not depend on the lFSR/magnitude cutoff -- and permutes that weight vector
+across SNPs to ask whether the program's loadings are aligned with the
+similarity graph more than chance. Because permuting preserves the weight
+distribution, the null is automatically matched on program size and shape.
+
+This replaces comparing `mean_internal_similarity` with an absolute constant,
+which is not informative on a real graph: in this trait's similarity matrix a
+random set of 44 SNPs has mean internal similarity around 0.35 and clears a 0.3
+threshold about 94% of the time, so the old gate sat below the graph's own
+baseline. `mean_internal_similarity` and `connectedness` are still reported for
+comparison but no longer decide `status`.
+
+`n_eff` (the participation ratio of the loading weights) is the weighted
+analogue of program size: read it alongside `coherence_q`, because a small
+q-value on a very diffuse program is a weaker claim than the same q-value on a
+tight one. `weighted_quorum` and its `quorum_q` measure how many SNP pairs
+clear the edge threshold rather than the average alignment, and
+`shape_disagreement` flags programs where the two readings fall on opposite
+sides of the threshold.
 
 ```{r step4-quality, results='asis'}
 program_summary <- summarise_ebmf_programs(
@@ -362,6 +395,8 @@ program_summary <- summarise_ebmf_programs(
     min_module_size = min_module_size,
     min_mean_internal = min_mean_internal,
     min_connectedness = min_connectedness,
+    coherence_n_perm = coherence_n_perm,
+    coherence_q_threshold = coherence_q_threshold,
     n_null = n_null,
     alpha_membership = alpha_membership,
     n_candidate_tier = n_candidate_tier,
@@ -386,6 +421,8 @@ program_summary <- summarise_ebmf_programs(
         dplyr::select(
           program, n_snps, n_snps_filtered,
           mean_internal_similarity, connectedness,
+          weighted_internal, weighted_quorum, n_eff, coherence_q, quorum_q,
+          coherence_pass, shape_disagreement,
           factor_strength, factor_strength_per_snp, replication,
           posterior_evidence, max_abs_factor_corr, redundant,
           max_pair_redundancy, most_redundant_program, redundancy_pass,
@@ -397,6 +434,15 @@ program_summary <- summarise_ebmf_programs(
           factor_strength_per_snp_pct = round(100 * factor_strength_per_snp, 3),
           mean_internal_similarity = round(mean_internal_similarity, 3),
           connectedness = round(connectedness, 3),
+          weighted_internal = round(weighted_internal, 3),
+          weighted_quorum = round(weighted_quorum, 3),
+          n_eff = round(n_eff, 1),
+          coherence_q = signif(coherence_q, 3),
+          quorum_q = signif(quorum_q, 3),
+          coherence_pass = dplyr::if_else(coherence_pass, "pass", "FAIL"),
+          shape_disagreement = dplyr::if_else(
+            shape_disagreement %in% TRUE, "yes", "no"
+          ),
           replication = round(replication, 3),
           posterior_evidence = round(posterior_evidence, 2),
           max_abs_factor_corr = round(max_abs_factor_corr, 3),
@@ -421,6 +467,8 @@ program_summary <- summarise_ebmf_programs(
         dplyr::select(
           program, n_snps, n_snps_filtered,
           mean_internal_similarity, connectedness,
+          weighted_internal, weighted_quorum, n_eff, coherence_q, quorum_q,
+          coherence_pass, shape_disagreement,
           factor_strength_pct, factor_strength_per_snp_pct, replication, posterior_evidence,
           max_abs_factor_corr, redundant,
           max_pair_redundancy, most_redundant_program, redundancy_pass,
@@ -904,20 +952,6 @@ approach in `scripts/enrichment_via_loadings_example.r`. This section runs
 them on the same `ebmf_result` and `cg` used above, for the same `valid_ids`
 programs, so the two approaches can be compared side by side.
 
-**FDR is pooled across every program tested**, not computed per program: each
-of the three functions runs one regression per program per
-category/tissue/pathway term, then Benjamini-Hochberg-corrects across *every*
-program's tests for that enrichment type in one family — so `fdr` reflects the
-true number of regressions run for this trait, not just the handful tested for
-one program in isolation. For pathways, KEGG and Reactome are pooled into that
-same family rather than corrected separately, so a KEGG hit competes against
-the full KEGG+Reactome, all-programs test count. Trait category, tissue, and
-pathway enrichment remain three separate families — none of the three is
-pooled with another. Because the family is now much larger than a single
-program's test count, `fdr` is more conservative than in earlier renders of
-this vignette; that is the correction working as intended, not a regression.
-Pathway sources here are restricted to KEGG and Reactome (HP is dropped, as
-in Step 5).
 
 ```{r step5-5-continuous-enrichment}
 if (!has_analysis_groups) {
@@ -960,23 +994,38 @@ if (!has_analysis_groups) {
 ```
 
 ```{r step5-5-continuous-enrichment-tables, echo=FALSE, results='asis'}
+# Effect-size floor on top of FDR<=0.05: r_squared is the fraction of a
+# program's squared-loading variance the category/tissue/pathway explains --
+# bounded [0, 1] and comparable across programs (unlike the raw `enrichment`
+# slope, whose scale depends on that program's own loadings). 0.05 sits
+# between Cohen's (1988) "small" (0.01) and "medium" (0.09) benchmarks.
+min_r_squared <- 0.05
+
 # Same shape as .format_enriched_all()/.format_pathways_all() above (step5-module-overview),
 # but reading the continuous comparison tables (enrichment effect instead of
 # fold_enrichment) so the two overview tables line up column-for-column.
+# Hits are filtered on FDR and r_squared together, then ordered by effect
+# (the raw enrichment slope) rather than by significance.
 .format_continuous_enriched_all <- function(by_program_list, value_col) {
   vapply(by_program_list, function(x) {
     hits <- x$comparison
     if (is.null(hits) || nrow(hits) == 0) {
       return("none")
     }
-    hits <- hits[is.finite(hits$fdr) & hits$fdr <= 0.05, , drop = FALSE]
+    hits <- hits[
+      is.finite(hits$fdr) & hits$fdr <= 0.05 &
+        is.finite(hits$r_squared) & hits$r_squared >= min_r_squared,
+      ,
+      drop = FALSE
+    ]
     if (nrow(hits) == 0) {
       return("none")
     }
-    hits <- hits[order(hits$fdr, -hits$enrichment), , drop = FALSE]
+    hits <- hits[order(-hits$enrichment), , drop = FALSE]
     paste0(
       hits[[value_col]],
       " (effect=", signif(hits$enrichment, 2),
+      ", R2=", signif(hits$r_squared, 2),
       ", FDR=", signif(hits$fdr, 3), ")",
       collapse = "<br>"
     )
@@ -989,16 +1038,18 @@ if (!has_analysis_groups) {
       return("none")
     }
     hits <- hits[
-      hits$source == source & is.finite(hits$fdr) & hits$fdr <= 0.05,
+      hits$source == source & is.finite(hits$fdr) & hits$fdr <= 0.05 &
+        is.finite(hits$r_squared) & hits$r_squared >= min_r_squared,
       ,
       drop = FALSE
     ]
     if (nrow(hits) == 0) {
       return("none")
     }
-    hits <- hits[order(hits$fdr), , drop = FALSE]
+    hits <- hits[order(-hits$enrichment), , drop = FALSE]
     paste0(
       hits$description, " (effect=", signif(hits$enrichment, 2),
+      ", R2=", signif(hits$r_squared, 2),
       ", FDR=", signif(hits$fdr, 3), ")",
       collapse = "<br>"
     )
@@ -1069,14 +1120,11 @@ if (!is.null(loading_categories) && length(loading_categories$by_program) > 0) {
     caption = paste0(
       "Continuous loading-based enrichment (lm(loading^2 ~ membership), no SNP ",
       "cutoff) for the same modules and n_snps/n_unique_snps as the hard-cutoff ",
-      "overview above. FDR (threshold 0.05) is Benjamini-Hochberg corrected ",
+      "overview above. FDR threshold at 0.05, R2 threshold at ", min_r_squared,
       "across every program tested for this trait, separately for each of the ",
       "three enrichment types (categories, tissues, pathways); pathway FDR also ",
       "pools KEGG and Reactome into that same family rather than correcting them ",
-      "separately. 'effect' is the fitted difference in mean squared loading ",
-      "between member and non-member SNPs (not a fold enrichment, so it isn't ",
-      "directly comparable to FE above, but sign and significance are). Compare ",
-      "row-by-row against the hypergeometric overview."
+      "separately."
     ),
     row.names = FALSE,
     escape = FALSE

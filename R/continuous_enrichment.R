@@ -32,8 +32,15 @@
 #'   \itemize{
 #'     \item by_program: list of per-program results (`program`, `n_snps`,
 #'       `comparison` with columns trait_category, enrichment, se, z, p, fdr,
-#'       n_snps, n_category_snps; `fdr` is corrected across every program
-#'       tested, not within this program alone)
+#'       r_squared, n_snps, n_category_snps; `fdr` is corrected across every
+#'       program tested, not within this program alone. `r_squared` is the
+#'       fraction of this program's squared-loading variance the category
+#'       explains -- unlike `enrichment` it is bounded in [0, 1] and
+#'       comparable across programs, which is what makes a fixed threshold on
+#'       it (e.g. Cohen's 1988 benchmarks: 0.01 small, 0.09 medium, 0.25
+#'       large) meaningful. It is not an independent effect-size-vs-power
+#'       axis here: with `n_snps` roughly fixed per program, `r_squared` is
+#'       close to a monotonic function of `p`.
 #'     \item summary: one row per program (`n_categories_tested`,
 #'       `n_enriched`, `top_category`)
 #'   }
@@ -93,9 +100,16 @@ enrich_program_loadings_trait_categories <- function(clustering_result,
 #' @return A list with:
 #'   \itemize{
 #'     \item by_program: list of per-program results (`program`, `n_snps`,
-#'       `comparison` with columns tissue, enrichment, se, z, p, fdr, n_snps,
-#'       n_category_snps; `fdr` is corrected across every program tested, not
-#'       within this program alone)
+#'       `comparison` with columns tissue, enrichment, se, z, p, fdr,
+#'       r_squared, n_snps, n_category_snps; `fdr` is corrected across every
+#'       program tested, not within this program alone. `r_squared` is the
+#'       fraction of this program's squared-loading variance the tissue
+#'       explains -- unlike `enrichment` it is bounded in [0, 1] and
+#'       comparable across programs, which is what makes a fixed threshold on
+#'       it (e.g. Cohen's 1988 benchmarks: 0.01 small, 0.09 medium, 0.25
+#'       large) meaningful. It is not an independent effect-size-vs-power
+#'       axis here: with `n_snps` roughly fixed per program, `r_squared` is
+#'       close to a monotonic function of `p`.
 #'     \item summary: one row per program (`n_categories_tested`,
 #'       `n_enriched`, `top_category`)
 #'   }
@@ -240,12 +254,20 @@ enrich_program_loadings_tissues <- function(clustering_result,
 # systematically greater for member SNPs via lm(y^2 ~ membership), as in
 # scripts/enrichment_via_loadings_example.r. Returns one row per tested value
 # with a "value" column (renamed by callers to trait_category/tissue/term_id)
-# plus enrichment/se/z/p and SNP counts -- NOT fdr. This tests one program (and,
-# for pathways, one source); FDR correction is the caller's job once every
-# program (and source) actually tested has been assembled, so the BH family
-# reflects the true number of tests run rather than just this one call's slice
-# of them. Columns not meeting `min_category_size`, or with no variation, are
-# skipped.
+# plus enrichment/se/z/p/r_squared and SNP counts -- NOT fdr. This tests one
+# program (and, for pathways, one source); FDR correction is the caller's job
+# once every program (and source) actually tested has been assembled, so the
+# BH family reflects the true number of tests run rather than just this one
+# call's slice of them. Columns not meeting `min_category_size`, or with no
+# variation, are skipped.
+#
+# `r_squared` is the fraction of this program's squared-loading variance
+# membership explains -- unlike `enrichment` (a raw mean-difference, in
+# squared-loading units that vary by program and aren't comparable across
+# programs) it is bounded in [0, 1] and comparable across programs, which is
+# what makes a single fixed threshold on it meaningful. It is not an
+# independent "effect size vs significance" axis here: with n_snps roughly
+# fixed per program, r_squared is close to a monotonic function of p.
 #
 # `min_loading_magnitude` softly regates membership: a SNP linked to a value
 # (x == 1) but with abs(loading) at or below this threshold is treated as
@@ -257,7 +279,7 @@ enrich_program_loadings_tissues <- function(clustering_result,
                                         min_loading_magnitude = 0) {
   empty <- data.frame(
     value = character(0), enrichment = numeric(0), se = numeric(0),
-    z = numeric(0), p = numeric(0),
+    z = numeric(0), p = numeric(0), r_squared = numeric(0),
     n_snps = integer(0), n_category_snps = integer(0),
     stringsAsFactors = FALSE
   )
@@ -294,6 +316,7 @@ enrich_program_loadings_tissues <- function(clustering_result,
       se = sm["x", "Std. Error"],
       z = sm["x", "t value"],
       p = sm["x", "Pr(>|t|)"],
+      r_squared = summary(fit)$r.squared,
       n_snps = length(y2),
       n_category_snps = n_category_snps,
       stringsAsFactors = FALSE

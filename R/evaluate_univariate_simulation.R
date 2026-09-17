@@ -18,7 +18,18 @@
 #'       unassigned SNPs as their own predicted class
 #'     \item ari_structured: ARI over module SNPs only (background excluded)
 #'     \item background_absorbed: fraction of background SNPs placed into
-#'       predicted programs (higher = more hallucinated structure)
+#'       predicted programs (higher = more hallucinated structure). This floors
+#'       at 0 whenever the lFSR/magnitude gate keeps background SNPs out, which
+#'       it usually does; prefer `background_weight`.
+#'     \item background_weight: share of the predicted programs' total loading
+#'       mass sitting on background SNPs — the same idea without the floor
+#'     \item v_structured: V-measure over module SNPs, the harmonic mean of
+#'       homogeneity and completeness. Unlike ARI it distinguishes mixing two
+#'       planted modules (a real error) from splitting one (which is correct
+#'       when the planted truth is hierarchical)
+#'     \item ari_driver_groups / v_driver_groups: the same scores against the
+#'       finer planted partition (`ground_truth$driver_group_of_snp`), `NA`
+#'       unless the simulation used `snp_driver_groups > 1`
 #'     \item coverage: fraction of all SNPs placed into predicted programs
 #'     \item module_recall: named numeric vector; for each planted module, the
 #'       largest fraction of its SNPs contained in any single predicted program.
@@ -96,10 +107,60 @@ evaluate_univariate_simulation <- function(simulation, predicted_memberships) {
   k_planted <- length(unique(truth[truth > 0]))
   k_hat <- length(reliable_ids)
 
+  # ARI penalises splitting a planted module as heavily as merging two, but
+  # when the generative model plants sub-structure (snp_driver_groups > 1) a
+  # split is the method finding what is there. v_measure separates the two:
+  # homogeneity falls only when a program mixes modules, completeness only when
+  # a module is spread across programs.
+  v_structured <- .v_measure(truth_lab[structured], pred_lab[structured])
+
+  # Scored against the finer planted partition as well, when there is one.
+  driver_truth <- simulation$ground_truth$driver_group_of_snp
+  ari_driver_groups <- NA_real_
+  v_driver_groups <- NA_real_
+  if (!is.null(driver_truth)) {
+    dg_lab <- ifelse(
+      driver_truth == 0L, "background", paste0("grp", driver_truth)
+    )
+    names(dg_lab) <- names(driver_truth)
+    common_dg <- intersect(names(dg_lab), names(pred_lab))
+    dg_structured <- dg_lab[common_dg] != "background"
+    if (any(dg_structured)) {
+      ari_driver_groups <- .adjusted_rand_index(
+        dg_lab[common_dg][dg_structured], pred_lab[common_dg][dg_structured]
+      )
+      v_driver_groups <- .v_measure(
+        dg_lab[common_dg][dg_structured], pred_lab[common_dg][dg_structured]
+      )
+    }
+  }
+
+  # Weight-based background contamination. The membership-based
+  # background_absorbed floors at 0 whenever the lFSR/magnitude gate keeps
+  # background SNPs out, which it almost always does, so it carries no
+  # information; this uses the share of each program's loading mass that sits
+  # on background SNPs instead.
+  background_weight <- NA_real_
+  if ("abs_loading" %in% names(memberships) && any(!structured)) {
+    bg_ids <- names(truth_lab)[!structured]
+    w <- memberships$abs_loading
+    w[!is.finite(w) | w < 0] <- 0
+    total_w <- sum(w)
+    background_weight <- if (total_w > 0) {
+      sum(w[as.character(memberships$snp_id) %in% bg_ids]) / total_w
+    } else {
+      NA_real_
+    }
+  }
+
   return(list(
     k_planted = k_planted,
     k_hat = k_hat,
     k_error = abs(k_hat - k_planted),
+    v_structured = v_structured,
+    ari_driver_groups = ari_driver_groups,
+    v_driver_groups = v_driver_groups,
+    background_weight = background_weight,
     ari_all = .adjusted_rand_index(truth_lab, pred_lab),
     ari_structured = .adjusted_rand_index(
       truth_lab[structured],
@@ -115,6 +176,56 @@ evaluate_univariate_simulation <- function(simulation, predicted_memberships) {
     mean_module_recall = if (length(module_recall)) mean(module_recall) else NA_real_,
     confusion = table(truth = truth_lab, predicted = pred_lab)
   ))
+}
+
+
+# V-measure: harmonic mean of homogeneity (does a predicted program mix planted
+# modules?) and completeness (is a planted module spread across programs?).
+# Reported alongside ARI because the two failures are not equivalent here: with
+# hierarchical planted truth, splitting a module is the method recovering
+# sub-structure, while mixing modules is a genuine error.
+.v_measure <- function(a, b, beta = 1) {
+  t <- table(a, b)
+  n <- sum(t)
+  if (n < 2) {
+    return(NA_real_)
+  }
+  entropy <- function(counts) {
+    p <- counts[counts > 0] / sum(counts)
+    return(-sum(p * log(p)))
+  }
+  h_class <- entropy(rowSums(t))
+  h_cluster <- entropy(colSums(t))
+  # H(class | cluster)
+  h_class_given_cluster <- 0
+  for (j in seq_len(ncol(t))) {
+    col_total <- sum(t[, j])
+    if (col_total > 0) {
+      h_class_given_cluster <- h_class_given_cluster +
+        (col_total / n) * entropy(t[, j])
+    }
+  }
+  h_cluster_given_class <- 0
+  for (i in seq_len(nrow(t))) {
+    row_total <- sum(t[i, ])
+    if (row_total > 0) {
+      h_cluster_given_class <- h_cluster_given_class +
+        (row_total / n) * entropy(t[i, ])
+    }
+  }
+  homogeneity <- if (h_class == 0) 1 else 1 - h_class_given_cluster / h_class
+  completeness <- if (h_cluster == 0) {
+    1
+  } else {
+    1 - h_cluster_given_class / h_cluster
+  }
+  if (homogeneity + completeness == 0) {
+    return(0)
+  }
+  return(
+    (1 + beta) * homogeneity * completeness /
+      (beta * homogeneity + completeness)
+  )
 }
 
 

@@ -268,6 +268,7 @@ module_rg <- function(result,
                       coloc_groups,
                       tiers = c("primary", "candidate"),
                       n_boot = 1000L,
+                      min_loci_rg = 10L,
                       seed = 1) {
   pairs <- if (is.data.frame(result)) result else result$pairs
   if (is.null(pairs) || nrow(pairs) == 0) {
@@ -310,7 +311,11 @@ module_rg <- function(result,
       return(empty_row)
     }
 
-    loci <- .shared_locus_axis(loadings, ta, tb)
+    # Restricted to the loci the two programs actually claim, not the whole
+    # trait-pair intersection. Weighting the full axis by |loading| left every
+    # pair with the same n_loci_rg -- the same trait-level rg lightly
+    # reweighted -- including pairs whose programs share a single locus.
+    loci <- .module_locus_axis(loadings, pa, pb, ta, tb)
     if (length(loci) == 0) {
       return(empty_row)
     }
@@ -326,7 +331,7 @@ module_rg <- function(result,
     n_mismatch <- sum(mismatch, na.rm = TRUE)
     usable <- usable & !mismatch
 
-    if (sum(usable, na.rm = TRUE) < 3) {
+    if (sum(usable, na.rm = TRUE) < min_loci_rg) {
       empty_row$n_allele_mismatch <- as.integer(n_mismatch)
       empty_row$n_loci_rg <- as.integer(sum(usable, na.rm = TRUE))
       return(empty_row)
@@ -601,4 +606,409 @@ module_rg <- function(result,
     rg_direction = character(0),
     stringsAsFactors = FALSE
   ))
+}
+
+
+#' @title Shared Feature Universe Between Traits
+#' @description Count the background studies that two traits' EBMF fits have in
+#' common. This is the axis `compare_program_pairs_profiles()` scores on, and
+#' it is deliberately reported before any comparison: the whole reason to match
+#' programs on their trait profile rather than on shared loci is that the
+#' feature axis should be far wider than the locus intersection. Where it is
+#' not, profile matching has no more support than locus matching and the result
+#' should be read accordingly.
+#' @param program_data An `extract_program_loadings()` result or a list of them.
+#' @return A dataframe with one row per trait pair: `trait_id_a`, `trait_id_b`,
+#'   `n_features_a`, `n_features_b`, `n_features_shared`, `frac_shared`, and
+#'   `n_loci_shared` for the locus axis alongside it.
+#' @export
+shared_feature_universe <- function(program_data) {
+  pd <- .normalise_program_data(program_data)
+  profiles <- pd$profiles
+  loadings <- pd$loadings
+  empty <- data.frame(
+    trait_id_a = character(0), trait_id_b = character(0),
+    n_features_a = integer(0), n_features_b = integer(0),
+    n_features_shared = integer(0), frac_shared = numeric(0),
+    n_loci_shared = integer(0), stringsAsFactors = FALSE
+  )
+  if (is.null(profiles) || nrow(profiles) == 0) {
+    return(empty)
+  }
+  trait_ids <- sort(unique(as.character(profiles$trait_id)))
+  if (length(trait_ids) < 2) {
+    return(empty)
+  }
+  features_by_trait <- lapply(trait_ids, function(t) {
+    unique(as.character(
+      profiles$feature_trait_id[as.character(profiles$trait_id) == t]
+    ))
+  })
+  names(features_by_trait) <- trait_ids
+
+  idx <- utils::combn(length(trait_ids), 2)
+  rows <- lapply(seq_len(ncol(idx)), function(i) {
+    ta <- trait_ids[idx[1, i]]
+    tb <- trait_ids[idx[2, i]]
+    fa <- features_by_trait[[ta]]
+    fb <- features_by_trait[[tb]]
+    shared <- intersect(fa, fb)
+    return(data.frame(
+      trait_id_a = ta, trait_id_b = tb,
+      n_features_a = length(fa), n_features_b = length(fb),
+      n_features_shared = length(shared),
+      frac_shared = if (length(union(fa, fb)) > 0) {
+        length(shared) / length(union(fa, fb))
+      } else {
+        NA_real_
+      },
+      n_loci_shared = length(.shared_locus_axis(loadings, ta, tb)),
+      stringsAsFactors = FALSE
+    ))
+  })
+  return(dplyr::bind_rows(rows))
+}
+
+
+#' @title Compare EBMF Programs Across Traits On Their Trait Profiles
+#' @description Score every cross-trait pair of programs on how similarly they
+#' load across the background studies the two traits have in common, and
+#' calibrate that against a permutation null.
+#'
+#' This is the sibling of `compare_program_pairs_loadings()`, which scores pairs
+#' on shared *loci*. That statistic is an inner product over the loci both
+#' traits carry, so two programs describing the same biology at different loci
+#' score near zero by construction — and when two traits share few loci (BMI and
+#' height share 73 of 3456) every locus-axis result rests on very little.
+#' Matching on the trait profile drops the requirement that the programs act at
+#' the same variants: two programs correspond when the same background studies
+#' load on them, whatever loci carry that signal in each trait.
+#'
+#' Read `n_eff_features` alongside `concordance_z` exactly as `n_eff_loci` is
+#' read for the locus axis: a large z resting on two or three effective
+#' features is thin.
+#' @param program_data An `extract_program_loadings()` result or a list of them.
+#'   Requires the `profiles` component, which `extract_program_loadings()`
+#'   populates from the EBMF fit's `L_pm`.
+#' @param n_perm Permutations for the null. Defaults to `1000`.
+#' @param fdr_threshold BH threshold defining the candidate tier. Defaults to
+#'   `0.05`.
+#' @param seed RNG seed.
+#' @return A list with `pairs`, `matches` and `settings`, matching the shape of
+#'   `compare_program_pairs_loadings()` but with feature-axis columns
+#'   (`n_features_axis`, `profile_concordance`, `cosine_features`,
+#'   `n_eff_features`).
+#' @export
+compare_program_pairs_profiles <- function(program_data,
+                                           n_perm = 1000L,
+                                           fdr_threshold = 0.05,
+                                           seed = 1) {
+  pd <- .normalise_program_data(program_data)
+  profiles <- pd$profiles
+  settings <- list(
+    n_perm = as.integer(n_perm),
+    fdr_threshold = fdr_threshold,
+    seed = seed,
+    statistic = "profile_concordance"
+  )
+  empty_pairs <- data.frame(
+    program_id_a = character(0), program_id_b = character(0),
+    trait_id_a = character(0), trait_id_b = character(0),
+    n_features_axis = integer(0), profile_concordance = numeric(0),
+    cosine_features = numeric(0), n_eff_features = numeric(0),
+    concordance_z = numeric(0), p_concordance = numeric(0),
+    q_concordance = numeric(0), shared = logical(0),
+    link_tier = character(0), direction = character(0),
+    stringsAsFactors = FALSE
+  )
+  if (is.null(profiles) || nrow(profiles) == 0) {
+    return(list(pairs = empty_pairs, matches = .empty_matches(),
+                settings = settings))
+  }
+  keys <- .program_pair_keys(profiles)
+  if (nrow(keys) == 0) {
+    return(list(pairs = empty_pairs, matches = .empty_matches(),
+                settings = settings))
+  }
+
+  progs <- dplyr::distinct(profiles, program_id, trait_id, program)
+  trait_ids_by_program <- stats::setNames(
+    as.character(progs$trait_id), as.character(progs$program_id)
+  )
+
+  out <- keys
+  out$n_features_axis <- 0L
+  out$profile_concordance <- NA_real_
+  out$cosine_features <- NA_real_
+  out$n_eff_features <- NA_real_
+  out$concordance_z <- NA_real_
+  out$p_concordance <- NA_real_
+
+  max_null <- matrix(
+    -Inf, nrow = as.integer(n_perm), ncol = nrow(progs),
+    dimnames = list(NULL, as.character(progs$program_id))
+  )
+  best <- data.frame(
+    program_id = as.character(progs$program_id),
+    best_partner = NA_character_, best_abs_z = NA_real_,
+    stringsAsFactors = FALSE
+  )
+
+  trait_ids <- sort(unique(as.character(progs$trait_id)))
+  set.seed(seed)
+  for (i in seq_along(trait_ids)) {
+    for (j in seq_along(trait_ids)) {
+      if (j <= i) {
+        next
+      }
+      res <- .profile_trait_pair(
+        out, profiles, trait_ids_by_program, trait_ids[i], trait_ids[j],
+        as.integer(n_perm), max_null, best
+      )
+      out <- res$out
+      max_null <- res$max_null
+      best <- res$best
+    }
+  }
+
+  out$q_concordance <- stats::p.adjust(out$p_concordance, method = "BH")
+  matches <- .profile_matches(best, max_null, fdr_threshold)
+  out <- .profile_link_tiers(out, matches, fdr_threshold)
+  return(list(pairs = out, matches = matches, settings = settings))
+}
+
+
+# One trait pair on the feature axis. Mirrors .concordance_trait_pair(): the
+# statistic is the confidence-weighted inner product of the two programs'
+# signed feature loadings, and the null permutes feature labels within each
+# program of trait b.
+.profile_trait_pair <- function(out, profiles, trait_ids_by_program,
+                                t_a, t_b, n_perm, max_null, best) {
+  progs_a <- names(trait_ids_by_program)[trait_ids_by_program == t_a]
+  progs_b <- names(trait_ids_by_program)[trait_ids_by_program == t_b]
+  rows <- which(
+    as.character(out$trait_id_a) == t_a & as.character(out$trait_id_b) == t_b
+  )
+  if (length(rows) == 0 || length(progs_a) == 0 || length(progs_b) == 0) {
+    return(list(out = out, max_null = max_null, best = best))
+  }
+
+  features <- .shared_feature_axis(profiles, t_a, t_b)
+  out$n_features_axis[rows] <- length(features)
+  if (length(features) < 2) {
+    return(list(out = out, max_null = max_null, best = best))
+  }
+
+  ma <- .program_feature_matrix(profiles, features, progs_a)
+  mb <- .program_feature_matrix(profiles, features, progs_b)
+  aw <- ma$loading * ma$conf
+  bw <- mb$loading * mb$conf
+
+  obs <- t(aw) %*% bw
+  den_a <- t(ma$loading^2 * ma$conf) %*% mb$conf
+  den_b <- t(ma$conf) %*% (mb$loading^2 * mb$conf)
+  cosine <- obs / sqrt(den_a * den_b)
+
+  s1 <- t(abs(aw)) %*% abs(bw)
+  s2 <- t(aw^2) %*% bw^2
+  n_eff <- s1^2 / s2
+  n_eff[!is.finite(n_eff)] <- NA_real_
+
+  null_scores <- array(NA_real_, c(n_perm, length(progs_a), length(progs_b)))
+  for (p in seq_len(n_perm)) {
+    bp <- bw
+    for (k in seq_len(ncol(bw))) {
+      bp[, k] <- bw[sample.int(nrow(bw)), k]
+    }
+    null_scores[p, , ] <- t(aw) %*% bp
+  }
+  null_mean <- apply(null_scores, c(2, 3), mean)
+  null_sd <- apply(null_scores, c(2, 3), stats::sd)
+  null_sd[!is.finite(null_sd) | null_sd <= 0] <- NA_real_
+  zobs <- (obs - null_mean) / null_sd
+
+  pval <- matrix(NA_real_, nrow = length(progs_a), ncol = length(progs_b))
+  for (ia in seq_along(progs_a)) {
+    for (ib in seq_along(progs_b)) {
+      nv <- null_scores[, ia, ib]
+      nv <- nv[is.finite(nv)]
+      if (length(nv) > 0 && is.finite(obs[ia, ib])) {
+        pval[ia, ib] <- (1 + sum(abs(nv) >= abs(obs[ia, ib]))) / (1 + length(nv))
+      }
+    }
+  }
+
+  znull <- sweep(null_scores, c(2, 3), null_mean, "-")
+  znull <- sweep(znull, c(2, 3), null_sd, "/")
+
+  a_idx <- match(as.character(out$program_id_a[rows]), progs_a)
+  b_idx <- match(as.character(out$program_id_b[rows]), progs_b)
+  for (k in seq_along(rows)) {
+    ia <- a_idx[k]
+    ib <- b_idx[k]
+    if (is.na(ia) || is.na(ib)) {
+      next
+    }
+    out$profile_concordance[rows[k]] <- obs[ia, ib]
+    out$cosine_features[rows[k]] <- cosine[ia, ib]
+    out$n_eff_features[rows[k]] <- n_eff[ia, ib]
+    out$concordance_z[rows[k]] <- zobs[ia, ib]
+    out$p_concordance[rows[k]] <- pval[ia, ib]
+  }
+
+  # Max-statistic null per program, so a program's best partner is judged
+  # against the best it would have found by chance across all candidates.
+  for (ia in seq_along(progs_a)) {
+    pid <- progs_a[ia]
+    max_null[, pid] <- pmax(
+      max_null[, pid],
+      apply(abs(znull[, ia, , drop = FALSE]), 1, max, na.rm = TRUE)
+    )
+    obs_row <- abs(zobs[ia, ])
+    if (any(is.finite(obs_row))) {
+      w <- which.max(replace(obs_row, !is.finite(obs_row), -Inf))
+      br <- which(best$program_id == pid)
+      if (!is.finite(best$best_abs_z[br]) || obs_row[w] > best$best_abs_z[br]) {
+        best$best_abs_z[br] <- obs_row[w]
+        best$best_partner[br] <- progs_b[w]
+      }
+    }
+  }
+  for (ib in seq_along(progs_b)) {
+    pid <- progs_b[ib]
+    max_null[, pid] <- pmax(
+      max_null[, pid],
+      apply(abs(znull[, , ib, drop = FALSE]), 1, max, na.rm = TRUE)
+    )
+    obs_col <- abs(zobs[, ib])
+    if (any(is.finite(obs_col))) {
+      w <- which.max(replace(obs_col, !is.finite(obs_col), -Inf))
+      br <- which(best$program_id == pid)
+      if (!is.finite(best$best_abs_z[br]) || obs_col[w] > best$best_abs_z[br]) {
+        best$best_abs_z[br] <- obs_col[w]
+        best$best_partner[br] <- progs_a[w]
+      }
+    }
+  }
+
+  return(list(out = out, max_null = max_null, best = best))
+}
+
+
+# Features (background studies) both traits' fits carry.
+.shared_feature_axis <- function(profiles, trait_a, trait_b) {
+  keep <- !is.na(profiles$feature_trait_id)
+  a <- unique(as.character(profiles$feature_trait_id[
+    keep & as.character(profiles$trait_id) == trait_a
+  ]))
+  b <- unique(as.character(profiles$feature_trait_id[
+    keep & as.character(profiles$trait_id) == trait_b
+  ]))
+  return(sort(intersect(a, b)))
+}
+
+
+# features x programs matrices of signed loading and confidence weight.
+.program_feature_matrix <- function(profiles, features, program_ids) {
+  loading <- matrix(
+    0, nrow = length(features), ncol = length(program_ids),
+    dimnames = list(features, program_ids)
+  )
+  conf <- loading
+  for (j in seq_along(program_ids)) {
+    s <- profiles[
+      as.character(profiles$program_id) == program_ids[j] &
+        !is.na(profiles$feature_trait_id),
+      ,
+      drop = FALSE
+    ]
+    if (nrow(s) == 0) {
+      next
+    }
+    i <- match(as.character(s$feature_trait_id), features)
+    ok <- !is.na(i)
+    loading[i[ok], j] <- s$loading[ok]
+    conf[i[ok], j] <- .confidence_factor(s$lfsr[ok])
+  }
+  return(list(loading = loading, conf = conf))
+}
+
+
+.profile_matches <- function(best, max_null, fdr_threshold) {
+  emp_p <- vapply(best$program_id, function(pid) {
+    nv <- max_null[, pid]
+    nv <- nv[is.finite(nv)]
+    obs <- best$best_abs_z[best$program_id == pid]
+    if (length(nv) == 0 || !is.finite(obs)) {
+      return(NA_real_)
+    }
+    return((1 + sum(nv >= obs)) / (1 + length(nv)))
+  }, numeric(1))
+  out <- data.frame(
+    program_id = best$program_id,
+    best_partner = best$best_partner,
+    best_concordance_z = best$best_abs_z,
+    emp_p = as.numeric(emp_p),
+    stringsAsFactors = FALSE
+  )
+  out$q <- stats::p.adjust(out$emp_p, method = "BH")
+  out$significant <- !is.na(out$q) & out$q < fdr_threshold
+  return(out)
+}
+
+
+.profile_link_tiers <- function(out, matches, fdr_threshold) {
+  sig <- stats::setNames(matches$significant, matches$program_id)
+  partner <- stats::setNames(matches$best_partner, matches$program_id)
+  a <- as.character(out$program_id_a)
+  b <- as.character(out$program_id_b)
+  reciprocal <- !is.na(partner[a]) & !is.na(partner[b]) &
+    partner[a] == b & partner[b] == a
+  both_sig <- !is.na(sig[a]) & !is.na(sig[b]) & sig[a] & sig[b]
+  out$shared <- reciprocal & both_sig
+  out$link_tier <- ifelse(
+    out$shared, "primary",
+    ifelse(!is.na(out$q_concordance) & out$q_concordance < fdr_threshold,
+           "candidate", NA_character_)
+  )
+  out$direction <- ifelse(
+    is.na(out$concordance_z), NA_character_,
+    ifelse(out$concordance_z >= 0, "concordant", "antagonistic")
+  )
+  return(out[!is.na(out$link_tier) | !is.na(out$concordance_z), , drop = FALSE])
+}
+
+
+# Loci the two programs themselves claim, intersected with the loci both traits
+# carry. This is what makes module_rg a statement about the module rather than
+# about the trait pair: .shared_locus_axis() returns every locus the two traits
+# have in common, so weighting it by |loading| still leaves every pair using the
+# same loci and reports the same n_loci_rg for all of them.
+.module_locus_axis <- function(loadings, program_a, program_b,
+                               trait_a, trait_b) {
+  shared <- .shared_locus_axis(loadings, trait_a, trait_b)
+  if (length(shared) == 0) {
+    return(character(0))
+  }
+  claimed <- function(pid) {
+    s <- loadings[
+      as.character(loadings$program_id) == pid &
+        !is.na(loadings$coloc_group_id),
+      ,
+      drop = FALSE
+    ]
+    if (nrow(s) == 0) {
+      return(character(0))
+    }
+    if ("high_confidence" %in% names(s)) {
+      hc <- s$high_confidence
+      hc[is.na(hc)] <- FALSE
+      if (any(hc)) {
+        s <- s[hc, , drop = FALSE]
+      }
+    }
+    return(unique(as.character(s$coloc_group_id)))
+  }
+  own <- union(claimed(program_a), claimed(program_b))
+  return(sort(intersect(shared, own)))
 }

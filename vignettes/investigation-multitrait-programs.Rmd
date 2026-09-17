@@ -9,8 +9,8 @@ vignette: >
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 params:
-  api: "prod"
-  include_trans: false
+  api: "local"
+  include_trans: true
   trait_ids: [1992, 1993]
   trait_subset: "phenotypic"
   min_snp_signals: 2
@@ -103,21 +103,28 @@ Traits are supplied as an array in `params$trait_ids`. We use
 
 ```{r params}
 api <- params$api
-trait_subset <- params$trait_subset
-min_module_size <- as.integer(params$min_module_size)
-min_snp_signals <- as.integer(params$min_snp_signals)
-compress_method <- params$compress_method
-compress_scale <- as.numeric(params$compress_scale)
-include_trans <- isTRUE(params$include_trans)
-similarity_threshold <- as.numeric(params$similarity_threshold)
-ebmf_lfsr_threshold <- as.numeric(params$ebmf_lfsr_threshold)
-ebmf_prior <- params$ebmf_prior
-ebmf_backfit <- isTRUE(params$ebmf_backfit)
-ebmf_magnitude_threshold <- if (is.na(params$ebmf_magnitude_threshold)) {
-  NA_real_
-} else {
-  as.numeric(params$ebmf_magnitude_threshold)
-}
+# Resolved from vignettes/_ebmf_settings.yml, the same file the univariate
+# study reads. Previously this vignette carried its own ebmf_magnitude_threshold
+# (0.5 vs 0.75) and include_trans (FALSE vs TRUE), so it factorised a different
+# matrix and its "programs" were not the univariate programs at all -- which is
+# why the two studies did not line up.
+ebmf_settings <- resolve_ebmf_settings(params)
+settings_signature <- ebmf_settings_signature(ebmf_settings)
+
+trait_subset <- ebmf_settings$trait_subset
+min_module_size <- as.integer(ebmf_settings$min_module_size)
+min_snp_signals <- as.integer(ebmf_settings$min_snp_signals)
+compress_method <- ebmf_settings$compress_method
+compress_scale <- as.numeric(ebmf_settings$compress_scale)
+include_trans <- isTRUE(ebmf_settings$include_trans)
+similarity_threshold <- as.numeric(ebmf_settings$similarity_threshold)
+ebmf_lfsr_threshold <- as.numeric(ebmf_settings$ebmf_lfsr_threshold)
+ebmf_prior <- ebmf_settings$ebmf_prior
+ebmf_backfit <- isTRUE(ebmf_settings$ebmf_backfit)
+ebmf_magnitude_threshold <- as.numeric(ebmf_settings$ebmf_magnitude_threshold)
+ebmf_greedy_Kmax <- as.integer(ebmf_settings$ebmf_greedy_Kmax)
+coherence_n_perm <- as.integer(ebmf_settings$coherence_n_perm)
+coherence_q_threshold <- as.numeric(ebmf_settings$coherence_q)
 associations <- params$associations
 min_mean_internal <- as.numeric(params$min_mean_internal)
 min_connectedness <- as.numeric(params$min_connectedness)
@@ -198,6 +205,7 @@ run_trait <- function(tid) {
     compress_scale = compress_scale,
     ebmf_lfsr_threshold = ebmf_lfsr_threshold,
     ebmf_magnitude_threshold = ebmf_magnitude_threshold,
+    ebmf_greedy_Kmax = ebmf_greedy_Kmax,
     ebmf_prior = ebmf_prior,
     ebmf_backfit = ebmf_backfit,
     min_module_size = min_module_size,
@@ -211,6 +219,8 @@ run_trait <- function(tid) {
     min_module_size = min_module_size,
     min_mean_internal = min_mean_internal,
     min_connectedness = min_connectedness,
+    coherence_n_perm = coherence_n_perm,
+    coherence_q_threshold = coherence_q_threshold,
     n_null = n_null,
     alpha_membership = alpha_membership,
     n_candidate_tier = n_candidate_tier,
@@ -351,6 +361,92 @@ highly; a locus that matters to only one of them contributes almost nothing on i
 own. Because `extract_program_loadings()` orients each program so its own target
 trait loads positively, the **sign** is meaningful: positive means the two
 programs rise and fall together, negative means they oppose.
+
+## Step 2.5: Which axis can these traits even be compared on?
+
+Two programs can only be matched on evidence both traits carry. There are two
+candidate axes, and they are very different in size.
+
+The **locus** axis is the set of `coloc_group_id`s both traits carry. Joining on
+coloc group requires both traits to have been fine-mapped to the *same* signal,
+which is far stricter than positional overlap, so this axis can be small even
+for two well-powered traits.
+
+The **feature** axis is the set of background studies both traits' fits load on.
+Because every target trait is profiled against the same GPMap background
+universe, this axis does not require the two traits to share any loci at all.
+
+This matters because `locus_concordance` is an inner product *over shared loci*:
+two programs describing the same biology at different loci score near zero by
+construction. If the belief is that a shared biological program need not act at
+identical variants, the locus axis cannot express it, and the feature axis is
+where the comparison has to happen.
+
+```{r step2b-axes}
+feature_universe <- shared_feature_universe(program_data)
+knitr::kable(
+  feature_universe,
+  row.names = FALSE,
+  caption = paste0(
+    "Size of each candidate matching axis per trait pair. n_features_shared is ",
+    "the feature (background-study) axis; n_loci_shared is the locus axis. The ",
+    "premise of profile matching is that the first is much larger than the ",
+    "second -- where it is not, the profile axis has no more support than the ",
+    "locus axis and its links should be read with the same caution."
+  )
+)
+```
+
+## Step 3a: Profile concordance (primary axis)
+
+`compare_program_pairs_profiles()` scores every cross-trait pair on how
+similarly the two programs load across the shared background studies, using the
+same confidence weighting, the same max-statistic permutation null, and the same
+primary/candidate tiering as the locus statistic. Sign is meaningful for the
+same reason: each program is oriented so its own target trait loads positively.
+
+Read `n_eff_features` the way `n_eff_loci` is read below -- a large
+`concordance_z` resting on two or three effective features is thin.
+
+```{r step3a-profiles}
+prof_result <- compare_program_pairs_profiles(
+  program_data,
+  n_perm = n_perm,
+  fdr_threshold = fdr_threshold,
+  seed = 1
+)
+prof_pairs <- prof_result$pairs
+prof_links <- prof_pairs[!is.na(prof_pairs$link_tier), , drop = FALSE]
+prof_links <- prof_links[order(
+  factor(prof_links$link_tier, levels = c("primary", "candidate")),
+  -abs(prof_links$concordance_z)
+), , drop = FALSE]
+
+if (nrow(prof_links) == 0) {
+  cat("No program pairs linked on the profile axis.\n\n")
+} else {
+  print(knitr::kable(
+    prof_links |>
+      dplyr::mutate(
+        concordance_z = round(concordance_z, 2),
+        q_concordance = signif(q_concordance, 3),
+        profile_concordance = round(profile_concordance, 2),
+        cosine_features = round(cosine_features, 3),
+        n_eff_features = round(n_eff_features, 1)
+      ) |>
+      dplyr::select(
+        program_id_a, program_id_b, link_tier, direction, concordance_z,
+        q_concordance, n_features_axis, n_eff_features, profile_concordance,
+        cosine_features
+      ),
+    row.names = FALSE,
+    caption = paste0(
+      "Program pairs linked on the trait-profile axis, primary tier first. ",
+      "These links do not require the two programs to share any loci."
+    )
+  ))
+}
+```
 
 ```{r step3-concordance}
 coloc_by_trait <- stats::setNames(
@@ -583,6 +679,16 @@ if (nrow(conc_result$module_rg) > 0) {
 
 ## Step 7: Do linked programs recover the same biology?
 
+**Both link tiers are checked here, not just `primary`.** A pair only needs to
+have cleared *some* significance threshold in Step 4 (mutual best match for
+`primary`, or its own `q_concordance <= fdr_threshold` for `candidate`) to be
+included below — the `tier` column in the table says which. Candidates are
+included deliberately: they are not corrected for the search over partners
+the way `primary` is, so this biology check is one of the best ways to tell
+whether a given candidate is a real lead or noise — held-out annotation
+agreement it wasn't calibrated to produce is stronger support than the
+loading evidence alone gives it.
+
 Annotations play no part in forming a link, so agreement here is **independent
 corroboration** rather than a restatement of the same evidence. Each program's
 high-confidence SNPs are enriched separately, against its own trait's full
@@ -633,6 +739,12 @@ program_enrichment <- function(program_id, what = c("category", "tissue")) {
 }
 
 if (nrow(linked) > 0) {
+  cat(sprintf(
+    "\nChecking %d linked pairs: %d primary, %d candidate.\n\n",
+    nrow(linked),
+    sum(linked$link_tier == "primary"),
+    sum(linked$link_tier == "candidate")
+  ))
   biology <- dplyr::bind_rows(lapply(seq_len(nrow(linked)), function(i) {
     pa <- linked$program_id_a[i]
     pb <- linked$program_id_b[i]
@@ -651,9 +763,9 @@ if (nrow(linked) > 0) {
     biology,
     caption = paste0(
       "Trait-category and tissue enrichment of each side of a linked pair, ",
-      "computed independently per trait against that trait's own SNP universe. ",
-      "Matching entries between the `_a` and `_b` columns are held-out support ",
-      "for the link."
+      "both primary and candidate tiers, computed independently per trait ",
+      "against that trait's own SNP universe. Matching entries between the ",
+      "`_a` and `_b` columns are held-out support for the link."
     ),
     row.names = FALSE,
     escape = FALSE

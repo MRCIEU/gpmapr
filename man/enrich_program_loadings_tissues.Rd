@@ -34,9 +34,16 @@ Defaults to 0.02.}
 A list with:
 \itemize{
 \item by_program: list of per-program results (\code{program}, \code{n_snps},
-\code{comparison} with columns tissue, enrichment, se, z, p, fdr, n_snps,
-n_category_snps; \code{fdr} is corrected across every program tested, not
-within this program alone)
+\code{comparison} with columns tissue, enrichment, se, z, p, fdr,
+r_squared, n_snps, n_category_snps; \code{fdr} is corrected across every
+program tested, not within this program alone. \code{r_squared} is the
+fraction of this program's squared-loading variance the tissue
+explains -- unlike \code{enrichment} it is bounded in \link{0, 1} and
+comparable across programs, which is what makes a fixed threshold on
+it (e.g. Cohen's 1988 benchmarks: 0.01 small, 0.09 medium, 0.25
+large) meaningful. It is not an independent effect-size-vs-power
+axis here: with \code{n_snps} roughly fixed per program, \code{r_squared} is
+close to a monotonic function of \code{p}.
 \item summary: one row per program (\code{n_categories_tested},
 \code{n_enriched}, \code{top_category})
 }

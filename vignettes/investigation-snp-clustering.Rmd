@@ -148,6 +148,32 @@ Y = LF^{\top} + E
 - \(F\) = SNP factors (which SNPs each program loads on)
 - \(E\) = residual error
 
+**Two loading matrices, two kinds of output each.** `flashier` returns
+posterior summaries for both \(L\) and \(F\), and for each matrix it
+separately reports a point estimate and an uncertainty measure. These are
+easy to conflate — both are called "loadings" — but they answer different
+questions about different axes of the model:
+
+| | SNP-loading matrix `F` | trait-loading matrix `L` |
+|---|---|---|
+| point estimate | `F_pm` — posterior mean loading of each SNP on the program | `L_pm` — posterior mean loading of each background trait on the program |
+| uncertainty | `F_lfsr` — local false sign rate: how confident EBMF is in that SNP's sign/nonzero-ness | `L_lfsr` — same, for the trait loadings |
+
+`F_pm`/`F_lfsr` are what the program-extraction gate just below uses
+(`|loading| > ebmf_magnitude_threshold` and `lfsr < ebmf_lfsr_threshold`),
+and what the SNP-similarity matrix `S` in Step 4 is built from. `L_pm`/`L_lfsr`
+describe which *background traits* drive a program and are used downstream
+for biological interpretation (Step 5's "top traits by magnitude"), not for
+deciding SNP membership.
+
+Magnitude and lfsr are not the same axis, even within one matrix: magnitude
+(\(|F_{pm}|\)) is how big the point estimate is; lfsr is how much to trust it
+— specifically, the posterior probability that the true sign is the opposite
+of what was estimated. A locus can have a large magnitude and still a high
+lfsr if it is weakly powered: the point estimate looks big, but the posterior
+around it is wide enough that it could easily be near zero or flipped. That
+is why program extraction gates on both, not magnitude alone.
+
 Implemented via `flashier`: factors are added greedily while the variational
 lower bound improves (`greedy_Kmax`), then cyclically backfit. The number of
 programs is learned, not fixed. The sparse prior on loadings and factors is
@@ -279,7 +305,14 @@ labelling layer, not a program-level validity gate.
 
 ### 5. Interpret valid programs
 
-The univariate vignette interprets **valid** EBMF programs as:
+Programs are interpreted two ways in parallel — a **hard-cutoff** approach
+(gate SNPs into a program, then test the gated set for enrichment) and a
+**continuous** approach (weight every SNP by its loading, no gate). Both are
+run on the same `valid` programs so their results can be compared side by
+side; the continuous approach does not replace the hard-cutoff one.
+
+**Hard-cutoff enrichment.** The univariate vignette interprets **valid** EBMF
+programs as:
 
 - **Top traits by magnitude** (`abs_mean_z` within the program).
 - **Trait-category composition** (`enrich_snp_group_trait_categories()`):
@@ -289,9 +322,9 @@ The univariate vignette interprets **valid** EBMF programs as:
   when significant.
 - **Tissue composition** (`enrich_snp_group_tissues()`, `background = "trait"`)
   on the same leave-one-out trait baseline.
-- **Pathway enrichment** on QTL genes (KEGG and Reactome), treated as
-  secondary because the full-trait gene set is often empty for broad polygenic
-  traits.
+- **Pathway enrichment** on QTL genes (KEGG and Reactome; `enrich_snp_group_pathways()`),
+  treated as secondary because the full-trait gene set is often empty for
+  broad polygenic traits.
 - **SNP pleiotropy typology** (`summarise_snp_group_pleiotropy()`): programs
   are placed on a *breadth* axis (mean per-SNP distinct trait categories /
   distinct genes) against *tightness* (separation). Descriptive only — it
@@ -299,7 +332,7 @@ The univariate vignette interprets **valid** EBMF programs as:
   (tight + broad), or generic background (loose + broad), without acting as a
   filter or reliability criterion.
 
-#### Multiple testing correction for trait-category and tissue enrichments
+#### Multiple testing correction for the hard-cutoff enrichments
 
 Each valid program is tested against **every** trait category and **every**
 tissue for over-representation relative to the trait baseline (leave-one-out
@@ -325,6 +358,63 @@ over the categories/tissues tested for that program alone. Running many
 programs still multiplies the opportunities for false positives across the whole
 analysis, which is why the vignette insists on replication across runs before
 treating a hit as real.
+
+#### Continuous loading-based enrichment (parallel alternative)
+
+`enrich_program_loadings_trait_categories()`, `enrich_program_loadings_tissues()`,
+and `enrich_program_loadings_pathways()` test the same three annotation types
+without the lFSR/magnitude gate: every SNP with a finite EBMF loading
+contributes to every program's test, weighted by its squared loading, rather
+than being included or excluded by a threshold. For membership indicator
+\(x \in \{0, 1\}\) (does this SNP link to this category/tissue/pathway term)
+and squared loading \(y = F_{jk}^2\), an ordinary least squares regression
+
+\[
+y = \beta_0 + \beta_1 x + \varepsilon
+\]
+
+(`lm(loading^2 ~ membership)`) is fit per program per candidate term. The
+fitted \(\beta_1\) — the
+difference in mean squared loading between member and non-member SNPs — is
+the reported `enrichment`; its `p` comes from the usual OLS \(t\)-test.
+
+**Effect size.** `enrichment` is a raw mean-difference in squared-loading
+units, so its scale depends on that program's own loadings and is not
+comparable between programs. `r_squared` (the fraction of a program's
+squared-loading variance the term explains) is bounded in \([0, 1]\) and is
+comparable across programs, which is what makes a single fixed threshold
+meaningful — the univariate vignette's comparison step filters on
+`r_squared >= 0.05`, between Cohen's (1988) conventional "small" (0.01) and
+"medium" (0.09) benchmarks, on top of `FDR <= 0.05`, and orders surviving hits
+by `enrichment` rather than by significance.
+* FDR alone is not a sufficient
+filter here: with hundreds of SNPs feeding every regression, a small,
+practically negligible difference in mean squared loading can still reach
+significance, so an effect-size floor matters more than it does for the
+hard-cutoff hypergeometric test's fold-enrichment ratio. One caveat: because
+the number of SNPs tested is roughly constant across programs within one
+trait, `r_squared` here tracks \(p\) closely rather than supplying a fully
+independent axis — it is a bounded, human-interpretable rescaling of the same
+evidence, not a second, unrelated filter.
+
+**Multiple testing correction is pooled across programs, not per-program.**
+Unlike the hypergeometric functions above, each of the three continuous
+functions runs one regression per program per category/tissue/pathway term,
+then Benjamini-Hochberg-corrects across *every* program's tests for that
+enrichment type in a single family — so `fdr` reflects the true number of
+regressions run for the trait, not one program's slice of them. For pathways,
+KEGG and Reactome are pooled into that same family rather than corrected
+separately, so a KEGG hit competes against the combined KEGG+Reactome,
+all-programs test count; `source` remains a label column, not a correction
+boundary. Trait-category, tissue, and pathway enrichment each stay their own
+separate family — none of the three is pooled with either of the others.
+
+**SNPs are treated as independent observations** in every regression above.
+
+The two approaches are run side by side (not merged into one report) so their
+results can be compared program by program; see the "continuous loading-based
+enrichment (comparison)" step of
+[Investigation of univariate analysis](investigation-univariate-analysis.html).
 
 ## Variables to consider
 
@@ -362,6 +452,20 @@ Reliability/validation cutoffs used after clustering therefore are:
 `ebmf_magnitude_threshold`. `factor_strength`, `posterior_evidence`, and
 `max_abs_factor_corr`/`redundant` are reported descriptively but do not gate
 `status`.
+
+### Continuous enrichment parameters
+
+Inputs to `enrich_program_loadings_trait_categories()`,
+`enrich_program_loadings_tissues()`, and `enrich_program_loadings_pathways()`.
+`min_category_size` and `min_loading_magnitude` are function arguments;
+`r_squared` filtering is applied by the comparison step in the vignette, not
+built into the functions themselves.
+
+| Parameter | Values | Meaning | Explanation |
+|---|---|---|---|
+| `min_category_size` | `5` | Minimum linked SNPs for a category/tissue/pathway term to be tested | Below this, a term is skipped entirely (not tested, not reported) rather than tested on too few SNPs to fit a stable regression. |
+| `min_loading_magnitude` | `0`, `0.02` | Soft membership gate on `x = 1` | `0` disables gating (every linked SNP counts as a member regardless of its loading on this program). Raising it relabels linked-but-negligible-loading SNPs to `x = 0` for that program's test only, sharpening the member/non-member contrast without a hard lFSR/magnitude cutoff. SNPs are never dropped from the analysis, only relabelled. |
+| `r_squared` floor (vignette-level, not a function argument) | `0.01` (Cohen small), `0.05`, `0.09` (Cohen medium) | Minimum variance-explained for a hit to be reported, on top of `FDR <= 0.05` | Because `enrichment`'s scale is not comparable across programs, a fixed cutoff must be applied to `r_squared` instead. `0.05` (used in the univariate vignette's comparison step) sits between Cohen's (1988) "small" and "medium" benchmarks. |
 
 ## Simulation Strategy
 
@@ -525,7 +629,7 @@ This standard report would be returned by gpmapr and as a framework for the Resu
 - Membership overlap with other programs
 - Top SNPs by posterior loading or membership evidence
 - Various statistical reliability metrics, including mean internal similarity, connectedness, stability, factor strength, stability 
-- Biological interpretation metrics, including top traits, trait categories, tissues, genes, pathways, and pleiotropy typology
+- Biological interpretation metrics, including top traits, trait categories, tissues, genes, pathways, and pleiotropy typology, from both the hard-cutoff (fold enrichment, FDR) and continuous loading-based (effect, r_squared, FDR) enrichment routes
 
 #### SNP Level metrics
 - Program membership(s)

@@ -10,6 +10,7 @@ module_rg(
   coloc_groups,
   tiers = c("primary", "candidate"),
   n_boot = 1000L,
+  min_loci_rg = 10L,
   seed = 1
 )
 }

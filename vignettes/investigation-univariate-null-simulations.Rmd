@@ -12,11 +12,14 @@ params:
   effect_size: 6
   p_active_background: 0.1
   background_sparsity_sd: 1.2
+  # Similarity-graph realism. background_corr = 0 is the historical behaviour
+  # (independent, random-signed background, which contributes nothing to
+  # SNP-SNP similarity); snp_pleiotropy_sd is the per-SNP analogue of
+  # background_sparsity_sd. See simulated_graph_diagnostics().
+  background_corr: 0
+  snp_pleiotropy_sd: 0
   background_effect_scale: 0.5
-  n_hub_traits: 0
-  hub_snp_fraction: [0.3, 1.0]
   target_pattern: module
-  p_negative: 0
 
   # EBMF / clustering parameters (inputs to run_univariate_clustering)
   trait_subset: "phenotypic"
@@ -34,6 +37,11 @@ params:
   min_module_size: 3
   min_mean_internal: 0.3
   min_connectedness: 0.25
+  # Loading-permutation coherence gate (replaces min_mean_internal /
+  # min_connectedness as the gate; those two are now reported only).
+  coherence_n_perm: 2000
+  coherence_q: 0.05
+  ebmf_greedy_Kmax: 100
   n_null: 5
   alpha_membership: 0.05
   n_candidate_tier: 25
@@ -109,6 +117,7 @@ clustering_settings <- list(
   compress_scale = params$compress_scale,
   ebmf_lfsr_threshold = params$ebmf_lfsr_threshold,
   ebmf_magnitude_threshold = params$ebmf_magnitude_threshold,
+  ebmf_greedy_Kmax = params$ebmf_greedy_Kmax,
   ebmf_drop_global = params$ebmf_drop_global,
   ebmf_prior = params$ebmf_prior,
   ebmf_backfit = params$ebmf_backfit,
@@ -122,6 +131,8 @@ validation_settings <- list(
   min_module_size = params$min_module_size,
   min_mean_internal = params$min_mean_internal,
   min_connectedness = params$min_connectedness,
+  coherence_n_perm = params$coherence_n_perm,
+  coherence_q_threshold = params$coherence_q,
   n_null = n_null,
   alpha_membership = params$alpha_membership,
   n_candidate_tier = params$n_candidate_tier,
@@ -169,10 +180,84 @@ Because `K = 0`, the module-only generative parameters (`module_sizes`,
 here. The active axes of background realism are `p_active_background`
 (how often a background trait is observed at a SNP), `background_sparsity_sd`
 (heavy-tailed per-trait density variation), `background_effect_scale`
-(background magnitude relative to `effect_size`), `noise_sd` (per-cell noise),
-and `n_hub_traits` (dense pleiotropic rows that create a shared global factor).
-Each version below holds everything else at its realistic baseline and varies
-one axis.
+(background magnitude relative to `effect_size`), and `noise_sd` (per-cell
+noise). Each version below holds everything else at its realistic baseline and
+varies one axis.
+
+## Does this simulation exercise the gates in the regime real data uses them?
+
+The validation gates act on the SNP similarity graph, so what matters is not
+whether the simulated matrix has realistic per-trait sparsity and magnitude
+marginals -- it is whether the *graph* those marginals induce resembles a real
+one. Those are not the same thing, and matching the marginals is not sufficient.
+
+`simulated_graph_diagnostics()` measures the simulated graph and
+`real_bmi_graph_targets()` carries the values measured on the BMI pleiotropy
+matrix. The row to read first is `random_set_pass_rate`: the fraction of random
+SNP sets whose mean internal similarity clears 0.3. On real BMI data that is
+about 0.94 -- a random set of SNPs passes the old absolute gate almost always,
+which is why that gate carried no specificity. Where the simulated value is near
+0, a random set can never pass, so a null simulation study **cannot detect an
+uninformative gate** and its false-discovery rate is close to un-failable by
+construction.
+
+The two generative parameters that move this are `background_corr` (background
+traits sharing structure, so they contribute to SNP-SNP similarity at all --
+at `0` they are independent and random-signed and contribute nothing) and
+`snp_pleiotropy_sd` (per-SNP heterogeneity in how many traits a SNP is observed
+on, which is what brings the median pairwise overlap down towards the real ~3
+and produces the sparse SNPs that carry high cosines).
+
+```{r graph-realism}
+graph_diag <- tryCatch({
+  sim_probe <- simulate_trait(
+    n_coloc_groups = params$n_snps,
+    K = 0L,
+    n_traits = n_traits,
+    noise_sd = params$noise_sd,
+    effect_size = params$effect_size,
+    p_active_background = params$p_active_background,
+    background_sparsity_sd = params$background_sparsity_sd,
+    background_corr = params$background_corr,
+    snp_pleiotropy_sd = params$snp_pleiotropy_sd,
+    background_effect_scale = params$background_effect_scale,
+    target_pattern = params$target_pattern,
+    seed = params$master_seed
+  )
+  probe_res <- do.call(
+    run_univariate_clustering,
+    c(list(trait_object = sim_probe$trait_object), clustering_settings)
+  )
+  simulated_graph_diagnostics(
+    probe_res$x_matrix,
+    target_trait_id = probe_res$parameters$target_trait_id
+  )
+}, error = function(e) NULL)
+
+if (is.null(graph_diag)) {
+  cat("Graph diagnostics unavailable for this configuration.\n\n")
+} else {
+  targets <- real_bmi_graph_targets()
+  shared_cols <- intersect(names(targets), names(graph_diag))
+  comparison <- data.frame(
+    statistic = shared_cols,
+    simulated = signif(as.numeric(graph_diag[shared_cols]), 3),
+    real_bmi = signif(as.numeric(targets[shared_cols]), 3),
+    stringsAsFactors = FALSE
+  )
+  print(knitr::kable(
+    comparison,
+    row.names = FALSE,
+    caption = paste0(
+      "Similarity-graph diagnostics for this run's generative settings against ",
+      "the values measured on the real BMI pleiotropy matrix. Read ",
+      "random_set_pass_rate first: where it is near 0 the gates are not being ",
+      "tested in the regime real data puts them in, whatever the recovery ",
+      "metrics below say."
+    )
+  ))
+}
+```
 
 ## Simulation design (ADEMP)
 
@@ -187,10 +272,7 @@ realism. This is a *stretch-or-break* aim: find where the gates are fooled.
 **Data-generating mechanism.** `simulate_trait()` with `K = 0`, so only the
 oriented target row and unstructured background rows exist. The varied factors
 are `p_active_background`, `background_sparsity_sd`, `background_effect_scale`,
-`noise_sd`, and `n_hub_traits`, each varied one at a time from the realistic
-baseline. The `hub_traits` version is deliberately **not** a pure null: it
-plants dense pleiotropic rows, is reported separately, and is excluded from any
-FDR claim.
+and `noise_sd`, each varied one at a time from the realistic baseline.
 
 **Estimand / target.** The target is the null hypothesis of no planted module;
 under it, any program passing all four gates is a false discovery, so the
@@ -253,11 +335,10 @@ null_base <- list(
   effect_size = params$effect_size,
   p_active_background = params$p_active_background,
   background_sparsity_sd = params$background_sparsity_sd,
+  background_corr = params$background_corr,
+  snp_pleiotropy_sd = params$snp_pleiotropy_sd,
   background_effect_scale = params$background_effect_scale,
-  n_hub_traits = params$n_hub_traits,
-  hub_snp_fraction = params$hub_snp_fraction,
-  target_pattern = params$target_pattern,
-  p_negative = params$p_negative
+  target_pattern = params$target_pattern
 )
 
 # K is pinned to 0 no matter what: these are null simulations by construction.
@@ -333,9 +414,7 @@ run_tier <- function(name, label, spec, n_sim) {
 
 Every version plants no modules (`K = 0`); the versions differ only in the
 background realism parameter being stressed, with everything else at its
-realistic baseline. The **hub_traits** version is deliberately not a pure null:
-it plants dense pleiotropic rows so EBMF has a real shared global factor to
-latch onto, testing whether such a mega-factor reads as false programs.
+realistic baseline.
 
 ```{r tiers}
 tier_specs <- list(
@@ -348,8 +427,7 @@ tier_specs <- list(
   weak_background_effects = make_tier_spec(background_effect_scale = 0.25),
   strong_background_effects = make_tier_spec(background_effect_scale = 1.5),
   low_noise = make_tier_spec(noise_sd = 0.25),
-  high_noise = make_tier_spec(noise_sd = 4),
-  hub_traits = make_tier_spec(n_hub_traits = 15)
+  high_noise = make_tier_spec(noise_sd = 4)
 )
 
 tier_labels <- c(
@@ -362,8 +440,7 @@ tier_labels <- c(
   weak_background_effects = "weak background magnitudes (background_effect_scale = 0.25)",
   strong_background_effects = "strong background magnitudes (background_effect_scale = 1.5)",
   low_noise = "low noise (noise_sd = 0.25)",
-  high_noise = "high noise (noise_sd = 4)",
-  hub_traits = "pleiotropic hub traits (n_hub_traits = 15)"
+  high_noise = "high noise (noise_sd = 4)"
 )
 
 # Quick test mode runs a representative subset of the null versions; the full
@@ -372,7 +449,7 @@ if (quick) {
   keep <- intersect(
     c(
       "baseline", "background_dense", "strong_background_effects",
-      "high_noise", "hub_traits"
+      "high_noise"
     ),
     names(tier_specs)
   )
@@ -402,14 +479,7 @@ tier_param_table <- do.call(rbind, lapply(names(tier_specs), function(nm) {
     p_active_background = s$p_active_background,
     background_sparsity_sd = s$background_sparsity_sd,
     background_effect_scale = s$background_effect_scale,
-    n_hub_traits = s$n_hub_traits,
-    hub_snp_fraction = if (s$n_hub_traits > 0) {
-      paste(s$hub_snp_fraction, collapse = "-")
-    } else {
-      "-"
-    },
     target_pattern = s$target_pattern,
-    p_negative = s$p_negative,
     stringsAsFactors = FALSE
   )
 }))
@@ -610,10 +680,10 @@ for (nm in names(tier_specs)) {
 
 ## Notes for interpreting runs
 
-- **Fast test runs.** A production render is long: `n_sim = 200` over the 11
+- **Fast test runs.** A production render is long: `n_sim = 200` over the 10
   null versions is thousands of EBMF fits, and a single null fit is expensive
   because there are 600 trait rows. To iterate quickly, override `params`:
-  - `params = list(quick = TRUE)` — smoke test (5 representative versions,
+  - `params = list(quick = TRUE)` — smoke test (4 representative versions,
     `n_sim = 3`, `n_null = 1`, no stability, `n_traits = 100`); about 90 s.
   - `params = list(n_sim = 5, n_null = 1, n_stability_rep = 0, n_traits = 100)`
     — full null-version grid with cheap internals and a smaller row count;
@@ -622,7 +692,7 @@ for (nm in names(tier_specs)) {
     (still slow, because of the 600 traits).
   Lowering `n_null`, `n_stability_rep` and `n_traits` gives the largest
   speed-up.
-- Under a true null (`K = 0`, no hub traits) any program passing all four
+- Under a true null (`K = 0`) any program passing all four
   validation checks is a **false discovery**; the `valid` column is the
   pipeline-level false-positive rate.
 - `n programs` is the number of EBMF programs surviving the lFSR/magnitude
@@ -637,11 +707,6 @@ for (nm in names(tier_specs)) {
 - With `p_active_background = 0` every background trait is dropped by the
   `min_snp_signals` filter and the EBMF input reduces to the oriented target
   row; any factor is then the global one and is dropped by `ebmf_drop_global`.
-- The `hub_traits` version is not a pure null: dense pleiotropic rows create a
-  real shared global factor. Hubs observed at more than `max_snp_fraction`
-  (0.8) of SNPs are dropped as ubiquitous before clustering, so only the
-  moderately dense hubs reach EBMF. This version tests whether a legitimate
-  mega-factor reads as false programs under the validation gates.
 - The four checks use the same thresholds as the module simulations
   (`investigation-univariate-simulations.html`), so pass rates here are directly
   comparable to how well the gates separate real modules from background there.
