@@ -1,4 +1,97 @@
 timeout_seconds <- 360
+max_retry_attempts <- 5
+retry_base_delay_seconds <- 1
+retry_max_delay_seconds <- 32
+
+#' @title GET request with retry on rate limiting
+#' @description Thin wrapper around `httr::GET()` that transparently retries
+#'   with exponential backoff when the API responds with 429 (Too Many
+#'   Requests), so callers succeed without needing to handle rate limiting
+#'   themselves.
+#' @param ... Passed on to `httr::GET()`
+#' @return An `httr` response object
+#' @keywords internal
+#' @noRd
+api_get <- function(...) {
+  return(request_with_backoff(httr::GET, ...))
+}
+
+#' @title POST request with retry on rate limiting
+#' @description Thin wrapper around `httr::POST()` that transparently retries
+#'   with exponential backoff when the API responds with 429 (Too Many
+#'   Requests), so callers succeed without needing to handle rate limiting
+#'   themselves.
+#' @param ... Passed on to `httr::POST()`
+#' @return An `httr` response object
+#' @keywords internal
+#' @noRd
+api_post <- function(...) {
+  return(request_with_backoff(httr::POST, ...))
+}
+
+#' @title Retry a request with exponential backoff when rate-limited
+#' @description Performs a request via `verb` and, if the API responds with
+#'   429, waits (honoring a `Retry-After` header when the API sends one,
+#'   otherwise using exponential backoff with jitter) and retries, up to
+#'   `max_retries` times. Any other response, including other error
+#'   statuses, is returned immediately for the caller to handle as before.
+#' @param verb `httr::GET` or `httr::POST`
+#' @param ... Passed on to `verb`
+#' @param max_retries Maximum number of retries after the initial request
+#' @param base_delay Base delay in seconds used for exponential backoff
+#' @param max_delay Maximum delay in seconds between retries
+#' @param attempt The zero-based retry attempt number, used internally to
+#'   track recursion; callers should not need to set this.
+#' @return An `httr` response object
+#' @keywords internal
+#' @noRd
+request_with_backoff <- function(verb, ...,
+                                 max_retries = max_retry_attempts,
+                                 base_delay = retry_base_delay_seconds,
+                                 max_delay = retry_max_delay_seconds,
+                                 attempt = 0) {
+  response <- verb(...)
+  if (httr::status_code(response) != 429L) {
+    return(response)
+  }
+  if (attempt >= max_retries) {
+    stop(
+      "GPMap API rate limit exceeded after ", max_retries,
+      " retries. Please wait a moment and try again.",
+      call. = FALSE
+    )
+  }
+  Sys.sleep(retry_delay_seconds(attempt, response, base_delay, max_delay))
+  return(request_with_backoff(
+    verb, ...,
+    max_retries = max_retries, base_delay = base_delay, max_delay = max_delay,
+    attempt = attempt + 1
+  ))
+}
+
+#' @title Compute the delay before the next retry
+#' @description Uses the `Retry-After` header when the API provides one,
+#'   otherwise falls back to exponential backoff with full jitter.
+#' @param attempt The zero-based retry attempt number
+#' @param response The `httr` response that returned status 429
+#' @param base_delay Base delay in seconds used for exponential backoff
+#' @param max_delay Maximum delay in seconds between retries
+#' @return A delay in seconds
+#' @keywords internal
+#' @noRd
+retry_delay_seconds <- function(attempt, response,
+                                base_delay = retry_base_delay_seconds,
+                                max_delay = retry_max_delay_seconds) {
+  retry_after <- httr::headers(response)[["retry-after"]]
+  if (!is.null(retry_after)) {
+    retry_after_seconds <- suppressWarnings(as.numeric(retry_after))
+    if (!is.na(retry_after_seconds)) {
+      return(max(retry_after_seconds, 0))
+    }
+  }
+  capped_delay <- min(max_delay, base_delay * 2^attempt)
+  return(stats::runif(1, min = 0, max = capped_delay))
+}
 
 #' @title Select API
 #' @description Select the GPMap API endpoint to use.
@@ -25,7 +118,7 @@ select_api <- function(api = c("production", "local", "dev")) {
 #' @export
 health_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/health")
-  health <- httr::GET(url)
+  health <- api_get(url)
   health <- httr::content(health, "text", encoding = "UTF-8")
   health <- jsonlite::fromJSON(health)
   return(health)
@@ -38,7 +131,7 @@ health_api <- function() {
 #' @noRd
 version_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/info/version")
-  version <- httr::GET(url)
+  version <- api_get(url)
   version <- httr::content(version, "text", encoding = "UTF-8")
   version <- jsonlite::fromJSON(version)
   return(version$version)
@@ -50,7 +143,7 @@ version_api <- function() {
 #' @noRd
 search_options_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/search/options")
-  search_options <- httr::GET(url, httr::timeout(timeout_seconds))
+  search_options <- api_get(url, httr::timeout(timeout_seconds))
   search_options <- httr::content(search_options, "text", encoding = "UTF-8")
   search_options <- jsonlite::fromJSON(search_options)
   return(search_options)
@@ -64,7 +157,7 @@ search_options_api <- function() {
 #' @noRd
 search_variants_api <- function(query, rsquared_threshold = 0.8) {
   url <- paste0(getOption("gpmap_url"), "/v1/search/variant/", query, "?rsquared_threshold=", rsquared_threshold)
-  search_variants <- httr::GET(url, httr::timeout(timeout_seconds))
+  search_variants <- api_get(url, httr::timeout(timeout_seconds))
   search_variants <- httr::content(search_variants, "text", encoding = "UTF-8")
   search_variants <- jsonlite::fromJSON(search_variants)
   return(search_variants)
@@ -76,7 +169,7 @@ search_variants_api <- function(query, rsquared_threshold = 0.8) {
 #' @noRd
 traits_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/traits")
-  traits <- httr::GET(url, httr::timeout(timeout_seconds))
+  traits <- api_get(url, httr::timeout(timeout_seconds))
   traits <- httr::content(traits, "text", encoding = "UTF-8")
   traits <- jsonlite::fromJSON(traits)
   return(traits)
@@ -102,7 +195,7 @@ specific_traits_api <- function(
     "/v1/traits?ids=", trait_ids,
     "&include_associations=", include_associations
   )
-  traits <- httr::GET(url, httr::timeout(timeout_seconds))
+  traits <- api_get(url, httr::timeout(timeout_seconds))
   traits <- httr::content(traits, "text", encoding = "UTF-8")
   traits <- jsonlite::fromJSON(traits)
   return(traits)
@@ -120,7 +213,7 @@ trait_api <- function(trait_id, include_associations = FALSE) {
     "/v1/traits/", trait_id,
     "?include_associations=", include_associations
   )
-  trait <- httr::GET(url, httr::timeout(timeout_seconds))
+  trait <- api_get(url, httr::timeout(timeout_seconds))
   trait <- httr::content(trait, "text", encoding = "UTF-8")
   trait <- jsonlite::fromJSON(trait)
   return(trait)
@@ -138,7 +231,7 @@ trait_coloc_pairs_api <- function(trait_id, h4_threshold = 0.8) {
     "/v1/traits/", trait_id, "/coloc-pairs",
     "?h4_threshold=", h4_threshold
   )
-  trait_coloc_pairs <- httr::GET(url, httr::timeout(timeout_seconds))
+  trait_coloc_pairs <- api_get(url, httr::timeout(timeout_seconds))
   trait_coloc_pairs <- httr::content(trait_coloc_pairs, "text", encoding = "UTF-8")
   trait_coloc_pairs <- jsonlite::fromJSON(trait_coloc_pairs)
   to_dataframe <- as.data.frame(trait_coloc_pairs$coloc_pair_rows)
@@ -156,7 +249,7 @@ trait_associations_full_api <- function(trait_id) {
     getOption("gpmap_url"),
     "/v1/traits/", trait_id, "/associations-full"
   )
-  response <- httr::GET(url, httr::timeout(timeout_seconds))
+  response <- api_get(url, httr::timeout(timeout_seconds))
   response <- httr::content(response, "text", encoding = "UTF-8")
   response <- jsonlite::fromJSON(response)
   to_dataframe <- as.data.frame(response$associations_full_rows)
@@ -170,7 +263,7 @@ trait_associations_full_api <- function(trait_id) {
 #' @noRd
 genes_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/genes")
-  genes <- httr::GET(url, httr::timeout(timeout_seconds))
+  genes <- api_get(url, httr::timeout(timeout_seconds))
   genes <- httr::content(genes, "text", encoding = "UTF-8")
   genes <- jsonlite::fromJSON(genes)
   return(genes)
@@ -200,7 +293,7 @@ specific_genes_api <- function(
     include_coloc_pairs, "&include_trans=", include_trans,
     "&h4_threshold=", h4_threshold
   )
-  genes <- httr::GET(url, httr::timeout(timeout_seconds))
+  genes <- api_get(url, httr::timeout(timeout_seconds))
   genes <- httr::content(genes, "text", encoding = "UTF-8")
   genes <- jsonlite::fromJSON(genes)
   return(genes)
@@ -229,7 +322,7 @@ gene_api <- function(gene_id,
     "&h4_threshold=", h4_threshold
   )
 
-  gene <- httr::GET(url, httr::timeout(timeout_seconds))
+  gene <- api_get(url, httr::timeout(timeout_seconds))
   gene <- httr::content(gene, "text", encoding = "UTF-8")
   gene <- jsonlite::fromJSON(gene)
   return(gene)
@@ -251,7 +344,7 @@ region_api <- function(region_id, include_associations = FALSE, include_coloc_pa
     "&include_coloc_pairs=", include_coloc_pairs,
     "&h4_threshold=", h4_threshold
   )
-  region <- httr::GET(url, httr::timeout(timeout_seconds))
+  region <- api_get(url, httr::timeout(timeout_seconds))
   region <- httr::content(region, "text", encoding = "UTF-8")
   region <- jsonlite::fromJSON(region)
   return(region)
@@ -310,7 +403,7 @@ get_variants_with_options_api <- function(
   url <- paste0(url, "&include_coloc_pairs=", tolower(include_coloc_pairs))
   url <- paste0(url, "&h4_threshold=", h4_threshold)
 
-  variants <- httr::GET(url, httr::timeout(timeout_seconds))
+  variants <- api_get(url, httr::timeout(timeout_seconds))
   variants <- httr::content(variants, "text", encoding = "UTF-8")
   variants <- jsonlite::fromJSON(variants)
   return(variants)
@@ -331,7 +424,7 @@ variant_api <- function(variant_id, include_coloc_pairs = FALSE, h4_threshold = 
     "&h4_threshold=", h4_threshold
   )
 
-  variant <- httr::GET(url, httr::timeout(timeout_seconds))
+  variant <- api_get(url, httr::timeout(timeout_seconds))
   variant <- httr::content(variant, "text", encoding = "UTF-8")
   variant <- jsonlite::fromJSON(variant)
   return(variant)
@@ -346,7 +439,7 @@ variant_summary_stats_api <- function(variant_id) {
   temp_zip <- file.path(tempdir(), paste0("summary_stats_", variant_id, ".zip"))
 
   url <- paste0(getOption("gpmap_url"), "/v1/variants/", variant_id, "/summary-stats")
-  response <- httr::GET(url, httr::timeout(timeout_seconds))
+  response <- api_get(url, httr::timeout(timeout_seconds))
   writeBin(httr::content(response, "raw"), temp_zip)
   utils::unzip(temp_zip, exdir = tempdir())
 
@@ -370,7 +463,7 @@ variant_summary_stats_api <- function(variant_id) {
 ld_proxies_by_variant_api <- function(variants) {
   variants <- paste(variants, collapse = "&variants=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/proxies?variants=", variants)
-  ld_proxies <- httr::GET(url, httr::timeout(timeout_seconds))
+  ld_proxies <- api_get(url, httr::timeout(timeout_seconds))
   ld_proxies <- httr::content(ld_proxies, "text", encoding = "UTF-8")
   ld_proxies <- jsonlite::fromJSON(ld_proxies)
   return(ld_proxies)
@@ -384,7 +477,7 @@ ld_proxies_by_variant_api <- function(variants) {
 ld_proxies_by_variant_id_api <- function(variant_ids) {
   variant_ids <- paste(variant_ids, collapse = "&variant_ids=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/proxies?variant_ids=", variant_ids)
-  ld_proxies <- httr::GET(url)
+  ld_proxies <- api_get(url)
   ld_proxies <- httr::content(ld_proxies, "text", encoding = "UTF-8")
   ld_proxies <- jsonlite::fromJSON(ld_proxies)
   return(ld_proxies)
@@ -398,7 +491,7 @@ ld_proxies_by_variant_id_api <- function(variant_ids) {
 ld_matrix_by_variant_api <- function(variants) {
   variants <- paste(variants, collapse = "&variants=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/matrix?variants=", variants)
-  ld_matrix <- httr::GET(url)
+  ld_matrix <- api_get(url)
   ld_matrix <- httr::content(ld_matrix, "text", encoding = "UTF-8")
   ld_matrix <- jsonlite::fromJSON(ld_matrix)
   return(ld_matrix)
@@ -412,7 +505,7 @@ ld_matrix_by_variant_api <- function(variants) {
 ld_matrix_by_variant_id_api <- function(variant_ids) {
   variant_ids <- paste(variant_ids, collapse = "&variant_ids=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/matrix?variant_ids=", variant_ids)
-  ld_matrix <- httr::GET(url)
+  ld_matrix <- api_get(url)
   ld_matrix <- httr::content(ld_matrix, "text", encoding = "UTF-8")
   ld_matrix <- jsonlite::fromJSON(ld_matrix)
   return(ld_matrix)
@@ -429,7 +522,7 @@ associations_api <- function(variant_ids, study_ids) {
   study_ids <- paste(study_ids, collapse = "&study_ids=")
   url <- paste0(getOption("gpmap_url"), "/v1/associations?variant_ids=", variant_ids, "&study_ids=", study_ids)
 
-  associations <- httr::GET(url, httr::timeout(timeout_seconds))
+  associations <- api_get(url, httr::timeout(timeout_seconds))
   associations <- httr::content(associations, "text", encoding = "UTF-8")
   associations <- jsonlite::fromJSON(associations)
   return(associations)
@@ -441,7 +534,7 @@ associations_api <- function(variant_ids, study_ids) {
 #' @noRd
 gene_pleiotropies_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/pleiotropy/genes")
-  gene_pleiotropies <- httr::GET(url, httr::timeout(timeout_seconds))
+  gene_pleiotropies <- api_get(url, httr::timeout(timeout_seconds))
   gene_pleiotropies <- httr::content(gene_pleiotropies, "text", encoding = "UTF-8")
   gene_pleiotropies <- jsonlite::fromJSON(gene_pleiotropies)
   return(gene_pleiotropies)
@@ -453,7 +546,7 @@ gene_pleiotropies_api <- function() {
 #' @noRd
 variant_pleiotropies_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/pleiotropy/snps")
-  variant_pleiotropies <- httr::GET(url, httr::timeout(timeout_seconds))
+  variant_pleiotropies <- api_get(url, httr::timeout(timeout_seconds))
   variant_pleiotropies <- httr::content(variant_pleiotropies, "text", encoding = "UTF-8")
   variant_pleiotropies <- jsonlite::fromJSON(variant_pleiotropies)
   return(variant_pleiotropies)
@@ -471,7 +564,7 @@ get_gwas_api <- function(gwas_id, include_summary_stats = FALSE, include_associa
   if (include_associations) {
     url <- paste0(url, "?include_associations=true")
   }
-  gwas <- httr::GET(url, httr::timeout(timeout_seconds))
+  gwas <- api_get(url, httr::timeout(timeout_seconds))
   gwas <- httr::content(gwas, "text", encoding = "UTF-8")
   gwas <- jsonlite::fromJSON(gwas)
   if (include_summary_stats) {
@@ -488,12 +581,12 @@ get_gwas_api <- function(gwas_id, include_summary_stats = FALSE, include_associa
 #' @noRd
 get_gwas_summary_stats_api <- function(gwas_id) {
   url <- paste0(getOption("gpmap_url"), "/v1/gwas/", gwas_id, "/summary-stats")
-  summary_stats <- httr::GET(url, httr::timeout(timeout_seconds))
+  summary_stats <- api_get(url, httr::timeout(timeout_seconds))
   summary_stats <- httr::content(summary_stats, "text", encoding = "UTF-8")
   summary_stats_url <- jsonlite::fromJSON(summary_stats)
 
   temp_file <- file.path(tempdir(), paste0("gwas_summary_stats_", gwas_id, ".tsv.gz"))
-  response <- httr::GET(summary_stats_url, httr::timeout(timeout_seconds))
+  response <- api_get(summary_stats_url, httr::timeout(timeout_seconds))
   writeBin(httr::content(response, "raw"), temp_file)
 
   summary_stats_df <- readr::read_tsv(temp_file, show_col_types = FALSE)
@@ -554,7 +647,7 @@ upload_gwas_api <- function(file,
   )
   request_json <- jsonlite::toJSON(gwas_request, auto_unbox = TRUE)
 
-  gwas <- httr::POST(url, body = list(
+  gwas <- api_post(url, body = list(
     file = httr::upload_file(file),
     request = request_json
   ), httr::timeout(timeout_seconds))
@@ -590,7 +683,7 @@ pathway_enrichment_api <- function(genes,
     body$minimum_count_in_network <- as.integer(minimum_count_in_network)
   }
 
-  http_response <- httr::POST(
+  http_response <- api_post(
     url,
     body = body,
     encode = "json",
@@ -630,7 +723,7 @@ pathway_mappings_api <- function(source = NULL) {
     url <- paste0(url, "?source=", source)
   }
 
-  http_response <- httr::GET(url, httr::timeout(timeout_seconds))
+  http_response <- api_get(url, httr::timeout(timeout_seconds))
   status <- httr::status_code(http_response)
   response_text <- httr::content(http_response, "text", encoding = "UTF-8")
   if (status >= 400) {

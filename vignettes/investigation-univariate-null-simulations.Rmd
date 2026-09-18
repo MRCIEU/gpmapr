@@ -390,7 +390,7 @@ run_tier_one <- function(spec, rep) {
 }
 
 run_tier <- function(name, label, spec, n_sim) {
-  n_jobs <- 6L
+  n_jobs <- 40L
   out <- if (n_sim > 1 && .Platform$OS.type != "windows") {
     parallel::mclapply(
       seq_len(n_sim),

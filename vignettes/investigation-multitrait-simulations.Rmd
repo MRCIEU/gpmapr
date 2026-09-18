@@ -33,9 +33,12 @@ params:
   # --- replication ----------------------------------------------------------
   n_sim: 50
   master_seed: 1
+  # Replicates within a version run in parallel via parallel::mclapply
+  # (fork-based; falls back to serial on Windows or when cores = 1).
+  cores: 5
   # quick: fast test mode. Caps n_sim at 2 and lowers the permutation counts.
   # All input versions are always run. Set FALSE for the full study.
-  quick: true
+  quick: false
 vignette: >
   %\VignetteIndexEntry{Simulation study of multi-trait program correspondence}
   %\VignetteEngine{knitr::rmarkdown}
@@ -311,28 +314,57 @@ versions[[length(versions) + 1L]] <- list(
 ```
 
 ```{r run-study}
+# Runs one replicate and reports its outcome via the return value rather than
+# a `<<-` side effect, so error tracking survives being called from a forked
+# mclapply worker (a child process's `<<-` never reaches the parent).
+run_replicate_safe <- function(spec, r, seed) {
+  err_message <- NULL
+  out <- tryCatch(
+    run_one_replicate(spec, seed),
+    error = function(e) {
+      err_message <<- conditionMessage(e)
+      return(NULL)
+    }
+  )
+  if (is.null(out)) {
+    return(list(row = NULL, error = err_message, rep = r))
+  }
+  out$rep <- r
+  return(list(row = out, error = NULL, rep = r))
+}
+
+n_jobs <- max(1L, min(as.integer(params$cores), n_sim))
+
 replicate_errors <- list()
 results <- dplyr::bind_rows(lapply(seq_along(versions), function(v) {
   spec <- versions[[v]]$spec
-  rows <- dplyr::bind_rows(lapply(seq_len(n_sim), function(r) {
-    out <- tryCatch(
-      run_one_replicate(spec, sim_seeds[[r]]),
-      error = function(e) {
-        # Recorded rather than swallowed: a version that silently drops every
-        # replicate would otherwise render as an empty row.
-        replicate_errors[[length(replicate_errors) + 1L]] <<- data.frame(
-          version = versions[[v]]$label, rep = r,
-          message = conditionMessage(e), stringsAsFactors = FALSE
-        )
-        NULL
-      }
+  rep_out <- if (n_jobs > 1 && .Platform$OS.type != "windows") {
+    parallel::mclapply(
+      seq_len(n_sim),
+      function(r) run_replicate_safe(spec, r, sim_seeds[[r]]),
+      mc.cores = n_jobs,
+      mc.set.seed = FALSE
     )
-    if (is.null(out)) {
+  } else {
+    lapply(seq_len(n_sim), function(r) run_replicate_safe(spec, r, sim_seeds[[r]]))
+  }
+
+  # Recorded rather than swallowed: a version that silently drops every
+  # replicate would otherwise render as an empty row.
+  errs <- dplyr::bind_rows(lapply(rep_out, function(x) {
+    if (is.null(x$error)) {
       return(NULL)
     }
-    out$rep <- r
-    return(out)
+    return(data.frame(
+      version = versions[[v]]$label, rep = x$rep,
+      message = x$error, stringsAsFactors = FALSE
+    ))
   }))
+  if (nrow(errs) > 0) {
+    replicate_errors[[length(replicate_errors) + 1L]] <<- errs
+  }
+
+  rows <- dplyr::bind_rows(lapply(rep_out, `[[`, "row"))
   if (nrow(rows) == 0) {
     return(NULL)
   }
