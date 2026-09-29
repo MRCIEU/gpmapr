@@ -9,7 +9,7 @@ compare_program_pairs_loadings(
   n_perm = 1000L,
   fdr_threshold = 0.05,
   seed = 1,
-  min_shared_loci = 0L,
+  min_shared_loci = 3L,
   coloc_groups = NULL
 )
 }
@@ -24,9 +24,10 @@ Defaults to \code{0.05}.}
 
 \item{seed}{RNG seed for the permutations.}
 
-\item{min_shared_loci}{Minimum shared high-confidence loci for a pair to be
-flagged in the \code{candidate} column. Defaults to \code{0}: this is a reporting
-flag only and does not gate the test.}
+\item{min_shared_loci}{Minimum shared high-confidence loci (\code{n_loci_shared})
+for a pair to be eligible as a link; eligible pairs are flagged in the
+\code{candidate} column. Defaults to \code{3}. Set to \code{0} to let any scored pair
+link.}
 
 \item{coloc_groups}{Optional named list of coloc-group data.frames, keyed by
 trait id. When supplied, \code{\link[=module_rg]{module_rg()}} is run on every linked pair (both
@@ -53,12 +54,29 @@ Decide whether two programs discovered independently in
 different target traits describe the same biology, using their continuous
 SNP loadings on the \strong{locus} axis.
 
-For a pair of programs the locus axis is the intersection of the two traits'
-\code{coloc_group_id} universes — \strong{every} shared-universe locus, with no lFSR or
-magnitude threshold. Each locus contributes in proportion to how strongly it
-loads in both programs:
+For a pair of programs the locus axis is the set of loci both traits carry
+(shared \code{coloc_group_id}s) that \strong{at least one of the two programs claims}
+as a high-confidence member (all of a program's loci if it has none). Within
+that axis each locus contributes in proportion to how strongly it loads in
+both programs:
 \deqn{\mathrm{concordance} = \sum_l w_l f_a(l) f_b(l), \quad
 w_l = (1 - \mathrm{lfsr}_a(l))(1 - \mathrm{lfsr}_b(l))}
+The restriction matters because every program carries a small loading at
+every locus. Over the whole shared universe those near-zero tails can be
+faintly correlated between two traits (for instance through the target
+traits' own effects at shared loci), and a shuffle null standardises that
+into a large \code{concordance_z} for loadings of no real magnitude. The pair's
+permutation null shuffles the second program's loadings over the whole
+shared universe and reads them off at the pair's axis, so co-loading on the
+claimed loci is compared against loading drawn from anywhere the two traits
+share.
+
+A pair can only be linked when the two programs share at least
+\code{min_shared_loci} high-confidence loci (\code{n_loci_shared}): the correspondence
+this function reports is shared architecture at the same loci, and a pair
+sharing none has none to report. Pairs below the floor are still scored and
+reported, but they take no part in the best-partner search or its null and
+cannot be \code{primary} or \code{candidate} links.
 
 The score is deliberately \strong{covariance-like rather than correlation-like}: a
 fully normalised (cosine) score is scale-free and so cannot distinguish a pair
@@ -82,6 +100,14 @@ cost of not being calibrated for the search over partners.}
 Because \code{\link[=extract_program_loadings]{extract_program_loadings()}} sign-orients each program to its target
 trait, \code{sign(concordance)} is interpretable: positive is a concordant
 (target-aligned) architecture, negative an antagonistic one.
+
+CAVEAT on direction: each trait's matrix is oriented to that trait's own
+risk allele before fitting, so a locus belonging to a shared program loads
+positively in both traits' programs whether the program is concordant or
+antagonistic. On this axis antagonism therefore does not change the sign, so
+an antagonistic link is reported as concordant (see the multi-trait
+simulation vignette). Take direction from \code{\link[=module_rg]{module_rg()}} instead, which
+correlates the two traits' own effects in a common allele frame.
 
 IMPORTANT: loci are treated as independent observations. The candidate loci
 are fine-mapped colocalising signals, so LD between them is largely handled

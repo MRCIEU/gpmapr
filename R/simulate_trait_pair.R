@@ -1,22 +1,22 @@
 #' @title Simulate Two Target Traits Sharing Planted Programs
 #' @description Generate a pair of trait objects that share planted programs,
-#' with **locus overlap** and **profile overlap** controlled independently. This
-#' is the generative model for the multi-trait correspondence study: it exists to
-#' separate two things the single-trait simulator conflates.
+#' with **locus overlap** (what fraction of a shared program's SNPs are the same
+#' coloc group in both traits) and **profile overlap** (what fraction of its
+#' driver studies are the same) controlled separately. This is the generative
+#' model for the multi-trait correspondence study.
 #'
-#' A program shared by two traits can manifest in two different ways. It can act
-#' at the *same loci* in both traits, or it can act at *different loci* while the
-#' same background studies load on it. `locus_overlap` controls the first and
-#' `profile_overlap` the second, and they are orthogonal here by construction.
-#'
-#' That separation is what makes the two cross-trait statistics distinguishable.
-#' `compare_program_pairs_loadings()` scores pairs as an inner product over the
-#' loci both traits carry, so it can only see a shared program to the extent that
-#' `locus_overlap > 0`. `compare_program_pairs_profiles()` scores them over the
-#' background studies both traits load on, so it should still see the program at
-#' `locus_overlap = 0`. Simulating at low locus overlap and high profile overlap
-#' is therefore the experiment that decides whether the profile axis earns its
-#' place, rather than being assumed to.
+#' Effects are generated in a **common allele frame**, as summary statistics
+#' are reported. Each program locus `s` carries an effect `a_s` on its program,
+#' drawn once and reused in both traits at a shared locus. A driver study's
+#' effect at `s` is proportional to `a_s` and has the same sign in both traits'
+#' matrices, because it is the same GWAS. The target trait's own effect at `s`
+#' is `sign * a_s`, where `sign` is `+1` in the first trait and the program's
+#' planted direction in the second, so an antagonistic program has opposite-sign
+#' target effects at its loci. `run_univariate_clustering()` then orients each
+#' matrix to its own target's risk allele, exactly as on real data, which is
+#' where antagonism reaches the fitted programs. Because the target effects
+#' vary with `a_s`, [module_rg()] can recover the planted direction from the
+#' two targets' own effects.
 #'
 #' Set `K_shared = 0` for the multi-trait null: two traits with programs of their
 #' own and no correspondence between them, so any link reported is a false
@@ -35,13 +35,19 @@
 #'   nothing to score.
 #' @param profile_overlap Fraction (0-1) of a shared program's driver studies
 #'   that are the same in both traits.
-#' @param directions Optional `+1`/`-1` per shared program: `-1` flips the
-#'   driver effects in the second trait, making the program antagonistic between
-#'   them. Defaults to alternating, so sign accuracy is scoreable in both
-#'   directions.
+#' @param directions Optional `+1`/`-1` per shared program: `-1` gives the
+#'   program an opposite-sign effect on the second trait (target effects of
+#'   opposite sign at its loci, in the common allele frame), making it
+#'   antagonistic. Defaults to alternating, so sign accuracy is scoreable in
+#'   both directions.
 #' @param n_background_traits Unstructured background studies, shared between
 #'   the two traits so the feature axis intersects.
-#' @param effect_size Mean absolute z of driver effects inside a program.
+#' @param effect_size Mean absolute z of driver and target effects inside a
+#'   program.
+#' @param locus_effect_sd Spread of the per-locus program effect `a_s`, drawn as
+#'   `|N(1, locus_effect_sd)|`. It is what makes the two targets' effects
+#'   correlated across a shared program's loci, so it sets how well
+#'   [module_rg()] can determine direction. Defaults to `0.5`.
 #' @param noise_sd Noise added to every observed cell.
 #' @param p_structural_zero Probability a cell inside a program's true support is
 #'   absent entirely.
@@ -58,7 +64,8 @@
 #'       `run_univariate_clustering()`
 #'     \item ground_truth: `correspondence` (the planted cross-trait links and
 #'       their direction), `programs` (per-trait planted SNP and driver sets),
-#'       `shared_loci`, and `parameters`
+#'       `program_snps`, `program_drivers`, `program_effects` (each program's
+#'       per-locus effect `a_s`, named by SNP), `shared_loci`, and `parameters`
 #'   }
 #' @export
 simulate_trait_pair <- function(n_loci_per_trait = 200L,
@@ -72,6 +79,7 @@ simulate_trait_pair <- function(n_loci_per_trait = 200L,
                                 directions = NULL,
                                 n_background_traits = 300L,
                                 effect_size = 6,
+                                locus_effect_sd = 0.5,
                                 noise_sd = 1,
                                 p_structural_zero = 0,
                                 p_active_background = 0.02,
@@ -161,6 +169,12 @@ simulate_trait_pair <- function(n_loci_per_trait = 200L,
   }
   directions <- as.integer(rep(directions, length.out = max(K_shared, 1L)))
 
+  # Per-locus program effect a_s. A shared locus draws it once, so both traits
+  # see the same locus effect there, as they would from one causal variant.
+  draw_locus_effect <- function(n) {
+    return(abs(stats::rnorm(n, 1, locus_effect_sd)))
+  }
+
   programs <- list()
   correspondence <- list()
 
@@ -184,15 +198,19 @@ simulate_trait_pair <- function(n_loci_per_trait = 200L,
     drivers_a <- c(drivers_shared, next_drivers(n_own_drivers))
     drivers_b <- c(drivers_shared, next_drivers(n_own_drivers))
 
+    effect_shared <- draw_locus_effect(length(snps_shared))
+
     label <- sprintf("shared%d", k)
     programs[[length(programs) + 1L]] <- list(
       trait_id = trait_ids[[1]], label = label,
-      snps = c(snps_shared, own_a), drivers = drivers_a, sign = 1L
+      snps = c(snps_shared, own_a), drivers = drivers_a, sign = 1L,
+      effect = c(effect_shared, draw_locus_effect(n_own))
     )
     programs[[length(programs) + 1L]] <- list(
       trait_id = trait_ids[[2]], label = label,
       snps = c(snps_shared, own_b), drivers = drivers_b,
-      sign = directions[[k]]
+      sign = directions[[k]],
+      effect = c(effect_shared, draw_locus_effect(n_own))
     )
     correspondence[[length(correspondence) + 1L]] <- data.frame(
       program_label = label,
@@ -214,7 +232,8 @@ simulate_trait_pair <- function(n_loci_per_trait = 200L,
       programs[[length(programs) + 1L]] <- list(
         trait_id = trait_ids[[side]],
         label = sprintf("specific%d_t%d", k, side),
-        snps = own, drivers = next_drivers(n_drivers_per_program), sign = 1L
+        snps = own, drivers = next_drivers(n_drivers_per_program), sign = 1L,
+        effect = draw_locus_effect(module_size)
       )
     }
   }
@@ -231,21 +250,30 @@ simulate_trait_pair <- function(n_loci_per_trait = 200L,
     )
     col_of <- stats::setNames(seq_along(loci), as.character(loci))
 
-    # Target row: dense and significant at every locus, as a real target row is
-    # after orientation.
+    # Target row: dense and significant at every locus. Outside any program it
+    # is positive; inside a program it follows that program's locus effects and
+    # its sign on this target (below).
     M[as.character(target_id), ] <- abs(
       stats::rnorm(length(loci), effect_size, noise_sd)
     )
 
+    # Everything is in the common allele frame: drivers carry the same sign in
+    # both traits, and an antagonistic program instead has a negative target
+    # effect. run_univariate_clustering() orients each column to the target's
+    # risk allele, which is what turns that into negative driver cells.
     for (p in progs) {
       cols <- col_of[as.character(p$snps)]
-      cols <- cols[!is.na(cols)]
+      keep <- !is.na(cols)
+      cols <- cols[keep]
       if (length(cols) == 0) {
         next
       }
+      a <- p$effect[keep]
+      M[as.character(target_id), cols] <- p$sign * effect_size * a +
+        stats::rnorm(length(cols), 0, noise_sd)
       for (d in p$drivers) {
         z <- abs(stats::rnorm(1, 1, 0.2))
-        vals <- p$sign * effect_size * z +
+        vals <- effect_size * z * a +
           stats::rnorm(length(cols), 0, noise_sd)
         if (p_structural_zero > 0) {
           drop <- stats::runif(length(cols)) < p_structural_zero
@@ -363,6 +391,14 @@ simulate_trait_pair <- function(n_loci_per_trait = 200L,
           paste0(p$trait_id, ":", p$label)
         }, character(1))
       ),
+      program_effects = stats::setNames(
+        lapply(programs, function(p) {
+          stats::setNames(p$effect, paste0("snp", p$snps))
+        }),
+        vapply(programs, function(p) {
+          paste0(p$trait_id, ":", p$label)
+        }, character(1))
+      ),
       shared_loci = paste0("snp", shared_loci),
       seed = seed,
       parameters = list(
@@ -373,7 +409,8 @@ simulate_trait_pair <- function(n_loci_per_trait = 200L,
         n_drivers_per_program = as.integer(n_drivers_per_program),
         locus_overlap = locus_overlap, profile_overlap = profile_overlap,
         n_background_traits = as.integer(n_background_traits),
-        effect_size = effect_size, noise_sd = noise_sd,
+        effect_size = effect_size, locus_effect_sd = locus_effect_sd,
+        noise_sd = noise_sd,
         p_structural_zero = p_structural_zero,
         p_active_background = p_active_background,
         background_sparsity_sd = background_sparsity_sd,

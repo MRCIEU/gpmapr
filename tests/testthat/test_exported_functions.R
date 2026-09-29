@@ -145,13 +145,16 @@ test_that("traits(trait_ids) returns expected output", {
 
 test_that("GWAS upload own coloc rows are stamped with the lookup GUID", {
   guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
+  # As returned by the API: gwas_upload_id is set on every row, background
+  # studies included. The last row is a background study whose GPMap trait id
+  # happens to equal the upload id and must not be stamped.
   cg <- data.frame(
-    study_id = c(10, NA, 10),
-    existing_study_id = c(NA, 99, NA),
-    gwas_upload_id = c(55, NA, 55),
-    trait_id = c(NA, 2527, 55),
-    trait_name = c(NA, "Allergic rhinitis", NA),
-    variant_id = c(1, 1, 2),
+    study_id = c(10, NA, 10, NA),
+    existing_study_id = c(NA, 99, NA, 98),
+    gwas_upload_id = c(55, 55, 55, 55),
+    trait_id = c(NA, 2527, 55, 55),
+    trait_name = c(NA, "Allergic rhinitis", NA, "Other trait"),
+    variant_id = c(1, 1, 2, 2),
     stringsAsFactors = FALSE
   )
   associations <- data.frame(
@@ -174,7 +177,7 @@ test_that("GWAS upload own coloc rows are stamped with the lookup GUID", {
   expect_equal(decorated$coloc_groups$trait_id[own], c(guid, guid))
   expect_equal(
     decorated$coloc_groups$trait_id[is.na(decorated$coloc_groups$study_id)],
-    "2527"
+    c("2527", "55")
   )
 })
 

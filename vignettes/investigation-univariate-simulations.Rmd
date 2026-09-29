@@ -59,10 +59,11 @@ params:
   min_module_size: 3
   min_mean_internal: 0.3
   min_connectedness: 0.5
-  # Loading-permutation coherence gate (replaces min_mean_internal /
-  # min_connectedness as the gate; those two are now reported only).
-  coherence_n_perm: 2000
-  coherence_q: 0.05
+  # Size-matched similarity gate; variance-explained strength (reported only)
+  # (min_mean_internal / min_connectedness are reported only).
+  similarity_n_perm: 1000
+  similarity_q: 0.05
+  strength_q: 0.05
   ebmf_greedy_Kmax: 100
   n_null: 5
   alpha_membership: 0.05
@@ -160,8 +161,9 @@ validation_settings <- list(
   min_module_size = params$min_module_size,
   min_mean_internal = params$min_mean_internal,
   min_connectedness = params$min_connectedness,
-  coherence_n_perm = params$coherence_n_perm,
-  coherence_q_threshold = params$coherence_q,
+  similarity_n_perm = params$similarity_n_perm,
+  similarity_q_threshold = params$similarity_q,
+  strength_q_threshold = params$strength_q,
   n_null = n_null,
   alpha_membership = params$alpha_membership,
   n_candidate_tier = params$n_candidate_tier,
@@ -247,14 +249,17 @@ pleiotropy matrix** so the simulations are not trivially easy:
 For every version, the identical battery is run: `run_univariate_clustering()`
 fits EBMF and keeps overlapping soft programs, and
 `summarise_ebmf_programs()` filters programs by lFSR, loading magnitude,
-internal coherence, and trait-subsampling stability. The key output is a
+size, similarity and trait-subsampling stability. The key output is a
 per-program table in which **each validation check is its own column**, so it
 is immediately visible which check failed for each program:
 
 - `size` — at least `min_module_size` filtered SNPs (`n_snps_filtered`).
-- `internal_sim` — mean internal SNP similarity `>= min_mean_internal`.
-- `connectivity` — pair connectedness `>= min_connectedness`.
-- `stability` — top-loading SNPs recovered with replication
+- `similarity` — the member SNPs' mean pairwise similarity beats random SNP
+  sets of the same size (`similarity_q < similarity_q` threshold).
+- `strength` (reported, not a gate) — the factor explains more variance than
+  factors fitted to row-permuted copies of the matrix
+  (`strength_q < strength_q` threshold).
+- `stability` — top-loading SNPs recovered (mean Jaccard overlap)
   `>= stability_threshold` under trait subsampling.
 
 A program is `valid` only when every check passes. Because the input now has
@@ -365,7 +370,7 @@ number of modules `K` and each module's SNP set. Recovery is scored by
 
 **Methods.** A single pipeline is evaluated, with no comparators:
 `run_univariate_clustering()` fits EBMF and `summarise_ebmf_programs()` applies
-four gates (size, internal coherence, connectedness, stability). Thresholds are
+three gates (size, similarity, stability), with strength reported. Thresholds are
 fixed across versions and are the same as those used on real data.
 
 **Performance measures.** With truth `module_of_snp` and predicted valid
@@ -770,8 +775,8 @@ rep_check_rates <- program_checks |>
   dplyr::summarise(
     n_programs = dplyr::n(),
     rate_size = mean(size_pass),
-    rate_internal_similarity = mean(internal_similarity_pass),
-    rate_connectedness = mean(connectedness_pass),
+    rate_similarity = mean(similarity_pass),
+    rate_strength = mean(strength_pass),
     rate_stability = if (any(stability_checked)) {
       mean(stability_pass[stability_checked])
     } else {
@@ -802,7 +807,7 @@ recovery_mc$measure <- factor(
 )
 
 check_cols <- c(
-  "rate_size", "rate_internal_similarity", "rate_connectedness",
+  "rate_size", "rate_similarity", "rate_strength",
   "rate_stability", "rate_valid"
 )
 check_mc <- do.call(rbind, lapply(check_cols, function(cl) {
@@ -815,7 +820,7 @@ check_mc <- do.call(rbind, lapply(check_cols, function(cl) {
 check_mc$measure <- factor(
   check_mc$measure,
   levels = check_cols,
-  labels = c("size", "internal sim", "connectivity", "stability", "valid")
+  labels = c("size", "similarity", "strength", "stability", "valid")
 )
 
 format_est_mcse <- function(estimate, mcse, scale = 1, digits = 2) {
@@ -859,13 +864,13 @@ knitr::kable(
     "Validation-gate pass rates by input version (percent; per-replicate rate ",
     "averaged across ", n_sim, " replicates, Monte Carlo SE in parentheses). ",
     "The stability rate is over programs re-checked after the size and ",
-    "internal-coherence gates."
+    "similarity gates."
   )
 )
 ```
 
 The `stability` pass rate is computed only over programs that were actually
-re-checked (those passing the size and internal-coherence checks).
+re-checked (those passing the size and similarity checks).
 
 ```{r lollipop, fig.height=10, fig.width=9}
 lollipop_data <- recovery_mc |>
@@ -893,7 +898,7 @@ ggplot2::ggplot(
 For each version, every program found across the replicates is shown with the
 four validation checks as separate columns. A check is marked `FAIL` when the
 program does not meet that criterion; `n/a` under `stability` means the
-program already failed the internal-coherence checks, so stability was not
+program already failed the size or similarity check, so stability was not
 re-tested.
 
 Each program is also scored against the planted module it overlaps most (on
@@ -906,10 +911,10 @@ modules matches only one, so its `% not module` rises even though it is
 recovering real structure — read these alongside the merge-fair `module_recall`
 in the Aggregate table.
 
-`factor strength/snp %` is `100 * factor_strength / sqrt(n_snps_filtered)` —
-the share of the observed matrix signal the program explains, normalised by the
-square root of its filtered SNP count. It is reported for context and does not
-gate `status`.
+`similarity lift` is the member SNPs' mean similarity over that of random SNP
+sets of the same size, and `factor PVE %` the share of the matrix variance the
+program explains; the `similarity` gate and the reported `strength` check test
+these against their nulls.
 
 ```{r check-helper, include=FALSE}
 check_table <- function(which_tier) {
@@ -921,16 +926,16 @@ check_table <- function(which_tier) {
   df |>
     dplyr::mutate(
       check_size = ifelse(size_pass, "pass", "FAIL"),
-      check_internal_similarity = ifelse(internal_similarity_pass, "pass", "FAIL"),
-      check_connectedness = ifelse(connectedness_pass, "pass", "FAIL"),
+      check_similarity = ifelse(similarity_pass, "pass", "FAIL"),
+      check_strength = ifelse(strength_pass, "pass", "FAIL"),
       check_stability = dplyr::case_when(
         !stability_checked ~ "n/a",
         stability_pass ~ "pass",
         TRUE ~ "FAIL"
       ),
       mean_internal_similarity = round(mean_internal_similarity, 3),
-      connectedness = round(connectedness, 3),
-      factor_strength_per_snp_pct = round(100 * factor_strength_per_snp, 3),
+      similarity_lift = round(similarity_lift, 2),
+      factor_pve_pct = round(100 * factor_pve, 2),
       replication = round(replication, 3),
       matched = paste0("M", matched_module),
       pct_module_found = ifelse(
@@ -951,9 +956,9 @@ check_table <- function(which_tier) {
     ) |>
     dplyr::select(
       rep, program, n_snps, n_snps_filtered, mean_internal_similarity,
-      connectedness, factor_strength_per_snp_pct, replication, matched,
+      similarity_lift, factor_pve_pct, replication, matched,
       pct_module_found, pct_module_missed, pct_not_module,
-      check_size, check_internal_similarity, check_connectedness,
+      check_size, check_similarity, check_strength,
       check_stability, status
     ) |>
     dplyr::arrange(rep, program) |>
@@ -961,10 +966,10 @@ check_table <- function(which_tier) {
       row.names = FALSE,
       col.names = c(
         "rep", "program", "n_snps", "n_snps filtered",
-        "mean internal similarity", "connectedness",
-        "factor strength/snp %", "replication",
+        "mean internal similarity", "similarity lift",
+        "factor PVE %", "replication",
         "matched module", "% module found", "% module missed", "% not module",
-        "size", "internal sim", "connectivity", "stability", "status"
+        "size", "similarity", "strength", "stability", "status"
       )
     )
 }
@@ -1029,11 +1034,11 @@ for (nm in names(tier_specs)) {
   that is what makes the per-check pass rates informative.
 - `ari_all` and `ari_structured` use each SNP's strongest assigned program as a
   hard projection, so they remain conventional partition metrics.
-- `factor_strength` and `factor_strength_per_snp` are reported scores only;
-  they do not currently filter programs.
-- lFSR and magnitude thresholds determine `assigned` SNPs before coherence,
+- `factor_pve` / `strength_q`, `connectedness` and the fixed
+  `min_mean_internal` / `min_connectedness` flags are reported only.
+- lFSR and magnitude thresholds determine `assigned` SNPs before similarity,
   factor-strength, and posterior-evidence calculations.
-- Stability is run only for programs that pass the size and internal-coherence
+- Stability is run only for programs that pass the size and similarity
   checks; the `stability` column shows `n/a` for programs that were not
   re-checked.
 - Every aggregate number is a Monte Carlo estimate over `n_sim` replicates and

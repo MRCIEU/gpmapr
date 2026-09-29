@@ -129,12 +129,15 @@ orient_pleiotropy_matrix <- function(x_matrix, target_trait_id, z_target = NULL)
     cg$gene <- NA_character_
   }
 
-  snp_ids <- as.character(unique(locus_data$target_snps$snp_id))
+  # Sorted (C-locale) so the matrix does not depend on API row order: EBMF's
+  # greedy initialisation is order-dependent.
+  snp_ids <- sort(as.character(unique(locus_data$target_snps$snp_id)), method = "radix")
   built <- .build_study_level_pleiotropy_from_locus(cg, snp_ids)
 
   snp_info <- locus_data$target_snps |>
     dplyr::filter(snp_id %in% colnames(built$x_matrix)) |>
-    dplyr::distinct()
+    dplyr::distinct() |>
+    dplyr::arrange(snp_id)
 
   return(list(
     x_matrix = built$x_matrix,
@@ -161,7 +164,8 @@ orient_pleiotropy_matrix <- function(x_matrix, target_trait_id, z_target = NULL)
     tidyr::pivot_wider(
       names_from = "snp_id",
       values_from = "z"
-    )
+    ) |>
+    dplyr::arrange(trait_id)
 
   if (!"gene_id" %in% names(cg)) {
     cg$gene_id <- NA_integer_
@@ -221,10 +225,12 @@ orient_pleiotropy_matrix <- function(x_matrix, target_trait_id, z_target = NULL)
       dplyr::distinct()
     beta_wide <- value_long |>
       dplyr::select("trait_id", "snp_id", "beta") |>
-      tidyr::pivot_wider(names_from = "snp_id", values_from = "beta")
+      tidyr::pivot_wider(names_from = "snp_id", values_from = "beta") |>
+      dplyr::arrange(trait_id)
     se_wide <- value_long |>
       dplyr::select("trait_id", "snp_id", "se") |>
-      tidyr::pivot_wider(names_from = "snp_id", values_from = "se")
+      tidyr::pivot_wider(names_from = "snp_id", values_from = "se") |>
+      dplyr::arrange(trait_id)
     beta_cols <- intersect(snp_ids, setdiff(names(beta_wide), "trait_id"))
     beta_matrix <- as.matrix(beta_wide[, beta_cols, drop = FALSE])
     rownames(beta_matrix) <- as.character(beta_wide$trait_id)

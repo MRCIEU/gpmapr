@@ -10,114 +10,104 @@ make_block_similarity <- function(n = 60, block = 1:15, rho = 0.9, seed = 1) {
   return(s)
 }
 
-make_loadings <- function(n = 60, block = 1:15, seed = 1) {
-  set.seed(seed)
-  f <- matrix(stats::rnorm(n * 2, 0, 0.05), n, 2)
-  f[block, 1] <- stats::rnorm(length(block), 1, 0.05)
-  dimnames(f) <- list(paste0("snp", seq_len(n)), NULL)
-  return(f)
+assigned_of <- function(sets) {
+  return(data.frame(
+    snp_id = unlist(sets),
+    program = rep(seq_along(sets), lengths(sets)),
+    stringsAsFactors = FALSE
+  ))
 }
 
-test_that(".program_loading_coherence recovers a planted block", {
+test_that(".program_similarity_null separates a planted block from a random set", {
   s <- make_block_similarity()
-  w <- rep(0, 60)
-  w[1:15] <- 1
+  set.seed(5)
+  assigned <- assigned_of(list(
+    paste0("snp", 1:6),
+    paste0("snp", sample(16:60, 6))
+  ))
+  res <- .program_similarity_null(s, assigned, 1:2, n_perm = 499, seed = 42)
 
-  on_block <- .program_loading_coherence(s, w, edge_threshold = 0.2)
-  expect_gt(on_block$weighted_internal, 0.8)
-  expect_equal(on_block$weighted_quorum, 1)
-  expect_equal(on_block$n_eff, 15, tolerance = 1e-8)
-
-  spread <- .program_loading_coherence(s, rep(1, 60), edge_threshold = 0.2)
-  expect_lt(spread$weighted_internal, on_block$weighted_internal)
-  expect_equal(spread$n_eff, 60, tolerance = 1e-8)
-})
-
-test_that(".program_loading_coherence is invariant to weight scaling", {
-  s <- make_block_similarity()
-  w <- abs(stats::rnorm(60))
-  a <- .program_loading_coherence(s, w, edge_threshold = 0.2)
-  b <- .program_loading_coherence(s, w * 1000, edge_threshold = 0.2)
-  expect_equal(a$weighted_internal, b$weighted_internal)
-  expect_equal(a$weighted_quorum, b$weighted_quorum)
-  expect_equal(a$n_eff, b$n_eff)
-})
-
-test_that(".program_loading_coherence handles degenerate weights", {
-  s <- make_block_similarity()
-  expect_true(is.na(.program_loading_coherence(s, rep(0, 60), 0.2)$n_eff))
-  point <- .program_loading_coherence(s, c(1, rep(0, 59)), 0.2)
-  expect_equal(point$n_eff, 1)
-  expect_true(is.na(point$weighted_internal))
-})
-
-test_that("calibrate_program_coherence separates a real program from noise", {
-  s <- make_block_similarity()
-  f <- make_loadings()
-  res <- calibrate_program_coherence(s, f, n_perm = 499, edge_threshold = 0.2,
-                                     seed = 42)
-
-  expect_equal(nrow(res), 2)
   expect_equal(res$program, 1:2)
-  # Program 1 loads on the planted block and sits at the permutation floor.
-  # Program 2 is loading noise; its p is a draw from the null, so asserting it
-  # clears any particular level would be flaky by construction -- the claim
-  # worth testing is the separation, and the null graph test below covers the
-  # false-positive rate properly.
-  expect_equal(res$coherence_emp_p[1], 1 / 500)
-  expect_lt(res$coherence_emp_p[1], res$coherence_emp_p[2])
-  expect_lt(res$coherence_q[1], 0.05)
-  expect_gt(res$weighted_internal[1], res$weighted_internal[2])
+  # The planted block sits at the permutation floor; the random set is a draw
+  # from the null, so only the separation is asserted for it.
+  expect_equal(res$similarity_emp_p[1], 1 / 500)
+  expect_lt(res$similarity_q[1], 0.05)
+  expect_lt(res$similarity_emp_p[1], res$similarity_emp_p[2])
+  expect_gt(res$similarity_lift[1], res$similarity_lift[2])
+  expect_gt(res$similarity_z[1], 5)
 })
 
-test_that("calibrate_program_coherence is uncalibrated-free on a null graph", {
-  # A similarity matrix with no block structure: no loading vector should look
-  # aligned with it, whatever its shape.
+test_that(".program_similarity_null does not flag sets on a structureless graph", {
   set.seed(3)
   n <- 60
   s <- matrix(stats::rnorm(n * n, 0.35, 0.05), n, n)
   s <- (s + t(s)) / 2
   diag(s) <- 1
   dimnames(s) <- list(paste0("snp", seq_len(n)), paste0("snp", seq_len(n)))
-  f <- matrix(stats::rnorm(n * 8), n, 8)
-  rownames(f) <- paste0("snp", seq_len(n))
-
-  res <- calibrate_program_coherence(s, f, n_perm = 499, seed = 7)
-  expect_equal(sum(res$coherence_q < 0.05), 0)
-  # p-values should not pile up at either end
-  expect_gt(min(res$coherence_emp_p), 0.01)
+  sets <- lapply(1:8, function(i) paste0("snp", sample(n, 5)))
+  res <- .program_similarity_null(s, assigned_of(sets), 1:8, n_perm = 499, seed = 7)
+  expect_equal(sum(res$similarity_q < 0.05), 0)
+  expect_gt(min(res$similarity_emp_p), 0.01)
 })
 
-test_that("calibrate_program_coherence batching matches a single chunk", {
+test_that(".program_similarity_null handles tiny programs and SNPs with no profile", {
   s <- make_block_similarity()
-  f <- make_loadings()
-  a <- calibrate_program_coherence(s, f, n_perm = 200, seed = 11,
-                                   chunk_size = 200)
-  b <- calibrate_program_coherence(s, f, n_perm = 200, seed = 11,
-                                   chunk_size = 37)
-  # Same seed and same total permutation count: the observed statistics are
-  # identical and the p-values agree closely regardless of chunking.
-  expect_equal(a$weighted_internal, b$weighted_internal)
-  expect_equal(a$n_eff, b$n_eff)
-  expect_equal(a$coherence_emp_p, b$coherence_emp_p, tolerance = 0.05)
+  # snp60 has no similarity to anything (e.g. observed only for the target row)
+  s["snp60", ] <- 0
+  s[, "snp60"] <- 0
+  s["snp60", "snp60"] <- 1
+  assigned <- assigned_of(list("snp1", paste0("snp", 1:3)))
+  res <- .program_similarity_null(s, assigned, 1:2, n_perm = 99, seed = 1)
+  expect_true(is.na(res$similarity_emp_p[1]))
+  expect_true(is.na(res$similarity_q[1]))
+  expect_true(is.finite(res$similarity_emp_p[2]))
+  expect_equal(nrow(.program_similarity_null(s, assigned, integer(0))), 0)
 })
 
-test_that("calibrate_program_coherence handles empty and tiny inputs", {
-  s <- make_block_similarity()
-  expect_equal(nrow(calibrate_program_coherence(NULL, NULL)), 0)
-  expect_equal(nrow(calibrate_program_coherence(s, matrix(0, 60, 0))), 0)
+test_that(".program_parents links a nested program to the larger one", {
+  snp_info <- data.frame(
+    snp_id = paste0("s", 1:30),
+    chr = rep(c("1", "2", "3"), each = 10),
+    bp = rep(seq(1e6, 1e7, length.out = 10), 3),
+    stringsAsFactors = FALSE
+  )
+  assigned <- assigned_of(list(
+    paste0("s", 1:10),       # 1: chr1, 10 SNPs
+    paste0("s", c(1, 2, 3)), # 2: nested inside 1
+    paste0("s", 21:24)       # 3: chr3, disjoint
+  ))
+  par <- .program_parents(assigned, snp_info)
+  expect_equal(par$program, 1:3)
+  expect_equal(par$parent_program, c(NA, 1L, NA))
+  expect_equal(par$parent_containment[2], 1)
 
-  tiny <- s[1:2, 1:2]
-  f <- matrix(1, 2, 1, dimnames = list(rownames(tiny), NULL))
-  expect_equal(nrow(calibrate_program_coherence(tiny, f)), 0)
+  # Nearby but not shared SNPs still count within the window
+  near <- snp_info
+  near$bp[near$snp_id == "s21"] <- near$bp[near$snp_id == "s1"] + 1e5
+  near$chr[near$snp_id == "s21"] <- "1"
+  par_near <- .program_parents(assigned_of(list(paste0("s", 1:10), c("s21", "s2"))), near)
+  expect_equal(par_near$parent_program, c(NA, 1L))
+
+  # No positions -> no parents
+  expect_true(all(is.na(.program_parents(assigned, NULL)$parent_program)))
+})
+
+test_that(".stability_best_overlap scores Jaccard, not one-sided containment", {
+  ref <- paste0("s", 1:3)
+  big <- paste0("s", 1:50)
+  expect_equal(.stability_best_overlap(ref, list(big)), 3 / 50)
+  expect_equal(.stability_best_overlap(ref, list(big, ref)), 1)
+  expect_equal(.stability_best_overlap(ref, list()), 0)
+  expect_equal(.stability_best_overlap(character(0), list(big)), 0)
 })
 
 test_that("resolve_ebmf_settings merges overrides over the shared file", {
   defaults <- read_ebmf_settings()
   expect_true(all(
     c("ebmf_prior", "ebmf_magnitude_threshold", "min_module_size",
-      "coherence_q", "include_trans") %in% names(defaults)
+      "similarity_q", "strength_q", "include_trans") %in% names(defaults)
   ))
+  expect_false(any(c("coherence_q", "coherence_n_perm") %in% names(defaults)))
 
   resolved <- resolve_ebmf_settings(list(
     ebmf_magnitude_threshold = 0.75,

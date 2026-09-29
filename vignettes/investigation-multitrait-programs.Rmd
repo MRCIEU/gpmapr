@@ -123,8 +123,9 @@ ebmf_prior <- ebmf_settings$ebmf_prior
 ebmf_backfit <- isTRUE(ebmf_settings$ebmf_backfit)
 ebmf_magnitude_threshold <- as.numeric(ebmf_settings$ebmf_magnitude_threshold)
 ebmf_greedy_Kmax <- as.integer(ebmf_settings$ebmf_greedy_Kmax)
-coherence_n_perm <- as.integer(ebmf_settings$coherence_n_perm)
-coherence_q_threshold <- as.numeric(ebmf_settings$coherence_q)
+similarity_n_perm <- as.integer(ebmf_settings$similarity_n_perm)
+similarity_q_threshold <- as.numeric(ebmf_settings$similarity_q)
+strength_q_threshold <- as.numeric(ebmf_settings$strength_q)
 associations <- params$associations
 min_mean_internal <- as.numeric(params$min_mean_internal)
 min_connectedness <- as.numeric(params$min_connectedness)
@@ -219,8 +220,9 @@ run_trait <- function(tid) {
     min_module_size = min_module_size,
     min_mean_internal = min_mean_internal,
     min_connectedness = min_connectedness,
-    coherence_n_perm = coherence_n_perm,
-    coherence_q_threshold = coherence_q_threshold,
+    similarity_n_perm = similarity_n_perm,
+    similarity_q_threshold = similarity_q_threshold,
+    strength_q_threshold = strength_q_threshold,
     n_null = n_null,
     alpha_membership = alpha_membership,
     n_candidate_tier = n_candidate_tier,
@@ -271,8 +273,8 @@ knitr::kable(
       .groups = "drop"
     ),
   caption = paste0(
-    "Per-trait EBMF programs (valid = passes size, internal coherence, ",
-    "stability, and redundancy filters; stability is not checked when ",
+    "Per-trait EBMF programs (valid = passes size, similarity, stability, ",
+    "and redundancy filters; stability is not checked when ",
     "n_rep = 0)"
   ),
   row.names = FALSE
@@ -285,22 +287,25 @@ knitr::kable(
     dplyr::filter(status == "valid") |>
     dplyr::select(
       trait_name, program, n_snps_filtered, mean_internal_similarity,
-      connectedness, factor_strength, posterior_evidence
+      similarity_lift, factor_pve, parent_program, posterior_evidence
     ) |>
     dplyr::arrange(trait_name, dplyr::desc(n_snps_filtered)) |>
     dplyr::mutate(
       mean_internal_similarity = round(mean_internal_similarity, 3),
-      connectedness = round(connectedness, 3),
-      factor_strength = round(factor_strength, 3),
+      similarity_lift = round(similarity_lift, 2),
+      factor_pve_pct = round(100 * factor_pve, 2),
       posterior_evidence = round(posterior_evidence, 2)
-    ),
+    ) |>
+    dplyr::select(-factor_pve),
   caption = paste0(
     "Valid programs only -- everything downstream uses these. ",
     "`n_snps_filtered` is how many SNPs pass the program's lFSR/magnitude gate; ",
-    "`mean_internal_similarity` and `connectedness` say how tightly those SNPs ",
-    "cohere on the SNP-similarity graph; `factor_strength` is the share of ",
-    "matrix signal the factor carries (it scales with program size, so small ",
-    "programs are not worse for having a small value); `posterior_evidence` is ",
+    "`mean_internal_similarity` says how tightly those SNPs cohere on the ",
+    "SNP-similarity graph and `similarity_lift` how much more than random SNP ",
+    "sets of the same size; `factor_pve_pct` is the share of matrix variance ",
+    "the factor explains (it scales with program size, so small programs are ",
+    "not worse for having a small value); `parent_program` is the larger ",
+    "program it sits inside, if any; `posterior_evidence` is ",
     "the median -log10(lFSR) of its members. Programs that failed validation are ",
     "not shown -- see the univariate vignette for that diagnostic view."
   ),
@@ -349,16 +354,21 @@ knitr::kable(
 ## Step 3: Loading-weighted locus concordance
 
 Every cross-trait pair of programs is scored on the **locus axis**: the loci that
-both traits carry a loading for (`n_loci_axis`). No lFSR or magnitude threshold is
-applied — each locus contributes in proportion to how strongly it loads in *both*
-programs:
+both traits carry and that at least one of the two programs claims as a
+high-confidence member (`n_loci_axis`). Within that axis each locus contributes
+in proportion to how strongly it loads in *both* programs:
 
 $$\text{locus\_concordance} = \sum_l w_l \, f_a(l) \, f_b(l), \qquad
 w_l = (1 - \text{lfsr}_a(l))(1 - \text{lfsr}_b(l))$$
 
 Two programs that load on many of the same loci, in the same direction, score
 highly; a locus that matters to only one of them contributes almost nothing on its
-own. Because `extract_program_loadings()` orients each program so its own target
+own. Loci neither program claims are left out, because every program carries a
+small loading at every locus and those near-zero tails can be faintly correlated
+between traits, which the permutation null would otherwise turn into a large
+`concordance_z` for loadings of no real size. A pair can only be linked if the
+two programs share at least 3 high-confidence loci (`n_loci_shared`,
+`min_shared_loci`). Because `extract_program_loadings()` orients each program so its own target
 trait loads positively, the **sign** is meaningful: positive means the two
 programs rise and fall together, negative means they oppose.
 
@@ -485,8 +495,8 @@ knitr::kable(
     stringsAsFactors = FALSE
   ),
   caption = paste0(
-    "Scale of the comparison. `n_loci_axis` is how many loci each pair is scored ",
-    "on (the two traits' shared coloc-group universe). `n_programs_significant` ",
+    "Scale of the comparison. `n_loci_axis` is the median number of loci a pair ",
+    "is scored on (shared loci either program claims). `n_programs_significant` ",
     "counts programs whose best partner beats what they would have found by ",
     "chance. The two link tiers are explained in Step 4."
   ),
@@ -515,7 +525,7 @@ The columns to read, and what each is telling you:
 | column | what it means |
 |---|---|
 | `concordance_z` | the headline statistic: how far the pair's shared loading is from its own permutation null, in SD units. Sign gives the direction. This is what ranks and links. |
-| `n_loci_shared` | how many *high-confidence* loci the two programs both claim. Context only — it no longer gates anything. |
+| `n_loci_shared` | how many *high-confidence* loci the two programs both claim. A pair needs at least 3 (`min_shared_loci`) to be a link at either tier. |
 | `n_eff_loci` | how many loci are effectively carrying the score. A value near 2–3 means a couple of loci are doing all the work, however large `concordance_z` looks. |
 | `locus_concordance` | the raw weighted sum. Scales with both the number of co-loading loci and their magnitude, so it is not comparable across pairs on its own. |
 | `cosine_loci` | the same quantity fully normalised. Deliberately *not* used to decide links: being scale-free it cannot tell a pair sharing 3 loci from one sharing 30. Useful as a "how tight is the alignment" readout. |

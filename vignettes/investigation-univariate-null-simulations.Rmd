@@ -37,10 +37,11 @@ params:
   min_module_size: 3
   min_mean_internal: 0.3
   min_connectedness: 0.25
-  # Loading-permutation coherence gate (replaces min_mean_internal /
-  # min_connectedness as the gate; those two are now reported only).
-  coherence_n_perm: 2000
-  coherence_q: 0.05
+  # Size-matched similarity gate; variance-explained strength (reported only)
+  # (min_mean_internal / min_connectedness are reported only).
+  similarity_n_perm: 1000
+  similarity_q: 0.05
+  strength_q: 0.05
   ebmf_greedy_Kmax: 100
   n_null: 5
   alpha_membership: 0.05
@@ -131,8 +132,9 @@ validation_settings <- list(
   min_module_size = params$min_module_size,
   min_mean_internal = params$min_mean_internal,
   min_connectedness = params$min_connectedness,
-  coherence_n_perm = params$coherence_n_perm,
-  coherence_q_threshold = params$coherence_q,
+  similarity_n_perm = params$similarity_n_perm,
+  similarity_q_threshold = params$similarity_q,
+  strength_q_threshold = params$strength_q,
   n_null = n_null,
   alpha_membership = params$alpha_membership,
   n_candidate_tier = params$n_candidate_tier,
@@ -162,9 +164,12 @@ in data where the only structure is randomness.
 The four validation checks are exactly the same gates used on the real pipeline:
 
 - `size` — at least `min_module_size` filtered SNPs (`n_snps_filtered`).
-- `internal_sim` — mean internal SNP similarity `>= min_mean_internal`.
-- `connectivity` — pair connectedness `>= min_connectedness`.
-- `stability` — top-loading SNPs recovered with replication
+- `similarity` — the member SNPs' mean pairwise similarity beats random SNP
+  sets of the same size (`similarity_q < similarity_q` threshold).
+- `strength` (reported, not a gate) — the factor explains more variance than
+  factors fitted to row-permuted copies of the matrix
+  (`strength_q < strength_q` threshold).
+- `stability` — top-loading SNPs recovered (mean Jaccard overlap)
   `>= stability_threshold` under trait subsampling.
 
 A program is `valid` only when every check passes. Under a true null, **any**
@@ -280,7 +285,7 @@ under it, any program passing all four gates is a false discovery, so the
 
 **Methods.** Byte-for-byte the same pipeline and thresholds as the module
 study: `run_univariate_clustering()` then `summarise_ebmf_programs()` with the
-four gates (size, internal coherence, connectedness, stability).
+three gates (size, similarity, stability), with strength reported.
 
 **Performance measures.**
 
@@ -509,8 +514,8 @@ rep_check_rates <- program_checks |>
   dplyr::summarise(
     n_programs = dplyr::n(),
     rate_size = mean(size_pass),
-    rate_internal_similarity = mean(internal_similarity_pass),
-    rate_connectedness = mean(connectedness_pass),
+    rate_similarity = mean(similarity_pass),
+    rate_strength = mean(strength_pass),
     rate_stability = if (any(stability_checked)) {
       mean(stability_pass[stability_checked])
     } else {
@@ -533,7 +538,7 @@ count_mc$measure <- factor(
 )
 
 check_cols <- c(
-  "rate_size", "rate_internal_similarity", "rate_connectedness",
+  "rate_size", "rate_similarity", "rate_strength",
   "rate_stability", "rate_valid"
 )
 check_mc <- do.call(rbind, lapply(check_cols, function(cl) {
@@ -546,7 +551,7 @@ check_mc <- do.call(rbind, lapply(check_cols, function(cl) {
 check_mc$measure <- factor(
   check_mc$measure,
   levels = check_cols,
-  labels = c("size", "internal sim", "connectivity", "stability", "valid")
+  labels = c("size", "similarity", "strength", "stability", "valid")
 )
 
 format_est_mcse <- function(estimate, mcse, scale = 1, digits = 2) {
@@ -591,13 +596,13 @@ knitr::kable(
     "Per-gate pass rates by null version (percent; per-replicate rate averaged ",
     "across ", n_sim, " replicates, Monte Carlo SE in parentheses). The ",
     "stability rate is over programs re-checked after the size and ",
-    "internal-coherence gates."
+    "similarity gates."
   )
 )
 ```
 
 The `stability` pass rate is computed only over programs that were actually
-re-checked (those passing the size and internal-coherence checks).
+re-checked (those passing the size and similarity checks).
 
 ```{r pass-rate-plot, fig.height=8, fig.width=9}
 gate_plot_data <- check_mc |>
@@ -623,7 +628,7 @@ ggplot2::ggplot(
 For each version, every program found across the replicates is shown with the
 four validation checks as separate columns. A check is marked `FAIL` when the
 program does not meet that criterion; `n/a` under `stability` means the
-program already failed the internal-coherence checks, so stability was not
+program already failed the size or similarity check, so stability was not
 re-tested.
 
 ```{r check-helper, include=FALSE}
@@ -636,21 +641,22 @@ check_table <- function(which_tier) {
   df |>
     dplyr::mutate(
       check_size = ifelse(size_pass, "pass", "FAIL"),
-      check_internal_similarity = ifelse(internal_similarity_pass, "pass", "FAIL"),
-      check_connectedness = ifelse(connectedness_pass, "pass", "FAIL"),
+      check_similarity = ifelse(similarity_pass, "pass", "FAIL"),
+      check_strength = ifelse(strength_pass, "pass", "FAIL"),
       check_stability = dplyr::case_when(
         !stability_checked ~ "n/a",
         stability_pass ~ "pass",
         TRUE ~ "FAIL"
       ),
       mean_internal_similarity = round(mean_internal_similarity, 3),
-      connectedness = round(connectedness, 3),
+      similarity_lift = round(similarity_lift, 2),
+      factor_pve_pct = round(100 * factor_pve, 2),
       replication = round(replication, 3)
     ) |>
     dplyr::select(
       rep, program, n_snps, n_snps_filtered, mean_internal_similarity,
-      connectedness, replication,
-      check_size, check_internal_similarity, check_connectedness,
+      similarity_lift, factor_pve_pct, replication,
+      check_size, check_similarity, check_strength,
       check_stability, status
     ) |>
     dplyr::arrange(rep, program) |>
@@ -658,8 +664,8 @@ check_table <- function(which_tier) {
       row.names = FALSE,
       col.names = c(
         "rep", "program", "n_snps", "n_snps filtered",
-        "mean internal similarity", "connectedness", "replication",
-        "size", "internal sim", "connectivity", "stability", "status"
+        "mean internal similarity", "similarity lift", "factor PVE %",
+        "replication", "size", "similarity", "strength", "stability", "status"
       )
     )
 }

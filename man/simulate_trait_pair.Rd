@@ -16,6 +16,7 @@ simulate_trait_pair(
   directions = NULL,
   n_background_traits = 300L,
   effect_size = 6,
+  locus_effect_sd = 0.5,
   noise_sd = 1,
   p_structural_zero = 0,
   p_active_background = 0.02,
@@ -51,15 +52,22 @@ nothing to score.}
 \item{profile_overlap}{Fraction (0-1) of a shared program's driver studies
 that are the same in both traits.}
 
-\item{directions}{Optional \code{+1}/\code{-1} per shared program: \code{-1} flips the
-driver effects in the second trait, making the program antagonistic between
-them. Defaults to alternating, so sign accuracy is scoreable in both
-directions.}
+\item{directions}{Optional \code{+1}/\code{-1} per shared program: \code{-1} gives the
+program an opposite-sign effect on the second trait (target effects of
+opposite sign at its loci, in the common allele frame), making it
+antagonistic. Defaults to alternating, so sign accuracy is scoreable in
+both directions.}
 
 \item{n_background_traits}{Unstructured background studies, shared between
 the two traits so the feature axis intersects.}
 
-\item{effect_size}{Mean absolute z of driver effects inside a program.}
+\item{effect_size}{Mean absolute z of driver and target effects inside a
+program.}
+
+\item{locus_effect_sd}{Spread of the per-locus program effect \code{a_s}, drawn as
+\verb{|N(1, locus_effect_sd)|}. It is what makes the two targets' effects
+correlated across a shared program's loci, so it sets how well
+\code{\link[=module_rg]{module_rg()}} can determine direction. Defaults to \code{0.5}.}
 
 \item{noise_sd}{Noise added to every observed cell.}
 
@@ -83,28 +91,29 @@ A list with:
 \code{run_univariate_clustering()}
 \item ground_truth: \code{correspondence} (the planted cross-trait links and
 their direction), \code{programs} (per-trait planted SNP and driver sets),
-\code{shared_loci}, and \code{parameters}
+\code{program_snps}, \code{program_drivers}, \code{program_effects} (each program's
+per-locus effect \code{a_s}, named by SNP), \code{shared_loci}, and \code{parameters}
 }
 }
 \description{
 Generate a pair of trait objects that share planted programs,
-with \strong{locus overlap} and \strong{profile overlap} controlled independently. This
-is the generative model for the multi-trait correspondence study: it exists to
-separate two things the single-trait simulator conflates.
+with \strong{locus overlap} (what fraction of a shared program's SNPs are the same
+coloc group in both traits) and \strong{profile overlap} (what fraction of its
+driver studies are the same) controlled separately. This is the generative
+model for the multi-trait correspondence study.
 
-A program shared by two traits can manifest in two different ways. It can act
-at the \emph{same loci} in both traits, or it can act at \emph{different loci} while the
-same background studies load on it. \code{locus_overlap} controls the first and
-\code{profile_overlap} the second, and they are orthogonal here by construction.
-
-That separation is what makes the two cross-trait statistics distinguishable.
-\code{compare_program_pairs_loadings()} scores pairs as an inner product over the
-loci both traits carry, so it can only see a shared program to the extent that
-\code{locus_overlap > 0}. \code{compare_program_pairs_profiles()} scores them over the
-background studies both traits load on, so it should still see the program at
-\code{locus_overlap = 0}. Simulating at low locus overlap and high profile overlap
-is therefore the experiment that decides whether the profile axis earns its
-place, rather than being assumed to.
+Effects are generated in a \strong{common allele frame}, as summary statistics
+are reported. Each program locus \code{s} carries an effect \code{a_s} on its program,
+drawn once and reused in both traits at a shared locus. A driver study's
+effect at \code{s} is proportional to \code{a_s} and has the same sign in both traits'
+matrices, because it is the same GWAS. The target trait's own effect at \code{s}
+is \code{sign * a_s}, where \code{sign} is \code{+1} in the first trait and the program's
+planted direction in the second, so an antagonistic program has opposite-sign
+target effects at its loci. \code{run_univariate_clustering()} then orients each
+matrix to its own target's risk allele, exactly as on real data, which is
+where antagonism reaches the fitted programs. Because the target effects
+vary with \code{a_s}, \code{\link[=module_rg]{module_rg()}} can recover the planted direction from the
+two targets' own effects.
 
 Set \code{K_shared = 0} for the multi-trait null: two traits with programs of their
 own and no correspondence between them, so any link reported is a false

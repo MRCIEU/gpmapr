@@ -70,7 +70,7 @@ digraph workflow {
   S1 [label=\"1. Pleiotropy matrix\\n(study-level rows x SNPs)\"]
   S2 [label=\"2. Orient by sign(z_target)\\noptional asinh compression\"]
   S3 [label=\"3. EBMF factorization Y = L F^T + E\\nlFSR + magnitude program gates\"]
-  S4 [label=\"4. Validate programs\\ncoherence on SNP-SNP S, stability, factor strength\"]
+  S4 [label=\"4. Validate programs\\nsimilarity vs random SNP sets, stability\"]
   S5 [label=\"5. Interpret valid programs\\ntraits, tissues, pathways\"]
   S1 -> S2 -> S3 -> S4 -> S5
 }
@@ -217,18 +217,20 @@ layer in Step 4 exists.
 
 `run_univariate_clustering()` returns the fit and soft memberships;
 `summarise_ebmf_programs()` folds everything into a per-program table with
-pass/fail flags and an overall `status`. The checks split into those computed
-**on the SNP x SNP similarity matrix** `S` (internal coherence) and those that
-use **other means** (the EBMF fit itself and refits under trait subsampling).
-A program is **`valid`** only if it passes all **filter gates**; some metrics
-are reported descriptively and never gate `status`.
+pass/fail flags and an overall `status`. Every gate is calibrated against the
+observed matrix itself, so the same thresholds transfer between traits whose
+size, density and similarity baseline differ. A program is **`valid`** only if
+it passes all **filter gates**; some metrics are reported descriptively and
+never gate `status`.
 
 #### The SNP x SNP similarity matrix
 
 EBMF never sees pairwise SNP similarity — it factorises the traits x SNPs
 matrix directly — but the same oriented (and optionally compressed) SNP
 profiles are used to build the SNP x SNP cosine similarity matrix `S`, which
-backs the coherence checks below. For SNPs \(j\) and \(k\):
+backs the similarity gate below. The target row is left out: after
+orientation it is positive at every SNP, so it would add the same similarity
+to every pair. For SNPs \(j\) and \(k\):
 
 \[
 S_{jk} = \frac{{x^*_j}^{\top} x^*_k}{\|x^*_j\|\,\|x^*_k\|}
@@ -238,61 +240,49 @@ S_{jk} = \frac{{x^*_j}^{\top} x^*_k}{\|x^*_j\|\,\|x^*_k\|}
 - \(0\) = unrelated
 - \(-1\) = discordant (anti-parallel) profiles
 
-#### Checks on the similarity matrix (internal coherence)
-
-Computed on `S`, restricted to the program's gated SNPs:
-
-- **mean_internal_similarity** — mean off-diagonal `S` among member SNPs
-  (diagonal excluded). High values mean oriented profiles are roughly
-  parallel. Must be `>= min_mean_internal` (default `0.3`), a weak
-  "same direction, not noise" bar.
-- **connectedness** — the fraction of member-SNP pairs with
-  \(|S| \ge\) `similarity_threshold` (the same `edge_threshold` used in
-  program validation). Mean internal similarity can look decent if a few
-  pairs are very similar and the rest are near zero; connectedness
-  `>= min_connectedness` (default `0.5`) requires at least half of all pairs
-  to be strong edges, so the program is a real connected blob on `S`, not
-  one tight pair inside a diffuse background.
-- **Separation** (internal minus external similarity) is also reported —
-  diagnostic only, not a gate: a program can be internally coherent yet sit
-  inside a similar background.
-
-#### Checks by other means
-
-These come from the EBMF fit itself, not from `S`:
+#### Filter gates
 
 - **Size** — at least `min_module_size` SNPs survive the lFSR/magnitude gate
-  (`n_snps_filtered`, counted from the EBMF membership). This ensures the
-  coherence metrics are computed on enough SNPs to be meaningful.
-- **Stability** — the program's top `top_n` loading SNPs must be recovered
-  with replication `>= stability_threshold` (default `0.7`) when `1 -
-  frac_traits` of the trait rows are held out and flashier is refit
-  (`n_rep` replicates). Because this refits EBMF, it is run only for programs
-  that already pass the size and internal-coherence gates. Descriptive, but
-  gated: a program that does not survive trait subsampling is rejected.
+  (`n_snps_filtered`). An interpretability floor.
+- **Similarity** — `mean_internal_similarity`, the mean off-diagonal `S`
+  among member SNPs, is compared with `similarity_n_perm` random sets of the
+  same number of SNPs from the same matrix. `similarity_lift` is the observed
+  mean over the null mean and `similarity_q` the BH-adjusted permutation p,
+  which must be `< similarity_q`. The null is size-matched, so a tight
+  five-SNP program is not penalised for being small, and it is built from the
+  trait's own graph, so it adapts to that graph's baseline.
+- **Stability** — `replication`, the mean Jaccard overlap between the
+  program's top `top_n` SNPs and the best-matching factor when `1 -
+  frac_traits` of the trait rows are held out and flashier is refit (`n_rep`
+  replicates), must be `>= stability_threshold`. Because this refits EBMF, it
+  is run only for programs that already pass size and similarity.
 
 **Descriptive scores** (reported for context, but **not** used to gate
 `status`):
 
-- **factor_strength** — the proportion of the observed matrix signal
-  attributable to the factor, computed from its fitted reconstruction on the
-  gated (assigned) SNPs:
-  \(\sum_i |L_{ik}| \sum_j |F_{jk}|\) over the total observed signal
-  \(\sum |X|\). `factor_strength_per_snp = factor_strength / sqrt(n_snps_filtered)`
-  normalises it by the square root of program size. These prioritise programs
-  that carry real matrix signal rather than marginal memberships.
+- **strength** — `factor_pve`, the share of the matrix variance the factor
+  explains, is compared with every factor fitted to the `n_null` row-permuted
+  copies of the matrix (`calibrate_ebmf_programs()`); `strength_pass` flags
+  `strength_q < strength_q`. Not a gate: variance explained grows with how
+  many SNPs and traits a program spans, so it penalises small, specific
+  programs.
+- **connectedness** — the fraction of member-SNP pairs with
+  \(|S| \ge\) `similarity_threshold`, with a flag against the fixed
+  `min_connectedness`; `mean_internal_similarity` is also flagged against the
+  fixed `min_mean_internal` for comparison with earlier runs.
+- **parent_program** — when at least 60% of a program's SNPs sit within
+  500 kb of the SNPs of a larger program, that program is its parent. Nested
+  sub-programs are kept; the parent link says where they sit.
 - **posterior_evidence** — aggregate (`median` or `mean`) of `-log10(lfsr)`
   across the program's assigned SNPs (capped so lFSR underflow does not blow
-  up). Distinguishes programs dominated by borderline `lfsr ~ 0.05`
-  memberships from programs whose memberships carry much stronger posterior
-  sign evidence.
+  up).
 - **max_abs_factor_corr / redundant** — the maximum absolute correlation of the
   program's SNP loading vector with any other program; programs exceeding
   `redundancy_threshold` are flagged `redundant` (near-duplicate factors).
 
 `status` is `"valid"` when all gates pass, otherwise the failed gate(s) are
-listed (`size; internal; stability`). Downstream interpretation uses only the
-gated memberships of `valid` programs.
+listed (`size; similarity; stability`). Downstream interpretation
+uses only the gated memberships of `valid` programs.
 
 **Permutation calibration (reporting layer).** `calibrate_ebmf_programs()`
 additionally shuffles each trait row independently (`n_null` replicates,
@@ -439,19 +429,22 @@ a program is called `valid`.
 
 | Parameter | Values | Meaning | Explanation |
 |---|---|---|---|
-| `similarity_threshold` | `0`, `0.2`, `0.5` | Absolute \(\|S\|\) edge cutoff for the connectedness gate | Not an EBMF input, but used by the validation layer: `connectedness` counts SNP pairs with \(\|S\| \ge\) this threshold. Raising it makes the connectedness gate stricter and the coherence metrics more conservative. |
-| `min_module_size` | `3`, `5` | Minimum gated SNPs for the size gate | Ensures the coherence and stability metrics are computed on enough SNPs to be meaningful; also the effective minimum program size. |
-| `min_mean_internal` | `0.3` | Minimum mean internal similarity | The "same direction, not noise" bar on `S` among gated member SNPs. |
-| `min_connectedness` | `0.5` | Minimum pair-connectedness | Requires at least this fraction of member-SNP pairs to exceed `similarity_threshold`, so a program is a connected blob rather than one tight pair in a diffuse background. |
-| `stability_threshold` | `0.5`, `0.7` | Minimum replication for stability | Fraction of a program's top-loading SNPs that must reappear when traits are held out and EBMF is refit. |
+| `similarity_threshold` | `0`, `0.2`, `0.5` | Absolute \(\|S\|\) edge cutoff for connectedness | Not an EBMF input; `connectedness` (reported only) counts SNP pairs with \(\|S\| \ge\) this threshold. |
+| `min_module_size` | `3`, `5` | Minimum gated SNPs for the size gate | An interpretability floor; also the effective minimum program size. |
+| `similarity_n_perm` | `1000` | Random same-size SNP sets for the similarity null | More sets sharpen the permutation p. |
+| `similarity_q` | `0.05` | BH q threshold for the similarity gate | Member SNPs must be more alike than random SNP sets of the same size. |
+| `strength_q` | `0.05` | BH q threshold for the reported strength flag | Flags factors explaining more variance than factors fitted to row-permuted data; not a gate. |
+| `min_mean_internal` | `0.3` | Fixed mean internal similarity | Reported flag only, for comparison with earlier runs. |
+| `min_connectedness` | `0.5` | Fixed pair-connectedness | Reported flag only, for comparison with earlier runs. |
+| `stability_threshold` | `0.5`, `0.7` | Minimum replication for stability | Mean Jaccard overlap between a program's top-loading SNPs and the best-matching factor when traits are held out and EBMF is refit. |
 | `redundancy_threshold` | `0.8`, `0.9` | Threshold for redundancy program filtering | If a program shares the same set of SNPs as another program, it is considered redundant and filtered out. |
 
 Reliability/validation cutoffs used after clustering therefore are:
-`min_module_size`, `min_mean_internal = 0.3`, `min_connectedness = 0.5`,
-`stability_threshold`, plus the membership gates `ebmf_lfsr_threshold` and
-`ebmf_magnitude_threshold`. `factor_strength`, `posterior_evidence`, and
-`max_abs_factor_corr`/`redundant` are reported descriptively but do not gate
-`status`.
+`min_module_size`, `similarity_q` and `stability_threshold`, plus the
+membership gates `ebmf_lfsr_threshold` and `ebmf_magnitude_threshold`.
+`strength_q`, `connectedness`, `parent_program`,
+`posterior_evidence` and `max_abs_factor_corr`/`redundant` are reported
+descriptively but do not gate `status`.
 
 ### Continuous enrichment parameters
 
@@ -628,7 +621,7 @@ This standard report would be returned by gpmapr and as a framework for the Resu
 - Number of member SNPs (maybe also report number of SNPs that were filtered out by the lFSR/magnitude gate)
 - Membership overlap with other programs
 - Top SNPs by posterior loading or membership evidence
-- Various statistical reliability metrics, including mean internal similarity, connectedness, stability, factor strength, stability 
+- Various statistical reliability metrics, including mean internal similarity and its size-matched null, connectedness, factor variance explained and its null, stability, parent program
 - Biological interpretation metrics, including top traits, trait categories, tissues, genes, pathways, and pleiotropy typology, from both the hard-cutoff (fold enrichment, FDR) and continuous loading-based (effect, r_squared, FDR) enrichment routes
 
 #### SNP Level metrics

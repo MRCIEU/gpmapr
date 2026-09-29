@@ -94,8 +94,10 @@ ebmf_posterior_table <- function(clustering_result) {
 #'       raw_factor_signal, factor_strength)
 #'     \item memberships: dataframe (snp_id, program, loading, abs_loading,
 #'       lfsr, emp_p, q, core, tier)
-#'     \item null_summary: list with per-replicate max masses and pooled loading
-#'       quantiles
+#'     \item null_summary: list with per-replicate max masses, pooled loading
+#'       quantiles, and `factor_pve` (the proportion of variance explained by
+#'       every factor of every null fit, pooled; used by
+#'       `summarise_ebmf_programs()` to calibrate program strength)
 #'     \item settings: calibration settings used
 #'   }
 #' @export
@@ -146,6 +148,7 @@ calibrate_ebmf_programs <- function(clustering_result,
 
   null_max_mass <- numeric(n_null)
   null_cells <- vector("list", n_null)
+  null_pve <- vector("list", n_null)
   for (i in seq_len(n_null)) {
     if (verbose) {
       message("Null replicate ", i, "/", n_null)
@@ -155,10 +158,13 @@ calibrate_ebmf_programs <- function(clustering_result,
     null_max_mass[i] <- if (length(masses)) max(masses) else 0
     if (!is.null(fit) && fit$n_factors > 0) {
       null_cells[[i]] <- as.numeric(abs(fit$F_pm))
+      null_pve[[i]] <- as.numeric(fit$pve)
     }
   }
   null_cells <- unlist(null_cells)
   null_cells <- null_cells[is.finite(null_cells)]
+  null_pve <- unlist(null_pve)
+  null_pve <- null_pve[is.finite(null_pve)]
 
   obs_fit <- clustering_result$cluster_details$flash_fit
   obs_signal <- .ebmf_factor_signal(obs_fit)
@@ -185,7 +191,8 @@ calibrate_ebmf_programs <- function(clustering_result,
       null_summary = list(
         max_masses = null_max_mass,
         loading_quantiles = stats::quantile(null_cells,
-                                            c(.5, .9, .95, .99))
+                                            c(.5, .9, .95, .99)),
+        factor_pve = null_pve
       ),
       settings = list(n_null = n_null, alpha_membership = alpha_membership,
                       seed = seed,
@@ -246,7 +253,8 @@ calibrate_ebmf_programs <- function(clustering_result,
     null_summary = list(
       max_masses = null_max_mass,
       loading_quantiles = stats::quantile(null_cells, c(.5, .9, .95, .99)),
-      n_pooled_cells = length(null_cells)
+      n_pooled_cells = length(null_cells),
+      factor_pve = null_pve
     ),
     settings = list(n_null = n_null, alpha_membership = alpha_membership,
                     seed = seed, min_core_members = min_core,
@@ -261,8 +269,11 @@ calibrate_ebmf_programs <- function(clustering_result,
 #' reappears. For each replicate, a random fraction of trait rows is held out,
 #' the fit is repeated with the stored pipeline parameters, and each factor's
 #' SNPs are filtered using the same lFSR and magnitude thresholds. A reference
-#' program's replication score is the mean across replicates of its best overlap
-#' with any replicate factor set.
+#' program's replication score is the mean across replicates of its best
+#' Jaccard overlap with any replicate factor set, both sets built by the same
+#' top-loading rule. Jaccard is symmetric, so a large replicate factor that
+#' merely contains a small program's few top SNPs does not count as a
+#' replication.
 #' Descriptive: scores are not p-values. Use them to prioritise programmes whose
 #' membership survives resampling.
 #'
@@ -280,7 +291,7 @@ calibrate_ebmf_programs <- function(clustering_result,
 #'   (serial).
 #' @param verbose Print progress messages.
 #' @return A dataframe with columns `program`, `n_ref` (reference member-set
-#'   size), `replication` (mean best-overlap fraction), `sd_replication`.
+#'   size), `replication` (mean best Jaccard overlap), `sd_replication`.
 #' @export
 stability_ebmf_programs <- function(clustering_result,
                                     n_rep = 10,
@@ -382,12 +393,7 @@ stability_ebmf_programs <- function(clustering_result,
   scores <- do.call(rbind, lapply(names(ref_sets), function(pg) {
     ref <- ref_sets[[pg]]
     per_rep <- vapply(replicate_sets_all, function(sets) {
-      if (length(sets) == 0 || length(ref) == 0) {
-        return(0)
-      }
-      max(vapply(sets, function(s) {
-        length(intersect(ref, s)) / length(ref)
-      }, numeric(1)))
+      return(.stability_best_overlap(ref, sets))
     }, numeric(1))
     data.frame(
       program = as.integer(pg),
@@ -398,6 +404,20 @@ stability_ebmf_programs <- function(clustering_result,
   }))
 
   return(scores[order(-scores$replication), , drop = FALSE])
+}
+
+
+# Best Jaccard overlap between a reference SNP set and any replicate factor set
+# (0 when there is nothing to compare). Jaccard, not |ref n s| / |ref|: with the
+# one-sided score a small program was "replicated" by any large replicate factor
+# that happened to contain its few top SNPs.
+.stability_best_overlap <- function(ref, sets) {
+  if (length(sets) == 0 || length(ref) == 0) {
+    return(0)
+  }
+  return(max(vapply(sets, function(s) {
+    return(length(intersect(ref, s)) / length(union(ref, s)))
+  }, numeric(1))))
 }
 
 

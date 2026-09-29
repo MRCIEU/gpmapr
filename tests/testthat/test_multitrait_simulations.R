@@ -33,6 +33,22 @@ test_that("profile_overlap controls how many drivers a shared program has in com
   }
 })
 
+test_that("ground truth carries each program's per-locus effect, shared at shared loci", {
+  sp <- small_pair(locus_overlap = 0.5, profile_overlap = 1)
+  gt <- sp$ground_truth
+  expect_setequal(names(gt$program_effects), names(gt$program_snps))
+  for (k in names(gt$program_snps)) {
+    expect_equal(names(gt$program_effects[[k]]), gt$program_snps[[k]])
+    expect_true(all(gt$program_effects[[k]] > 0))
+  }
+  # A shared locus draws its effect once, so both traits see the same a_s.
+  a <- gt$program_effects[["9001:shared1"]]
+  b <- gt$program_effects[["9002:shared1"]]
+  common <- intersect(names(a), names(b))
+  expect_length(common, 6)
+  expect_equal(a[common], b[common])
+})
+
 test_that("the two axes are independent", {
   # Disjoint loci with fully shared drivers: the case the profile axis exists
   # for, and the case the locus axis cannot see at all.
@@ -83,6 +99,66 @@ test_that("shared loci carry the same coloc_group_id in both traits", {
   a <- unique(sp$traits[[1]]$coloc_groups$coloc_group_id)
   b <- unique(sp$traits[[2]]$coloc_groups$coloc_group_id)
   expect_gte(length(intersect(a, b)), 36)
+})
+
+# Target effect of one trait at a planted program's loci, from its coloc groups.
+target_beta <- function(sp, tid, snps) {
+  cg <- sp$traits[[tid]]$coloc_groups
+  cg <- cg[as.character(cg$trait_id) == tid, , drop = FALSE]
+  return(cg$beta[match(snps, cg$variant_id)])
+}
+
+test_that("an antagonistic program has opposite-sign target effects in a common allele frame", {
+  sp <- small_pair(
+    K_shared = 2L, locus_overlap = 1, profile_overlap = 1, directions = c(1, -1)
+  )
+  snps_conc <- sp$ground_truth$program_snps[["9002:shared1"]]
+  snps_anta <- sp$ground_truth$program_snps[["9002:shared2"]]
+
+  expect_gt(mean(target_beta(sp, "9001", snps_anta) > 0), 0.9)
+  expect_gt(mean(target_beta(sp, "9002", snps_anta) < 0), 0.9)
+  expect_gt(mean(target_beta(sp, "9002", snps_conc) > 0), 0.9)
+
+  # The same GWAS: driver effects carry the same sign in both traits' matrices.
+  drivers <- sp$ground_truth$program_drivers[["9002:shared2"]]
+  for (tid in c("9001", "9002")) {
+    cells <- sp$x_matrices[[tid]][drivers, snps_anta]
+    expect_gt(mean(cells > 0, na.rm = TRUE), 0.9)
+  }
+})
+
+test_that("orienting to the target's risk allele turns antagonism into negative drivers", {
+  sp <- small_pair(
+    K_shared = 2L, locus_overlap = 1, profile_overlap = 1, directions = c(1, -1)
+  )
+  oriented <- orient_pleiotropy_matrix(sp$x_matrices[["9002"]], "9002")$x_matrix
+  anta <- oriented[
+    sp$ground_truth$program_drivers[["9002:shared2"]],
+    sp$ground_truth$program_snps[["9002:shared2"]]
+  ]
+  conc <- oriented[
+    sp$ground_truth$program_drivers[["9002:shared1"]],
+    sp$ground_truth$program_snps[["9002:shared1"]]
+  ]
+  expect_gt(mean(anta < 0, na.rm = TRUE), 0.9)
+  expect_gt(mean(conc > 0, na.rm = TRUE), 0.9)
+})
+
+test_that("shared loci carry one locus effect, so target effects correlate across traits", {
+  # This is what module_rg() reads: the correlation of the two targets' own
+  # effects across a shared program's loci, signed by the planted direction.
+  sp <- small_pair(
+    K_shared = 2L, locus_overlap = 1, profile_overlap = 1, directions = c(1, -1)
+  )
+  for (k in 1:2) {
+    snps <- sp$ground_truth$program_snps[[sprintf("9001:shared%d", k)]]
+    r <- stats::cor(target_beta(sp, "9001", snps), target_beta(sp, "9002", snps))
+    if (k == 1) {
+      expect_gt(r, 0.7)
+    } else {
+      expect_lt(r, -0.7)
+    }
+  }
 })
 
 test_that("simulate_trait_pair rejects an over-subscribed shared locus pool", {

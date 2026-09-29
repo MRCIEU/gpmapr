@@ -20,6 +20,7 @@ calibrated one-to-one claim.}
 \value{
 A one-row dataframe: \code{n_links}, \code{n_true_positive},
 \code{n_false_positive}, \code{precision}, \code{recall}, \code{f1}, \code{sign_accuracy},
+\code{sign_accuracy_concordant}, \code{sign_accuracy_antagonistic},
 \code{n_planted_shared}, \code{n_recovered_shared}.
 }
 \description{
@@ -35,5 +36,11 @@ EBMF factor splitting should not inflate it. Precision is over discovered
 links, so a method that links everything is penalised.
 
 Sign accuracy is scored only on true positives: a link that is not real has no
-meaningful direction.
+meaningful direction. It is also reported separately for concordant and
+antagonistic planted programs, because a direction call that says
+"concordant" for every link scores well overall whenever most planted
+programs are concordant -- the split is what shows it cannot see antagonism
+at all. The \code{direction} column scored is whichever the caller supplies, so
+the same function scores the concordance sign or \code{\link[=module_rg]{module_rg()}}'s
+\code{rg_direction}.
 }

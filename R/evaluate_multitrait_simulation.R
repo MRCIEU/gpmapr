@@ -141,7 +141,13 @@ map_programs_to_planted <- function(loadings,
 #' links, so a method that links everything is penalised.
 #'
 #' Sign accuracy is scored only on true positives: a link that is not real has no
-#' meaningful direction.
+#' meaningful direction. It is also reported separately for concordant and
+#' antagonistic planted programs, because a direction call that says
+#' "concordant" for every link scores well overall whenever most planted
+#' programs are concordant -- the split is what shows it cannot see antagonism
+#' at all. The `direction` column scored is whichever the caller supplies, so
+#' the same function scores the concordance sign or [module_rg()]'s
+#' `rg_direction`.
 #' @param pairs The `pairs` table from `compare_program_pairs_profiles()` or
 #'   `compare_program_pairs_loadings()`.
 #' @param mapping Result of `map_programs_to_planted()`.
@@ -150,6 +156,7 @@ map_programs_to_planted <- function(loadings,
 #'   calibrated one-to-one claim.
 #' @return A one-row dataframe: `n_links`, `n_true_positive`,
 #'   `n_false_positive`, `precision`, `recall`, `f1`, `sign_accuracy`,
+#'   `sign_accuracy_concordant`, `sign_accuracy_antagonistic`,
 #'   `n_planted_shared`, `n_recovered_shared`.
 #' @export
 evaluate_multitrait_simulation <- function(pairs,
@@ -162,6 +169,7 @@ evaluate_multitrait_simulation <- function(pairs,
     n_links = 0L, n_true_positive = 0L, n_false_positive = 0L,
     precision = NA_real_, recall = if (n_planted > 0) 0 else NA_real_,
     f1 = NA_real_, sign_accuracy = NA_real_,
+    sign_accuracy_concordant = NA_real_, sign_accuracy_antagonistic = NA_real_,
     n_planted_shared = n_planted, n_recovered_shared = 0L,
     stringsAsFactors = FALSE
   )
@@ -188,9 +196,20 @@ evaluate_multitrait_simulation <- function(pairs,
   recovered <- unique(la[is_tp])
   direction_of <- stats::setNames(planted$direction, planted$program_label)
   sign_ok <- NA_real_
+  sign_conc <- NA_real_
+  sign_anta <- NA_real_
   if (n_tp > 0 && "direction" %in% names(pairs)) {
-    truth_dir <- direction_of[la[is_tp]]
-    sign_ok <- mean(pairs$direction[is_tp] == truth_dir, na.rm = TRUE)
+    truth_dir <- unname(direction_of[la[is_tp]])
+    called <- pairs$direction[is_tp]
+    sign_rate <- function(keep) {
+      if (!any(keep)) {
+        return(NA_real_)
+      }
+      return(mean(called[keep] == truth_dir[keep], na.rm = TRUE))
+    }
+    sign_ok <- sign_rate(truth_dir %in% c("concordant", "antagonistic"))
+    sign_conc <- sign_rate(truth_dir == "concordant")
+    sign_anta <- sign_rate(truth_dir == "antagonistic")
   }
 
   precision <- if (n_links > 0) n_tp / n_links else NA_real_
@@ -210,6 +229,8 @@ evaluate_multitrait_simulation <- function(pairs,
     recall = recall,
     f1 = f1,
     sign_accuracy = sign_ok,
+    sign_accuracy_concordant = sign_conc,
+    sign_accuracy_antagonistic = sign_anta,
     n_planted_shared = as.integer(n_planted),
     n_recovered_shared = as.integer(length(recovered)),
     stringsAsFactors = FALSE

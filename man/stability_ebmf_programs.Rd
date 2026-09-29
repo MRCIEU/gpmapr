@@ -32,7 +32,7 @@ stability_ebmf_programs(
 }
 \value{
 A dataframe with columns \code{program}, \code{n_ref} (reference member-set
-size), \code{replication} (mean best-overlap fraction), \code{sd_replication}.
+size), \code{replication} (mean best Jaccard overlap), \code{sd_replication}.
 }
 \description{
 Refit the EBMF pipeline on trait subsamples of the observed
@@ -40,8 +40,11 @@ matrix and score how consistently each program's filtered member set
 reappears. For each replicate, a random fraction of trait rows is held out,
 the fit is repeated with the stored pipeline parameters, and each factor's
 SNPs are filtered using the same lFSR and magnitude thresholds. A reference
-program's replication score is the mean across replicates of its best overlap
-with any replicate factor set.
+program's replication score is the mean across replicates of its best
+Jaccard overlap with any replicate factor set, both sets built by the same
+top-loading rule. Jaccard is symmetric, so a large replicate factor that
+merely contains a small program's few top SNPs does not count as a
+replication.
 Descriptive: scores are not p-values. Use them to prioritise programmes whose
 membership survives resampling.
 

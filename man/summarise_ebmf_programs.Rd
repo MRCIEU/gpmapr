@@ -11,8 +11,9 @@ summarise_ebmf_programs(
   min_module_size = 5L,
   min_mean_internal = 0.3,
   min_connectedness = 0.5,
-  coherence_n_perm = 2000L,
-  coherence_q_threshold = 0.05,
+  similarity_n_perm = 1000L,
+  similarity_q_threshold = 0.05,
+  strength_q_threshold = 0.05,
   n_null = 10,
   alpha_membership = 0.05,
   n_candidate_tier = 25L,
@@ -20,10 +21,11 @@ summarise_ebmf_programs(
   frac_traits = 0.8,
   top_n = 25L,
   stability_threshold = 0.7,
+  stability_all_programs = FALSE,
   posterior_stat = c("median", "mean"),
   posterior_evidence_cap = 50,
   redundancy_threshold = 0.9,
-  snp_redundancy_threshold = 0.75,
+  snp_redundancy_threshold = Inf,
   seed = 1,
   cores = 1,
   verbose = TRUE
@@ -32,30 +34,32 @@ summarise_ebmf_programs(
 \arguments{
 \item{clustering_result}{Result of \code{run_univariate_clustering()}.}
 
-\item{s_matrix}{SNP-by-SNP similarity matrix used for the coherence metrics.
-Defaults to \code{clustering_result$s_matrix}.}
+\item{s_matrix}{SNP-by-SNP similarity matrix used for the similarity metrics.
+Defaults to \code{clustering_result$s_matrix}, which excludes the target row.}
 
 \item{edge_threshold}{Absolute similarity used for connectedness. Defaults to
 \code{0.2}.}
 
-\item{min_module_size}{Minimum assigned SNPs for the coherence metrics to be
-meaningful and for \code{size_pass}. Defaults to \code{5}.}
+\item{min_module_size}{Minimum assigned SNPs for \code{size_pass}. Defaults to
+\code{5}.}
 
-\item{min_mean_internal}{Minimum mean internal SNP similarity. Reported as
-\code{internal_similarity_pass} for comparison with earlier runs; it no longer
-gates \code{status}. Defaults to \code{0.3}.}
+\item{min_mean_internal}{Fixed mean internal similarity reported as
+\code{internal_similarity_pass}; does not gate \code{status}. Defaults to \code{0.3}.}
 
-\item{min_connectedness}{Minimum pair-connectedness. Reported as
-\code{connectedness_pass} for comparison; it no longer gates \code{status}. Defaults
-to \code{0.5}.}
+\item{min_connectedness}{Fixed connectedness reported as
+\code{connectedness_pass}; does not gate \code{status}. Defaults to \code{0.5}.}
 
-\item{coherence_n_perm}{Permutations per program for the loading-permutation
-coherence null. Defaults to \code{2000}.}
+\item{similarity_n_perm}{Random same-size SNP sets drawn for the similarity
+null. Defaults to \code{1000}.}
 
-\item{coherence_q_threshold}{BH-adjusted q below which \code{coherence_pass} is
+\item{similarity_q_threshold}{BH-adjusted q below which \code{similarity_pass} is
 TRUE. Defaults to \code{0.05}.}
 
-\item{n_null}{Number of permutation nulls for membership calibration.}
+\item{strength_q_threshold}{BH-adjusted q below which the reported
+\code{strength_pass} flag is TRUE (not a gate). Defaults to \code{0.05}.}
+
+\item{n_null}{Number of row-permuted null fits, used for membership
+calibration and the strength null.}
 
 \item{alpha_membership}{Membership FDR level passed to
 \code{calibrate_ebmf_programs()} for \code{core} cell labelling.}
@@ -74,6 +78,11 @@ matching.}
 
 \item{stability_threshold}{Minimum replication for \code{stability_pass}.}
 
+\item{stability_all_programs}{If \code{TRUE}, report \code{replication} (and gate
+\code{stability_pass}) for every program, not only those passing size and
+similarity. The refits are the same either way, so this costs nothing
+extra. Defaults to \code{FALSE}.}
+
 \item{posterior_stat}{Aggregate statistic for the posterior evidence score:
 \code{"median"} or \code{"mean"} of \code{-log10(lfsr)}.}
 
@@ -87,9 +96,8 @@ preserving the ordering. Defaults to \code{50}.}
 another program before \code{redundant} is flagged.}
 
 \item{snp_redundancy_threshold}{Maximum reciprocal SNP-containment
-(\code{max_pair_redundancy}) before \code{redundancy_pass} fails. Defaults to \code{0.75};
-at \code{0.9} the check never bound on real data, where the observed maximum
-containment was \code{0.5}.}
+(\code{max_pair_redundancy}) before \code{redundancy_pass} fails. Defaults to \code{Inf},
+which turns the gate off.}
 
 \item{seed}{RNG seed.}
 
@@ -101,8 +109,8 @@ to \code{stability_ebmf_programs()}). Defaults to \code{1} (serial).}
 \value{
 A list with:
 \itemize{
-\item programs: the folded per-program table (filter metrics, additional
-scores, pass/fail flags, and \code{status})
+\item programs: the per-program table (metrics, pass/fail flags,
+\code{fail_reason} and \code{status})
 \item memberships: calibrated SNP x program posterior from
 \code{calibrate_ebmf_programs()}
 \item assigned: gated assigned memberships per program
@@ -113,58 +121,58 @@ scores, pass/fail flags, and \code{status})
 }
 \description{
 One-stop summary of EBMF programs for filtering and reporting.
-Folds the graph-reliability metrics (\code{mean_internal_similarity},
-\code{connectedness}) together with trait-subsampling \strong{stability}, and the
-descriptive \strong{additional scores} (factor strength, aggregate posterior
-evidence and factor distinctiveness) into a single per-program table with
-pass/fail flags and an overall \code{status}.
+Every check is calibrated against the observed matrix itself, so the same
+thresholds transfer between datasets whose size, density and similarity
+baseline differ.
 
-Filters applied (a program must pass all four to get \code{status == "valid"}):
+Filters applied (a program must pass all of them to get \code{status == "valid"}):
 \itemize{
 \item \strong{Size} — at least \code{min_module_size} SNPs passing the
-lFSR/magnitude filter (\code{n_snps_filtered}). This is an interpretability
-floor, not a discriminating gate: a two-SNP program cannot be annotated.
-\item \strong{Coherence} — the program's loading vector must be aligned with
-the SNP similarity graph more than a random reassignment of the same
-loadings would be (\code{coherence_q < coherence_q_threshold}, from
-\code{calibrate_program_coherence()}). This uses every SNP weighted by its
-squared posterior loading, so it does not depend on the lFSR/magnitude
-cutoff, and it is calibrated against the graph's own null, so it transfers
-between datasets whose similarity baselines differ. \code{size_pass} and
-\code{coherence_pass} are reported separately and \code{internal_pass} combines them.
-The hard-gated \code{mean_internal_similarity} and \code{connectedness} are still
-reported for comparison but no longer decide \code{status}.
+lFSR/magnitude filter (\code{n_snps_filtered}). An interpretability floor, not
+a discriminating gate.
+\item \strong{Similarity} — the program's member SNPs must be more similar to
+each other than random SNP sets of the same size drawn from the same
+matrix. The statistic is the mean pairwise similarity \code{S} among the
+assigned SNPs (\code{mean_internal_similarity}); its null comes from
+\code{similarity_n_perm} random same-size sets, giving \code{similarity_emp_p} and
+a BH-adjusted \code{similarity_q}. Because the null is size-matched, a tight
+five-SNP program is not penalised for being small.
 \item \strong{Trait-subsampling stability} — the top-loading SNPs must be
-recovered with replication \verb{>= stability_threshold} when \code{1 - frac_traits}
-of the traits are held out and flashier is refit. Because this refits
-flashier \code{n_rep} times, it is only run for programs that pass the
-internal-coherence checks; programs failing coherence are already rejected
-and are not re-checked.
-\item \strong{Factor distinctiveness} — for each program, compare its assigned
-(lFSR/magnitude-filtered) SNP membership set to every other program via the
-reciprocal containment score \code{pair_redundancy(A,B) = min(shared / n_snps_A, shared / n_snps_B)}; \code{max_pair_redundancy} is the maximum such score across
-all other programs and \code{most_redundant_program} is the partner that
-achieves it. The program fails (\code{redundancy_pass == FALSE}) when
-\code{max_pair_redundancy >= snp_redundancy_threshold}.
+recovered with replication \verb{>= stability_threshold} (mean best Jaccard
+overlap) when \code{1 - frac_traits} of the traits are held out and flashier is
+refit. Only run for programs passing size and similarity unless
+\code{stability_all_programs = TRUE}.
+\item \strong{SNP redundancy} — off by default (\code{snp_redundancy_threshold = Inf}); see \code{max_pair_redundancy} below.
 }
-
-Additional scores (reported, but not used to gate \code{status}):
+Reported, not gated:
 \itemize{
-\item \code{factor_strength} / \code{factor_strength_per_snp} — the proportion of
-the observed matrix signal attributable to the factor, computed from its
-fitted reconstruction on the lFSR/magnitude-filtered (assigned) SNPs;
-\code{factor_strength_per_snp = factor_strength / sqrt(n_snps_filtered)}
-normalises it by the square root of the number of filtered SNPs.
+\item \strong{Strength} — whether the factor explains more of the matrix than
+factors fitted to structureless data do. \code{factor_pve} is the proportion
+of variance explained by the factor (flashier's \code{pve}); its null is the
+pooled \code{pve} of every factor from the row-permuted null fits in
+\code{calibrate_ebmf_programs()}, giving \code{strength_emp_p}, a BH-adjusted
+\code{strength_q} and the \code{strength_pass} flag. If the null fits produce no
+factors at all, noise cannot match any program and \code{strength_pass} is
+TRUE. Not a gate: on the Suzuki T2D benchmark it removed clearly real
+small programs, because a factor's variance explained scales with how
+many SNPs and traits it spans.
+\item \code{mean_internal_similarity} and \code{connectedness} (share of member
+pairs with \verb{|S| >= edge_threshold}), with \code{internal_similarity_pass} and
+\code{connectedness_pass} against the fixed \code{min_mean_internal} /
+\code{min_connectedness} for comparison with earlier runs.
+\item \code{parent_program} / \code{parent_containment} — when at least 60\% of a
+program's SNPs lie within 500 kb of the SNPs of a larger program, that
+program is reported as its parent. Nested sub-programs are kept; the
+parent link says where they sit.
 \item \code{posterior_evidence} — aggregate (\code{median} or \code{mean}) of
-\code{-log10(lfsr)} across a program's assigned SNPs. Distinguishes programs
-dominated by borderline \code{lfsr ~ 0.05} memberships from programs whose
-memberships carry much stronger posterior sign evidence.
+\code{-log10(lfsr)} across a program's assigned SNPs.
 \item \code{max_abs_factor_corr} / \code{redundant} — the maximum absolute
 correlation of the program's SNP loading vector (\code{F_pm}) with any other
 program; \code{redundant} flags programs whose maximum correlation exceeds
 \code{redundancy_threshold}.
 \item \code{max_pair_redundancy} / \code{most_redundant_program} — the reciprocal
-SNP-containment redundancy score and its partner program; reported for
-context alongside the gating \code{redundancy_pass} described above.
+SNP-containment score \code{min(shared / n_snps_A, shared / n_snps_B)} and its
+partner program. It gates \code{redundancy_pass} only when
+\code{snp_redundancy_threshold} is finite.
 }
 }

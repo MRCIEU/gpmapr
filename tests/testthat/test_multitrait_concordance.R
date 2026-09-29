@@ -82,6 +82,81 @@ test_that("a planted antagonistic module is significant and opposed", {
 })
 
 
+test_that("correlated near-zero tails on unclaimed loci do not link", {
+  # Each program claims only its own loci, which the other trait does not
+  # carry, but both carry tiny, correlated loadings across a shared block --
+  # as every program does through the target row. Over the whole shared axis a
+  # shuffle null would call that significant; scored on claimed loci only,
+  # there is nothing to score.
+  set.seed(5)
+  shared_loci <- paste0("s", 1:30)
+  tail_pattern <- stats::rnorm(30)
+  feats <- paste0("f", 1:10)
+  one <- function(trait_id, own) {
+    loci <- c(own, shared_loci)
+    loading <- c(rep(1.5, 10), 1e-3 * (tail_pattern + stats::rnorm(30, 0, 0.1)))
+    return(make_program(
+      trait_id, 1, loci, loading, c(rep(TRUE, 10), rep(FALSE, 30)),
+      feats, stats::rnorm(10), lfsr = c(rep(0.001, 10), rep(0.6, 30))
+    ))
+  }
+  a <- one("t1", paste0("a", 1:10))
+  b <- one("t2", paste0("b", 1:10))
+  res <- compare_program_pairs_loadings(
+    list(a, b), n_perm = 200, seed = 1, min_shared_loci = 0L
+  )
+
+  expect_equal(res$pairs$n_loci_axis, 0L)
+  expect_true(is.na(res$pairs$concordance_z))
+  expect_true(is.na(res$pairs$link_tier))
+})
+
+
+test_that("two programs claiming exactly the same loci still link", {
+  # Uniform loadings on an identical claimed set: nothing to distinguish within
+  # the claimed loci, so the null must draw from the whole shared universe.
+  set.seed(1)
+  loci <- paste0("g", 1:20)
+  feats <- paste0("f", 1:10)
+  shared <- c(rep(1.5, 10), rep(0, 10))
+  claimed <- c(rep(TRUE, 10), rep(FALSE, 10))
+  a <- make_program("t1", 1, loci, shared + stats::rnorm(20, 0, 0.05), claimed,
+                    feats, stats::rnorm(10))
+  b <- make_program("t2", 1, loci, shared + stats::rnorm(20, 0, 0.05), claimed,
+                    feats, stats::rnorm(10))
+  res <- compare_program_pairs_loadings(list(a, b), n_perm = 200, seed = 1)
+
+  expect_equal(res$pairs$n_loci_axis, 10L)
+  expect_gt(res$pairs$concordance_z, 3)
+  expect_equal(res$pairs$link_tier, "primary")
+})
+
+
+test_that("a pair below min_shared_loci is scored but cannot link", {
+  set.seed(1)
+  loci <- paste0("g", 1:20)
+  feats <- paste0("f", 1:10)
+  shared <- c(rep(1.5, 10), rep(0, 10))
+  a <- make_program("t1", 1, loci, shared + stats::rnorm(20, 0, 0.05), rep(TRUE, 20),
+                    feats, stats::rnorm(10))
+  # Only two of the co-loading loci are high-confidence in the second program.
+  b <- make_program("t2", 1, loci, shared + stats::rnorm(20, 0, 0.05),
+                    c(TRUE, TRUE, rep(FALSE, 18)), feats, stats::rnorm(10))
+
+  gated <- compare_program_pairs_loadings(list(a, b), n_perm = 200, seed = 1)
+  expect_equal(gated$pairs$n_loci_shared, 2L)
+  expect_true(gated$pairs$concordance_z > 0)
+  expect_false(gated$pairs$candidate)
+  expect_false(gated$pairs$shared)
+  expect_true(is.na(gated$pairs$link_tier))
+
+  open <- compare_program_pairs_loadings(
+    list(a, b), n_perm = 200, seed = 1, min_shared_loci = 0L
+  )
+  expect_equal(open$pairs$link_tier, "primary")
+})
+
+
 test_that("breadth of shared loading is not penalised", {
   # Regression test for the failure in the removed profile-correlation
   # statistic, where a 3-locus pair beat a 19-locus pair because correlating

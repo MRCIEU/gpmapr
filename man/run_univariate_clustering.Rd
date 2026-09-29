@@ -93,7 +93,9 @@ A list with:
 \item x_matrix: raw traits x SNPs z-score matrix after trait filtering
 \item x_star: oriented, compressed traits x SNPs matrix used for similarity
 \item trait_matrix: SNP x trait version of \code{x_star}
-\item s_matrix: SNP-by-SNP cosine similarity matrix
+\item s_matrix: SNP-by-SNP cosine similarity matrix, computed without the
+target row (which is positive at every SNP after orientation). It is
+not used by the EBMF fit; it backs \code{summarise_ebmf_programs()}.
 \item overlap_matrix, eligible_matrix: joint-observation counts / eligibility
 \item cluster_membership: SNP x program logical membership matrix from EBMF
 \item cluster_details: EBMF fit details (including the \code{flash} object)

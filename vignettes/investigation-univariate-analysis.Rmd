@@ -77,11 +77,10 @@ Single-trait SNP program discovery: each column is a GWAS SNP for the target
 trait, each row is a background study (phenotypic or molecular; no collapsing).
 Profiles are oriented, compressed, and factorised with empirical Bayes matrix
 factorization (EBMF) into overlapping programs. Programs are then validated with
-a filtering framework — internal coherence (mean internal similarity and connectedness),
-factor strength normalised by the square root of the number of filtered SNPs,
-and trait-subsampling stability —
-plus descriptive evidence scores (aggregate posterior evidence and factor
-distinctiveness) before interpretation.
+a filtering framework — size, internal similarity against random SNP sets of
+the same size, factor strength against factors fitted to permuted data, and
+trait-subsampling stability — plus descriptive evidence scores (aggregate
+posterior evidence and factor distinctiveness) before interpretation.
 
 We use **`r target_trait_name`** (trait id `r target_trait_id`).
 
@@ -111,8 +110,9 @@ ebmf_backfit <- isTRUE(ebmf_settings$ebmf_backfit)
 ebmf_magnitude_threshold <- as.numeric(
   ebmf_settings$ebmf_magnitude_threshold
 )
-coherence_n_perm <- as.integer(ebmf_settings$coherence_n_perm)
-coherence_q_threshold <- as.numeric(ebmf_settings$coherence_q)
+similarity_n_perm <- as.integer(ebmf_settings$similarity_n_perm)
+similarity_q_threshold <- as.numeric(ebmf_settings$similarity_q)
+strength_q_threshold <- as.numeric(ebmf_settings$strength_q)
 ebmf_greedy_Kmax <- as.integer(ebmf_settings$ebmf_greedy_Kmax)
 associations <- params$associations
 min_mean_internal <- as.numeric(params$min_mean_internal)
@@ -156,8 +156,9 @@ knitr::kable(
     stability_threshold = stability_threshold,
     posterior_stat = posterior_stat,
     posterior_evidence_cap = posterior_evidence_cap,
-    coherence_n_perm = coherence_n_perm,
-    coherence_q = coherence_q_threshold,
+    similarity_n_perm = similarity_n_perm,
+    similarity_q = similarity_q_threshold,
+    strength_q = strength_q_threshold,
     ebmf_greedy_Kmax = ebmf_greedy_Kmax,
     redundancy_threshold = redundancy_threshold,
     cores = cores,
@@ -262,10 +263,14 @@ trait_matrix <- t(X_star)
 ## Step 3: SNP similarity (S)
 
 Missing trait-SNP cells are treated as zero effects, preserving the original
-cosine similarity calculation.
+cosine similarity calculation. The target row is left out: after orientation
+it is positive at every SNP, so it would add the same similarity to every pair.
+`S` is not used by the EBMF fit; it backs program validation.
 
 ```{r step3-similarity}
-similarity <- snp_similarity_matrix(X_star)
+similarity <- snp_similarity_matrix(
+  X_star[rownames(X_star) != as.character(target_trait_id), , drop = FALSE]
+)
 S <- similarity$s_matrix
 s_upper <- S[upper.tri(S)]
 overlap_upper <- similarity$overlap_matrix[
@@ -323,69 +328,50 @@ ebmf_result <- run_univariate_clustering(
 
 ## Step 4.5: Program validation
 
-`summarise_ebmf_programs()` computes internal-coherence metrics on the SNP
-similarity graph:
+`summarise_ebmf_programs()` folds the validation checks into a single
+per-program table with pass/fail flags and an overall `status`. Member SNPs are
+those passing the lFSR/magnitude cut. A program is `valid` if it passes every
+gate; `status` lists the failed gates otherwise.
 
-- **mean_internal_similarity** — mean off-diagonal `S` inside the module
-- **separation** — internal minus external mean similarity
-- **connectedness** — fraction of SNP pairs with `|S| >= similarity_threshold`
+Gates:
 
-For EBMF, `summarise_ebmf_programs()` folds the graph-reliability metrics
-together with trait-subsampling **stability** and the descriptive
-**additional scores** into a single per-program table with pass/fail flags and
-an overall `status`:
+- **size** — at least `min_module_size` member SNPs.
+- **similarity** — the mean `S` between member SNPs
+  (`mean_internal_similarity`) is compared with random sets of the same number
+  of SNPs from this trait. `similarity_lift` is the observed mean over the null
+  mean and `similarity_q` the BH-adjusted permutation p. The null is
+  size-matched and built from this trait's own similarity graph, so the same
+  threshold transfers between traits whose similarity baselines differ, and a
+  tight five-SNP program is not penalised for being small.
+- **stability** — `replication`: the mean Jaccard overlap between the
+  program's top `stability_top_n` SNPs and the best-matching factor when
+  `1 - frac_traits` of the traits are held out and flashier is refit (`n_rep`
+  reruns on `cores` cores). Only computed for programs passing size and
+  similarity; those must reach `replication >= stability_threshold`.
+- **redundancy** — off unless `snp_redundancy_threshold` is supplied.
 
-- **factor_strength / factor_strength_per_snp** — proportion of observed
-  matrix signal attributable to the factor (from its fitted reconstruction),
-  computed on the lFSR/magnitude-filtered subset of EBMF-supported SNPs;
-  `factor_strength_per_snp = factor_strength / sqrt(n_snps_filtered)`. Reported for
-  context only; it does not gate `status`.
-- **replication** — trait-subsampling stability: how often the top
-  `stability_top_n` loading SNPs are recovered when `1 - frac_traits` of the
-  traits are held out and flashier is refit (`n_rep` reruns, run in parallel
-  on `cores` cores). Because this is expensive, it is only computed for
-  programs that pass the internal-coherence checks; those programs must reach
-  `replication >= stability_threshold`. Stability should use the same filtered
-  SNP reference sets as the other program-level calculations, and the
-  refitted programs are filtered with the same lFSR/magnitude thresholds.
+Reported, not gated:
+
+- **strength** — `factor_pve`, the share of the matrix variance the factor
+  explains, is compared with every factor fitted to the `n_null` row-permuted
+  copies of the matrix; `strength_q` is the BH-adjusted empirical p and
+  `strength_pass` flags programs that explain more than noise does. Not a gate:
+  variance explained grows with how many SNPs and traits a program spans, so it
+  penalises small, specific programs.
+- **connectedness** — fraction of member pairs with
+  `|S| >= similarity_threshold`, with `connectedness_pass` against the fixed
+  `min_connectedness` for comparison with earlier runs.
+- **parent_program** — when at least 60% of a program's SNPs sit within 500 kb
+  of the SNPs of a larger program, that program is its parent. Nested
+  sub-programs are kept.
 - **posterior_evidence** — aggregate (`posterior_stat`) of `-log10(lfsr)`
-  across assigned SNPs. Distinguishes programs dominated by borderline
-  `lfsr ~ 0.05` memberships from programs whose memberships carry much stronger
-  posterior sign evidence.
+  across member SNPs.
 - **max_abs_factor_corr / redundant** — maximum absolute correlation of the
   program's SNP loading vector with any other program; programs exceeding
   `redundancy_threshold` are flagged `redundant`.
-- **max_pair_redundancy / most_redundant_program / redundancy_pass** —
-  factor distinctiveness: for each program, the reciprocal SNP containment
-  with every other program (`pair_redundancy = min(shared / n_snps_A,
-  shared / n_snps_B)` on the assigned membership sets). The program fails
-  (`redundancy_pass = FALSE`) when `max_pair_redundancy >= 0.9`, i.e. it
-  captures essentially the same SNP set as another program.
-
-A program is `valid` if it passes all four filters (`size`, `coherence`,
-`stability`, `redundancy`); the failure reason is recorded in `status`.
-
-`coherence` is the gate that decides whether a program is more than a random
-set of SNPs. It weights **every** SNP by its squared posterior loading -- so it
-does not depend on the lFSR/magnitude cutoff -- and permutes that weight vector
-across SNPs to ask whether the program's loadings are aligned with the
-similarity graph more than chance. Because permuting preserves the weight
-distribution, the null is automatically matched on program size and shape.
-
-This replaces comparing `mean_internal_similarity` with an absolute constant,
-which is not informative on a real graph: in this trait's similarity matrix a
-random set of 44 SNPs has mean internal similarity around 0.35 and clears a 0.3
-threshold about 94% of the time, so the old gate sat below the graph's own
-baseline. `mean_internal_similarity` and `connectedness` are still reported for
-comparison but no longer decide `status`.
-
-`n_eff` (the participation ratio of the loading weights) is the weighted
-analogue of program size: read it alongside `coherence_q`, because a small
-q-value on a very diffuse program is a weaker claim than the same q-value on a
-tight one. `weighted_quorum` and its `quorum_q` measure how many SNP pairs
-clear the edge threshold rather than the average alignment, and
-`shape_disagreement` flags programs where the two readings fall on opposite
-sides of the threshold.
+- **max_pair_redundancy / most_redundant_program** — the reciprocal SNP
+  containment `min(shared / n_snps_A, shared / n_snps_B)` with the most
+  overlapping program.
 
 ```{r step4-quality, results='asis'}
 program_summary <- summarise_ebmf_programs(
@@ -395,8 +381,9 @@ program_summary <- summarise_ebmf_programs(
     min_module_size = min_module_size,
     min_mean_internal = min_mean_internal,
     min_connectedness = min_connectedness,
-    coherence_n_perm = coherence_n_perm,
-    coherence_q_threshold = coherence_q_threshold,
+    similarity_n_perm = similarity_n_perm,
+    similarity_q_threshold = similarity_q_threshold,
+    strength_q_threshold = strength_q_threshold,
     n_null = n_null,
     alpha_membership = alpha_membership,
     n_candidate_tier = n_candidate_tier,
@@ -420,28 +407,24 @@ program_summary <- summarise_ebmf_programs(
       program_summary$programs |>
         dplyr::select(
           program, n_snps, n_snps_filtered,
-          mean_internal_similarity, connectedness,
-          weighted_internal, weighted_quorum, n_eff, coherence_q, quorum_q,
-          coherence_pass, shape_disagreement,
-          factor_strength, factor_strength_per_snp, replication,
+          mean_internal_similarity, similarity_lift, similarity_q,
+          similarity_pass, connectedness, factor_pve, strength_q,
+          strength_pass, replication, parent_program,
           posterior_evidence, max_abs_factor_corr, redundant,
           max_pair_redundancy, most_redundant_program, redundancy_pass,
-          size_pass, internal_pass,
-          stability_pass, stability_checked, status
+          size_pass, stability_pass, stability_checked, status
         ) |>
         dplyr::mutate(
-          factor_strength_pct = round(100 * factor_strength, 2),
-          factor_strength_per_snp_pct = round(100 * factor_strength_per_snp, 3),
           mean_internal_similarity = round(mean_internal_similarity, 3),
+          similarity_lift = round(similarity_lift, 2),
+          similarity_q = signif(similarity_q, 3),
+          similarity_pass = dplyr::if_else(similarity_pass, "pass", "FAIL"),
           connectedness = round(connectedness, 3),
-          weighted_internal = round(weighted_internal, 3),
-          weighted_quorum = round(weighted_quorum, 3),
-          n_eff = round(n_eff, 1),
-          coherence_q = signif(coherence_q, 3),
-          quorum_q = signif(quorum_q, 3),
-          coherence_pass = dplyr::if_else(coherence_pass, "pass", "FAIL"),
-          shape_disagreement = dplyr::if_else(
-            shape_disagreement %in% TRUE, "yes", "no"
+          factor_pve_pct = round(100 * factor_pve, 2),
+          strength_q = signif(strength_q, 3),
+          strength_pass = dplyr::if_else(strength_pass, "pass", "FAIL"),
+          parent_program = dplyr::if_else(
+            is.na(parent_program), "--", as.character(parent_program)
           ),
           replication = round(replication, 3),
           posterior_evidence = round(posterior_evidence, 2),
@@ -456,7 +439,6 @@ program_summary <- summarise_ebmf_programs(
             as.character(most_redundant_program)
           ),
           size_pass = dplyr::if_else(size_pass, "pass", "fail"),
-          internal_pass = dplyr::if_else(internal_pass, "pass", "fail"),
           redundancy_pass = dplyr::if_else(redundancy_pass, "pass", "fail"),
           stability_pass = dplyr::case_when(
             !stability_checked ~ "n/a (not checked)",
@@ -466,26 +448,25 @@ program_summary <- summarise_ebmf_programs(
         ) |>
         dplyr::select(
           program, n_snps, n_snps_filtered,
-          mean_internal_similarity, connectedness,
-          weighted_internal, weighted_quorum, n_eff, coherence_q, quorum_q,
-          coherence_pass, shape_disagreement,
-          factor_strength_pct, factor_strength_per_snp_pct, replication, posterior_evidence,
+          mean_internal_similarity, similarity_lift, similarity_q,
+          similarity_pass, connectedness, factor_pve_pct, strength_q,
+          strength_pass, replication, parent_program, posterior_evidence,
           max_abs_factor_corr, redundant,
           max_pair_redundancy, most_redundant_program, redundancy_pass,
-          size_pass, internal_pass, stability_pass, status
+          size_pass, stability_pass, status
         ),
       row.names = FALSE,
       caption = paste0(
         "All EBMF programs returned by flash, with each filter check. n_snps ",
         "is the number of SNPs with nonzero EBMF support and n_snps_filtered is ",
-        "the subset surviving the lFSR/magnitude gate; ",
-        "factor_strength (as % of observed matrix signal) and ",
-        "factor_strength/sqrt(n_snps_filtered) are reported for context but do not gate ",
-        "status; replication is only checked for programs passing internal ",
-        "coherence (otherwise --); max_pair_redundancy is the reciprocal SNP ",
-        "containment with the most overlapping program (most_redundant_program), ",
-        "and redundancy_pass fails at >= 0.9; status is 'valid' or lists the ",
-        "failed checks (size; internal; stability; redundancy)."
+        "the subset surviving the lFSR/magnitude gate; factor_pve_pct is the ",
+        "% of matrix variance the factor explains; replication is only checked ",
+        "for programs passing size and similarity (otherwise --); ",
+        "parent_program is the larger program the program sits inside; ",
+        "max_pair_redundancy is the reciprocal SNP containment with the most ",
+        "overlapping program (most_redundant_program); status is 'valid' or ",
+        "lists the failed checks (size; similarity; stability; redundancy); ",
+        "strength_pass is reported only."
       )
     )
   )
@@ -505,7 +486,8 @@ program_summary <- summarise_ebmf_programs(
           n_programs = dplyr::n(),
           n_valid = sum(status == "valid"),
           n_fail_size = sum(!size_pass),
-          n_fail_internal = sum(!internal_pass),
+          n_fail_similarity = sum(!similarity_pass),
+          n_fail_strength = sum(!strength_pass),
           n_fail_stability = sum(!stability_pass),
           n_fail_redundancy = sum(!redundancy_pass, na.rm = TRUE),
           n_redundant = sum(redundant, na.rm = TRUE),
@@ -516,10 +498,9 @@ program_summary <- summarise_ebmf_programs(
         ),
       row.names = FALSE,
       caption = paste0(
-        "EBMF program validation summary (factor strength is reported but does not gate ",
-        "status). n_unique_snps counts each SNP once even when it belongs to multiple ",
+        "EBMF program validation summary. n_unique_snps counts each SNP once even when it belongs to multiple ",
         "programs (all = across all programs, valid = across valid programs only); ",
-        "n_fail_redundancy counts programs with reciprocal SNP containment >= 0.9; ",
+        "n_fail_redundancy is 0 unless a SNP redundancy threshold is set; ",
         "pct_of_total_snps is relative to the trait's ", n_snps_total, " SNPs."
       )
     )

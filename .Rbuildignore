@@ -6,3 +6,4 @@
 ^\.lintr$
 ^doc$
 ^Meta$
+^data-raw$

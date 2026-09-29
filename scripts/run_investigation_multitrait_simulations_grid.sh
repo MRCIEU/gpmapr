@@ -1,29 +1,24 @@
 # Render the multi-trait correspondence simulation vignette across its
 # parameter grids.
 #
-# The vignette already crosses locus_overlap x profile_overlap internally -- that
-# cross IS the study, and it is what decides whether the trait-profile axis
-# recovers shared programs the locus axis cannot. The grids below therefore vary
-# things ORTHOGONAL to that cross, so each render evaluates the full
-# locus x profile design under a different condition.
+# The vignette already crosses SNP overlap x planted direction (concordant /
+# antagonistic) internally, plus a null -- that cross IS the study. The grids
+# below vary things ORTHOGONAL to it, so each render evaluates the full design
+# under a different condition.
 #
 # Investigation R: similarity-graph realism
-#   The headline contrast between the two axes is structural and largely
-#   insensitive to the background regime, but the NULL arm is not: a
-#   false-discovery rate measured in an unrealistic noise regime is as weak here
-#   as in the univariate null study. Do not quote an FDR from the
-#   snpsd0_corr0 arm.
+#   Discovery and linking of the shared program are largely insensitive to the
+#   background regime, but the NULL arm is not: a false-link rate measured in an
+#   unrealistic noise regime is as weak here as in the univariate null study.
+#   Do not quote a false-link rate from the snpsd0_corr0 arm.
 #
-# Investigation S: how much signal each axis is given
-#   n_drivers_per_program is the size of the profile signal; module_size the size
-#   of the locus signal; n_shared_loci caps how much locus overlap is achievable
-#   at all. Shrinking each in turn shows which axis degrades first.
-#
-# Investigation T: thresholds and contamination
+# Investigation S: how many background studies a program needs
+#   n_drivers_per_program is the number of driver studies behind each planted
+#   program. Shrinking it shows when the shared program stops being found (and
+#   by which validation gate it is filtered), and so stops being linked.
 #
 # These are production settings for the HPC run. quick = FALSE is passed on every
-# render: quick caps n_sim at 2, at which recall saturates at 1.00 and the two
-# profile_overlap levels cannot be told apart.
+# render: quick caps n_sim at 2.
 
 set -euo pipefail
 
@@ -55,22 +50,10 @@ realism_grid=(
 )
 
 # ---------------------------------------------------------------------------
-# Investigation S: how much signal each axis is given
+# Investigation S: driver studies per program
 # ---------------------------------------------------------------------------
 
-drivers_per_program=(3 5 8)
-
-module_sizes=(8 15 25)
-
-shared_locus_pools=(20 80 160)
-
-# ---------------------------------------------------------------------------
-# Investigation T: thresholds and contamination
-# ---------------------------------------------------------------------------
-
-fdr_thresholds=(0.01 0.05 0.10)
-
-structural_zeros=(0 0.2 0.4)
+drivers_per_program=(3 5 8 15)
 
 # ---------------------------------------------------------------------------
 # Rendering helper
@@ -98,8 +81,8 @@ overrides <- args[-(1:3)]
 params <- list(
   n_sim = n_sim,
   n_perm = n_perm,
-  # Full-depth run. Under quick = TRUE recall saturates at 1.00 on 2 replicates
-  # and the input versions cannot be separated.
+  # Full-depth run. Under quick = TRUE only 2 replicates are run, too few to
+  # separate the versions.
   quick = FALSE
 )
 
@@ -155,52 +138,12 @@ for value in "${drivers_per_program[@]}"; do
 
 done
 
-for value in "${module_sizes[@]}"; do
-
-  render_one \
-    "S_modulesize_${value}" \
-    "module_size=${value}"
-
-done
-
-for value in "${shared_locus_pools[@]}"; do
-
-  render_one \
-    "S_sharedloci_${value}" \
-    "n_shared_loci=${value}"
-
-done
-
-# ---------------------------------------------------------------------------
-# Investigation T
-# ---------------------------------------------------------------------------
-
-for value in "${fdr_thresholds[@]}"; do
-
-  render_one \
-    "T_fdr_${value}" \
-    "fdr_threshold=${value}"
-
-done
-
-for value in "${structural_zeros[@]}"; do
-
-  render_one \
-    "T_structzero_${value}" \
-    "p_structural_zero=${value}"
-
-done
-
 echo ""
 echo "Done."
 echo ""
-echo "Investigation R: similarity-graph realism (FDR only meaningful here):"
+echo "Investigation R: similarity-graph realism (false-link rate only meaningful here):"
 ls -1 investigation-multitrait-simulations_R_*.html
 
 echo ""
-echo "Investigation S: signal available to each axis:"
+echo "Investigation S: driver studies per program:"
 ls -1 investigation-multitrait-simulations_S_*.html
-
-echo ""
-echo "Investigation T: thresholds and contamination:"
-ls -1 investigation-multitrait-simulations_T_*.html

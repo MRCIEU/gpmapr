@@ -60,7 +60,9 @@
 #'     \item x_matrix: raw traits x SNPs z-score matrix after trait filtering
 #'     \item x_star: oriented, compressed traits x SNPs matrix used for similarity
 #'     \item trait_matrix: SNP x trait version of `x_star`
-#'     \item s_matrix: SNP-by-SNP cosine similarity matrix
+#'     \item s_matrix: SNP-by-SNP cosine similarity matrix, computed without the
+#'       target row (which is positive at every SNP after orientation). It is
+#'       not used by the EBMF fit; it backs `summarise_ebmf_programs()`.
 #'     \item overlap_matrix, eligible_matrix: joint-observation counts / eligibility
 #'     \item cluster_membership: SNP x program logical membership matrix from EBMF
 #'     \item cluster_details: EBMF fit details (including the `flash` object)
@@ -206,7 +208,19 @@ run_univariate_clustering <- function(trait_object,
   )
   trait_matrix <- t(X_star)
 
-  similarity <- snp_similarity_matrix(X_star)
+  # S is not used by the EBMF fit; it backs program validation and reporting.
+  # The target row is left out: after orientation it is positive at every SNP,
+  # so it adds the same similarity to every pair and hides the structure the
+  # validation is looking for. SNPs observed only for the target then have an
+  # empty profile, which is expected, so the zero-norm warning is muffled.
+  similarity <- withCallingHandlers(
+    snp_similarity_matrix(X_star[rownames(X_star) != target_id, , drop = FALSE]),
+    warning = function(w) {
+      if (grepl("zero norm", conditionMessage(w), fixed = TRUE)) {
+        invokeRestart("muffleWarning")
+      }
+    }
+  )
 
   ebmf_x_input <- X_star
 

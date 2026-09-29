@@ -96,8 +96,8 @@ merge_gwas_upload_associations <- function(coloc_groups, associations) {
 
 #' Attach GWAS-upload associations and a stable trait_id
 #'
-#' Upload coloc rows are keyed by `gwas_upload_id` / own `study_id`, not the GUID
-#' used to fetch them. Stamp that GUID onto the upload's own rows so downstream
+#' Upload coloc rows are keyed by the upload's own `study_id`, not the GUID used
+#' to fetch them. Stamp that GUID onto the upload's own rows so downstream
 #' filters of the form `trait_id == <user id>` work for numeric traits and uploads.
 #'
 #' @param upload A GWAS upload result from `get_gwas_api()`.
@@ -117,10 +117,8 @@ merge_gwas_upload_associations <- function(coloc_groups, associations) {
     )
   }
 
-  upload_id <- NULL
   trait_name <- NULL
   if (!is.null(upload$trait)) {
-    upload_id <- upload$trait$id
     trait_name <- upload$trait$name
     upload$trait$guid <- guid
     if (is.null(upload$trait$trait_name) && !is.null(trait_name)) {
@@ -131,7 +129,6 @@ merge_gwas_upload_associations <- function(coloc_groups, associations) {
   upload$coloc_groups <- .stamp_gwas_upload_trait_id(
     coloc_groups = upload$coloc_groups,
     lookup_id = guid,
-    upload_id = upload_id,
     trait_name = trait_name
   )
   return(upload)
@@ -140,16 +137,19 @@ merge_gwas_upload_associations <- function(coloc_groups, associations) {
 
 #' Stamp a lookup id onto a GWAS upload's own coloc_groups rows
 #'
+#' The upload's own rows are those with a `study_id` and no `existing_study_id`;
+#' rows from existing GPMap studies keep their numeric `trait_id`. The API sets
+#' `gwas_upload_id` on every row of an upload result, background studies
+#' included, so it cannot identify the upload's own rows.
+#'
 #' @param coloc_groups A coloc_groups dataframe.
 #' @param lookup_id The id callers use (usually the upload GUID).
-#' @param upload_id Optional numeric upload id (`trait$id` / `gwas_upload_id`).
 #' @param trait_name Optional display name for own rows missing `trait_name`.
 #' @return `coloc_groups` with `trait_id` set on the upload's own rows.
 #' @keywords internal
 #' @noRd
 .stamp_gwas_upload_trait_id <- function(coloc_groups,
                                         lookup_id,
-                                        upload_id = NULL,
                                         trait_name = NULL) {
   if (!is.data.frame(coloc_groups) || nrow(coloc_groups) == 0) {
     return(coloc_groups)
@@ -160,19 +160,8 @@ merge_gwas_upload_associations <- function(coloc_groups, associations) {
   coloc_groups$trait_id <- as.character(coloc_groups$trait_id)
 
   own_rows <- rep(FALSE, nrow(coloc_groups))
-  if (!is.null(upload_id)) {
-    upload_key <- as.character(upload_id)
-    own_rows <- own_rows |
-      (!is.na(coloc_groups$trait_id) & coloc_groups$trait_id == upload_key)
-    if ("gwas_upload_id" %in% names(coloc_groups)) {
-      own_rows <- own_rows |
-        (!is.na(coloc_groups$gwas_upload_id) &
-          as.character(coloc_groups$gwas_upload_id) == upload_key)
-    }
-  }
   if ("study_id" %in% names(coloc_groups) && "existing_study_id" %in% names(coloc_groups)) {
-    own_rows <- own_rows |
-      (!is.na(coloc_groups$study_id) & is.na(coloc_groups$existing_study_id))
+    own_rows <- !is.na(coloc_groups$study_id) & is.na(coloc_groups$existing_study_id)
   }
   coloc_groups$trait_id[own_rows] <- as.character(lookup_id)
 

@@ -1,0 +1,38 @@
+"trait_acronym","trait_category","trait","sample_size","ancestry","reference","gpmap_trait_id","match_type","gpmap_study","gpmap_trait_name","gpmap_sample_size","gpmap_num_coloc_groups"
+"FGadjBMI","Glycaemic traits","Fasting glucose adjusted for BMI",200622,"EUR","PMID: 34059833",913,"same_gwas","ebi-a-GCST90002232","Fasting glucose",200622,95
+"2hGadjBMI","Glycaemic traits","2-hour glucose adjusted for BMI",63396,"EUR","PMID: 34059833",912,"same_gwas","ebi-a-GCST90002227","Two-hour glucose",63396,16
+"HbA1c","Glycaemic traits","Glycated haemoglobin",146806,"EUR","PMID: 34059833",1640,"proxy","ebi-a-GCST90025974","Haemoglobin A1c levels",437749,838
+"PIadjBMI","Glycaemic traits","Proinsulin adjusted for FI and BMI",45826,"EUR","PMID: 36693378",3,"proxy","ebi-a-GCST001212","Proinsulin levels",10701,12
+"FIadjBMI","Glycaemic traits","Fasting insulin adjusted for BMI",151013,"EUR","PMID: 34059833",914,"same_gwas","ebi-a-GCST90002238","Fasting insulin",151013,49
+"ISIadjBMI","Glycaemic traits","Modified Stumvoll insulin sensitivity index adjusted for BMI",53657,"EUR","PMID: 37291194",2339,"proxy","ebi-a-GCST003658","Modified Stumvoll Insulin Sensitivity Index (model adjusted for BMI)",16753,7
+"IFCadjBMI","Glycaemic traits","Insulin fold change adjusted for BMI",53287,"EUR","PMID: 37291194",NA,"none",NA,NA,NA,NA
+"SBPadjBMI","Blood pressure","Systolic blood pressure adjusted for BMI",101740,"EUR","Pre-publication data from ICBP (https://www.researchsquare.com/article/rs-1409164/v1)",1996,"unadjusted_proxy","ebi-a-GCST90029011","Systolic blood pressure",469767,769
+"DBPadjBMI","Blood pressure","Diastolic blood pressure adjusted for BMI",1028910,"EUR","Pre-publication data from ICBP (https://www.researchsquare.com/article/rs-1409164/v1)",1995,"unadjusted_proxy","ebi-a-GCST90029010","Diastolic blood pressure",490469,769
+"PPadjBMI","Blood pressure","Pulse pressure adjusted for BMI",1017050,"EUR","Pre-publication data from ICBP (https://www.researchsquare.com/article/rs-1409164/v1)",1488,"unadjusted_proxy","ebi-a-GCST90018970","Pulse pressure",360863,425
+"BW","Anthropometric measures","Birth weight",321219,"Multi-ancestry","PMID: 31043758",134,"proxy","ebi-a-GCST007557","Birth weight",133903,66
+"BMR","Anthropometric measures","Basal metabolic rate",433453,"Multi-ancestry","Pan-ancestry GWAS of UK Biobank (https://pan.ukbb.broadinstitute.org)",2006,"proxy","ebi-a-GCST90029025","Basal metabolic rate",534045,1462
+"BMI","Anthropometric measures","Body mass index",523818,"EAS, EUR","PMID: 34594039",1992,"proxy","ebi-a-GCST90029007","Body mass index",532396,992
+"WHR","Anthropometric measures","Waist-hip ratio",378139,"EUR","PMID: 34518635",1994,"proxy","ebi-a-GCST90029009","Waist-hip ratio",502773,550
+"WC","Anthropometric measures","Waist circumference",436736,"Multi-ancestry","Pan-ancestry GWAS of UK Biobank (https://pan.ukbb.broadinstitute.org)",4503,"proxy","ukb-b-9405","Waist circumference",462166,611
+"HC","Anthropometric measures","Hip circumference",430115,"Multi-ancestry","Pan-ancestry GWAS of UK Biobank (https://pan.ukbb.broadinstitute.org)",3342,"proxy","ukb-b-15590","Hip circumference",462117,829
+"BFP","Fat and adipose tissue volume","Body fat percentage",432262,"Multi-ancestry","Pan-ancestry GWAS of UK Biobank (https://pan.ukbb.broadinstitute.org)",2581,"proxy","ebi-a-GCST90013975","Body fat percentage (UKB data field 23099)",401772,671
+"TFP","Fat and adipose tissue volume","Trunk fat percentage",433205,"Multi-ancestry","Pan-ancestry GWAS of UK Biobank (https://pan.ukbb.broadinstitute.org)",3424,"proxy","ukb-b-16407","Trunk fat percentage",454613,709
+"GFATadjBMI","Fat and adipose tissue volume","Gluteofemoral adipose tissue volume adjusted for BMI",38960,"Multi-ancestry","PMID: 35773277",NA,"none",NA,NA,NA,NA
+"VATadjBMI","Fat and adipose tissue volume","Visceral adipose tissue volume adjusted for BMI",38960,"Multi-ancestry","PMID: 35773277",1324,"unadjusted_proxy","ebi-a-GCST90016671","Visceral adipose tissue volume",32860,7
+"ASATadjBMI","Fat and adipose tissue volume","Abdominal subcutaneous adipose tissue volume adjusted for BMI",38960,"Multi-ancestry","PMID: 35773277",1325,"unadjusted_proxy","ebi-a-GCST90016672","Abdominal subcutaneous adipose tissue volume",32860,2
+"ALP","Liver-related traits","Alkaline phosphatase",463178,"EAS, EUR","PMID: 34594039",1624,"proxy","ebi-a-GCST90025947","Serum alkaline phosphatase levels",437896,768
+"GGT","Liver-related traits","Gamma-glutamyltransferase",477575,"EAS, EUR","PMID: 34594039",1634,"proxy","ebi-a-GCST90025966","Gamma glutamyl transferase levels",437651,702
+"Tbil","Liver-related traits","Total bilirubin",467170,"EAS, EUR","PMID: 34594039",1639,"proxy","ebi-a-GCST90025973","Bilirubin levels",436055,318
+"Dbil","Liver-related traits","Direct bilirubin",357198,"Multi-ancestry","Pan-ancestry GWAS of UK Biobank (https://pan.ukbb.broadinstitute.org)",NA,"none",NA,NA,NA,NA
+"AST","Liver-related traits","Aspartate aminotransferase",493058,"EAS, EUR","PMID: 34594039",1643,"proxy","ebi-a-GCST90025980","Aspartate aminotransferase levels",436275,519
+"ALT","Liver-related traits","Alanine aminotransferase",494681,"EAS, EUR","PMID: 34594039",1642,"proxy","ebi-a-GCST90025979","Alanine aminotransferase levels",437724,449
+"LiverFat","Liver-related traits","Liver fat percentage",32858,"EUR","PMID: 34128465",1326,"same_gwas","ebi-a-GCST90016673","Percent liver fat",32858,9
+"TG","Circulating plasma lipids","Triglycerides",1523970,"Multi-ancestry","PMID: 34887591",1631,"proxy","ebi-a-GCST90025957","Triglyceride levels",437532,587
+"LDL","Circulating plasma lipids","Low-density lipoprotein cholesterol",1494980,"Multi-ancestry","PMID: 34887591",939,"proxy","ebi-a-GCST90002412","Low density lipoprotein cholesterol levels",431167,569
+"HDL","Circulating plasma lipids","High-density lipoprotein cholesterol",1548460,"Multi-ancestry","PMID: 34887591",1630,"proxy","ebi-a-GCST90025956","HDL cholesterol levels",400754,735
+"TC","Circulating plasma lipids","Total cholesterol",1654920,"Multi-ancestry","PMID: 34887591",1627,"proxy","ebi-a-GCST90025953","Total cholesterol levels",437878,374
+"nonHDL","Circulating plasma lipids","Non-HDL cholesterol",1128000,"Multi-ancestry","PMID: 34887591",NA,"none",NA,NA,NA,NA
+"APOA","Biomarkers","Apolipoprotein A1",382929,"Multi-ancestry","Pan-ancestry GWAS of UK Biobank (https://pan.ukbb.broadinstitute.org)",1629,"proxy","ebi-a-GCST90025955","Apolipoprotein A1 levels",398508,567
+"APOB","Biomarkers","Apolipoprotein B",418505,"Multi-ancestry","Pan-ancestry GWAS of UK Biobank (https://pan.ukbb.broadinstitute.org)",1626,"proxy","ebi-a-GCST90025952","Apolipoprotein B levels",435744,364
+"CRP","Biomarkers","C-reactive protein",436491,"EAS, EUR","PMID: 34594039",2644,"proxy","ebi-a-GCST90029070","C-reactive protein levels",575531,430
+"IGF1","Biomarkers","Insulin-like growth factor 1",418326,"Multi-ancestry","Pan-ancestry GWAS of UK Biobank (https://pan.ukbb.broadinstitute.org)",1647,"proxy","ebi-a-GCST90025989","Insulin-like growth factor 1 levels",435516,883

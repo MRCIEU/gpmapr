@@ -3,12 +3,29 @@
 #' different target traits describe the same biology, using their continuous
 #' SNP loadings on the **locus** axis.
 #'
-#' For a pair of programs the locus axis is the intersection of the two traits'
-#' `coloc_group_id` universes — **every** shared-universe locus, with no lFSR or
-#' magnitude threshold. Each locus contributes in proportion to how strongly it
-#' loads in both programs:
+#' For a pair of programs the locus axis is the set of loci both traits carry
+#' (shared `coloc_group_id`s) that **at least one of the two programs claims**
+#' as a high-confidence member (all of a program's loci if it has none). Within
+#' that axis each locus contributes in proportion to how strongly it loads in
+#' both programs:
 #' \deqn{\mathrm{concordance} = \sum_l w_l f_a(l) f_b(l), \quad
 #' w_l = (1 - \mathrm{lfsr}_a(l))(1 - \mathrm{lfsr}_b(l))}
+#' The restriction matters because every program carries a small loading at
+#' every locus. Over the whole shared universe those near-zero tails can be
+#' faintly correlated between two traits (for instance through the target
+#' traits' own effects at shared loci), and a shuffle null standardises that
+#' into a large `concordance_z` for loadings of no real magnitude. The pair's
+#' permutation null shuffles the second program's loadings over the whole
+#' shared universe and reads them off at the pair's axis, so co-loading on the
+#' claimed loci is compared against loading drawn from anywhere the two traits
+#' share.
+#'
+#' A pair can only be linked when the two programs share at least
+#' `min_shared_loci` high-confidence loci (`n_loci_shared`): the correspondence
+#' this function reports is shared architecture at the same loci, and a pair
+#' sharing none has none to report. Pairs below the floor are still scored and
+#' reported, but they take no part in the best-partner search or its null and
+#' cannot be `primary` or `candidate` links.
 #'
 #' The score is deliberately **covariance-like rather than correlation-like**: a
 #' fully normalised (cosine) score is scale-free and so cannot distinguish a pair
@@ -33,6 +50,14 @@
 #' trait, `sign(concordance)` is interpretable: positive is a concordant
 #' (target-aligned) architecture, negative an antagonistic one.
 #'
+#' CAVEAT on direction: each trait's matrix is oriented to that trait's own
+#' risk allele before fitting, so a locus belonging to a shared program loads
+#' positively in both traits' programs whether the program is concordant or
+#' antagonistic. On this axis antagonism therefore does not change the sign, so
+#' an antagonistic link is reported as concordant (see the multi-trait
+#' simulation vignette). Take direction from [module_rg()] instead, which
+#' correlates the two traits' own effects in a common allele frame.
+#'
 #' IMPORTANT: loci are treated as independent observations. The candidate loci
 #' are fine-mapped colocalising signals, so LD between them is largely handled
 #' upstream, but no correction is made for sample overlap between the two target
@@ -44,9 +69,10 @@
 #' @param fdr_threshold BH FDR at or below which a program is significant.
 #'   Defaults to `0.05`.
 #' @param seed RNG seed for the permutations.
-#' @param min_shared_loci Minimum shared high-confidence loci for a pair to be
-#'   flagged in the `candidate` column. Defaults to `0`: this is a reporting
-#'   flag only and does not gate the test.
+#' @param min_shared_loci Minimum shared high-confidence loci (`n_loci_shared`)
+#'   for a pair to be eligible as a link; eligible pairs are flagged in the
+#'   `candidate` column. Defaults to `3`. Set to `0` to let any scored pair
+#'   link.
 #' @param coloc_groups Optional named list of coloc-group data.frames, keyed by
 #'   trait id. When supplied, [module_rg()] is run on every linked pair (both
 #'   tiers) and returned as `module_rg`.
@@ -69,7 +95,7 @@ compare_program_pairs_loadings <- function(program_data,
                                            n_perm = 1000L,
                                            fdr_threshold = 0.05,
                                            seed = 1,
-                                           min_shared_loci = 0L,
+                                           min_shared_loci = 3L,
                                            coloc_groups = NULL) {
   pd <- .normalise_program_data(program_data)
   loadings <- pd$loadings
@@ -101,8 +127,9 @@ compare_program_pairs_loadings <- function(program_data,
   )
 
   # Locus-overlap columns (n_loci_shared, jaccard_loci, p_locus) describe how
-  # much the two programs' high-confidence memberships overlap. They are
-  # reported for context; the test itself uses the full shared locus axis.
+  # much the two programs' high-confidence memberships overlap. n_loci_shared
+  # decides whether a pair can link at all (`candidate`); the concordance is
+  # scored on the loci either program claims.
   locus_sets <- .program_locus_sets(loadings, "high_confidence", 25L)
   universe_by_trait <- .locus_universe_by_trait(loadings)
   out <- dplyr::bind_rows(lapply(seq_len(nrow(keys)), function(i) {
@@ -198,7 +225,8 @@ compare_program_pairs_loadings <- function(program_data,
   out$shared <- .mutual_best_mask(out, matches, trait_ids_by_program)
   out$link_tier <- dplyr::case_when(
     out$shared ~ "primary",
-    is.finite(out$q_concordance) & out$q_concordance <= fdr_threshold ~ "candidate",
+    out$candidate & is.finite(out$q_concordance) &
+      out$q_concordance <= fdr_threshold ~ "candidate",
     TRUE ~ NA_character_
   )
 
@@ -457,68 +485,84 @@ module_rg <- function(result,
   mb <- .program_locus_matrix(loadings, t_b, loci, progs_b)
   aw <- ma$loading * ma$conf
   bw <- mb$loading * mb$conf
-
-  obs <- t(aw) %*% bw
-  den_a <- t(ma$loading^2 * ma$conf) %*% mb$conf
-  den_b <- t(ma$conf) %*% (mb$loading^2 * mb$conf)
-  cosine <- obs / sqrt(den_a * den_b)
-
-  # Effective number of loci carrying the score (participation ratio of the
-  # per-locus contributions): how much independent support the pair rests on.
-  s1 <- t(abs(aw)) %*% abs(bw)
-  s2 <- t(aw^2) %*% bw^2
-  n_eff <- s1^2 / s2
-  n_eff[!is.finite(n_eff)] <- NA_real_
-
-  null_scores <- array(NA_real_, c(n_perm, length(progs_a), length(progs_b)))
-  for (p in seq_len(n_perm)) {
-    bp <- bw
-    for (j in seq_len(ncol(bw))) {
-      bp[, j] <- bw[sample.int(nrow(bw)), j]
-    }
-    null_scores[p, , ] <- t(aw) %*% bp
-  }
-  null_mean <- apply(null_scores, c(2, 3), mean)
-  null_sd <- apply(null_scores, c(2, 3), stats::sd)
-  null_sd[!is.finite(null_sd) | null_sd <= 0] <- NA_real_
-
-  zobs <- (obs - null_mean) / null_sd
-  pval <- matrix(
-    NA_real_, nrow = length(progs_a), ncol = length(progs_b),
-    dimnames = dimnames(obs)
-  )
-  for (ia in seq_along(progs_a)) {
-    for (ib in seq_along(progs_b)) {
-      nv <- null_scores[, ia, ib]
-      nv <- nv[is.finite(nv)]
-      if (length(nv) > 0 && is.finite(obs[ia, ib])) {
-        pval[ia, ib] <- (1 + sum(abs(nv) >= abs(obs[ia, ib]))) / (1 + length(nv))
-      }
-    }
-  }
-
-  # Standardise each permutation draw on its own pair's null so the per-program
-  # maximum is taken over comparable quantities.
-  znull <- sweep(null_scores, c(2, 3), null_mean, "-")
-  znull <- sweep(znull, c(2, 3), null_sd, "/")
+  claimed_a <- .program_claimed_matrix(loadings, loci, progs_a)
+  claimed_b <- .program_claimed_matrix(loadings, loci, progs_b)
 
   a_idx <- match(as.character(out$program_id_a[rows]), progs_a)
   b_idx <- match(as.character(out$program_id_b[rows]), progs_b)
+
+  # Each pair is scored on its own axis: the shared loci at least one of the
+  # two programs claims. Every program carries a small loading at every locus
+  # (the target row loads on all of them), and across the whole shared axis
+  # those near-zero tails can be faintly correlated between traits, which a
+  # shuffle null standardises into a large z for loadings of no magnitude.
+  # The null still shuffles the second program's loadings over the whole shared
+  # axis before reading off the claimed loci: shuffling only within the claimed
+  # loci would ask whether loading magnitudes correlate there, and two programs
+  # claiming the same loci with similar loadings would then score nothing.
+  null_scores <- array(NA_real_, c(n_perm, length(progs_a), length(progs_b)))
+  eligible <- matrix(FALSE, nrow = length(progs_a), ncol = length(progs_b))
   for (k in seq_along(rows)) {
     ia <- a_idx[k]
     ib <- b_idx[k]
     if (is.na(ia) || is.na(ib)) next
-    out$locus_concordance[rows[k]] <- obs[ia, ib]
-    out$cosine_loci[rows[k]] <- cosine[ia, ib]
-    out$n_eff_loci[rows[k]] <- n_eff[ia, ib]
-    out$concordance_z[rows[k]] <- zobs[ia, ib]
-    out$p_concordance[rows[k]] <- pval[ia, ib]
+    eligible[ia, ib] <- isTRUE(out$candidate[rows[k]])
+    axis <- claimed_a[, ia] | claimed_b[, ib]
+    out$n_loci_axis[rows[k]] <- sum(axis)
+    if (sum(axis) < 2) next
 
-    if (!is.finite(zobs[ia, ib])) next
+    av <- aw[axis, ia]
+    bv <- bw[axis, ib]
+    obs <- sum(av * bv)
+    den <- sum(ma$loading[axis, ia]^2 * ma$conf[axis, ia] * mb$conf[axis, ib]) *
+      sum(ma$conf[axis, ia] * mb$loading[axis, ib]^2 * mb$conf[axis, ib])
+    # Effective number of loci carrying the score (participation ratio of the
+    # per-locus contributions): how much independent support the pair rests on.
+    n_eff <- sum(abs(av * bv))^2 / sum((av * bv)^2)
+
+    perm <- replicate(n_perm, sample.int(nrow(bw)))[axis, , drop = FALSE]
+    null_scores[, ia, ib] <- colSums(av * matrix(bw[perm, ib], nrow = sum(axis)))
+    nv <- null_scores[, ia, ib]
+    null_sd <- stats::sd(nv)
+
+    out$locus_concordance[rows[k]] <- obs
+    out$cosine_loci[rows[k]] <- obs / sqrt(den)
+    out$n_eff_loci[rows[k]] <- if (is.finite(n_eff)) n_eff else NA_real_
+    out$concordance_z[rows[k]] <- if (is.finite(null_sd) && null_sd > 0) {
+      (obs - mean(nv)) / null_sd
+    } else {
+      NA_real_
+    }
+    out$p_concordance[rows[k]] <- (1 + sum(abs(nv) >= abs(obs))) / (1 + n_perm)
+  }
+
+  # Standardise each permutation draw on its own pair's null so the per-program
+  # maximum is taken over comparable quantities. Pairs that cannot be linked
+  # (too few shared high-confidence loci) are left out of both the observed
+  # best partner and its null, so the search is over the same set in both.
+  null_mean <- apply(null_scores, c(2, 3), mean)
+  null_sd <- apply(null_scores, c(2, 3), stats::sd)
+  null_sd[!is.finite(null_sd) | null_sd <= 0] <- NA_real_
+  znull <- sweep(null_scores, c(2, 3), null_mean, "-")
+  znull <- sweep(znull, c(2, 3), null_sd, "/")
+  for (ia in seq_along(progs_a)) {
+    for (ib in seq_along(progs_b)) {
+      if (!eligible[ia, ib]) {
+        znull[, ia, ib] <- NA_real_
+      }
+    }
+  }
+
+  for (k in seq_along(rows)) {
+    ia <- a_idx[k]
+    ib <- b_idx[k]
+    if (is.na(ia) || is.na(ib)) next
+    z <- out$concordance_z[rows[k]]
+    if (!is.finite(z) || !eligible[ia, ib]) next
     for (pid in c(out$program_id_a[rows[k]], out$program_id_b[rows[k]])) {
       pos <- match(pid, as.character(best$program_id))
-      if (is.na(best$best_abs_z[pos]) || abs(zobs[ia, ib]) > best$best_abs_z[pos]) {
-        best$best_abs_z[pos] <- abs(zobs[ia, ib])
+      if (is.na(best$best_abs_z[pos]) || abs(z) > best$best_abs_z[pos]) {
+        best$best_abs_z[pos] <- abs(z)
         best$best_partner[pos] <- setdiff(
           c(out$program_id_a[rows[k]], out$program_id_b[rows[k]]), pid
         )[1]
@@ -527,14 +571,21 @@ module_rg <- function(result,
     }
   }
 
+  # A program with no eligible partner has an all-NA draw; count it as -Inf.
+  draw_max <- function(x) {
+    if (all(is.na(x))) {
+      return(-Inf)
+    }
+    return(max(x, na.rm = TRUE))
+  }
   for (ia in seq_along(progs_a)) {
-    vals <- apply(abs(znull[, ia, , drop = FALSE]), 1, max, na.rm = TRUE)
+    vals <- apply(abs(znull[, ia, , drop = FALSE]), 1, draw_max)
     slot <- program_index[[progs_a[ia]]]
     vals[!is.finite(vals)] <- -Inf
     max_null[, slot] <- pmax(max_null[, slot], vals)
   }
   for (ib in seq_along(progs_b)) {
-    vals <- apply(abs(znull[, , ib, drop = FALSE]), 1, max, na.rm = TRUE)
+    vals <- apply(abs(znull[, , ib, drop = FALSE]), 1, draw_max)
     slot <- program_index[[progs_b[ib]]]
     vals[!is.finite(vals)] <- -Inf
     max_null[, slot] <- pmax(max_null[, slot], vals)
@@ -990,25 +1041,45 @@ compare_program_pairs_profiles <- function(program_data,
   if (length(shared) == 0) {
     return(character(0))
   }
-  claimed <- function(pid) {
-    s <- loadings[
-      as.character(loadings$program_id) == pid &
-        !is.na(loadings$coloc_group_id),
-      ,
-      drop = FALSE
-    ]
-    if (nrow(s) == 0) {
-      return(character(0))
-    }
-    if ("high_confidence" %in% names(s)) {
-      hc <- s$high_confidence
-      hc[is.na(hc)] <- FALSE
-      if (any(hc)) {
-        s <- s[hc, , drop = FALSE]
-      }
-    }
-    return(unique(as.character(s$coloc_group_id)))
-  }
-  own <- union(claimed(program_a), claimed(program_b))
+  own <- union(
+    .program_claimed_loci(loadings, program_a),
+    .program_claimed_loci(loadings, program_b)
+  )
   return(sort(intersect(shared, own)))
+}
+
+
+# The loci a program claims: its high-confidence coloc groups, or all of its
+# coloc groups when it has no high-confidence member.
+.program_claimed_loci <- function(loadings, program_id) {
+  s <- loadings[
+    as.character(loadings$program_id) == program_id &
+      !is.na(loadings$coloc_group_id),
+    ,
+    drop = FALSE
+  ]
+  if (nrow(s) == 0) {
+    return(character(0))
+  }
+  if ("high_confidence" %in% names(s)) {
+    hc <- s$high_confidence
+    hc[is.na(hc)] <- FALSE
+    if (any(hc)) {
+      s <- s[hc, , drop = FALSE]
+    }
+  }
+  return(unique(as.character(s$coloc_group_id)))
+}
+
+
+# loci x programs logical matrix: does each program claim each locus?
+.program_claimed_matrix <- function(loadings, loci, program_ids) {
+  m <- matrix(
+    FALSE, nrow = length(loci), ncol = length(program_ids),
+    dimnames = list(loci, program_ids)
+  )
+  for (j in seq_along(program_ids)) {
+    m[, j] <- loci %in% .program_claimed_loci(loadings, program_ids[j])
+  }
+  return(m)
 }

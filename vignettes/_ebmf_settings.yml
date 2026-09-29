@@ -13,7 +13,7 @@
 ebmf_prior: point_laplace
 ebmf_backfit: true
 # Membership only. lFSR no longer gates programs; program validity comes from
-# the loading-permutation coherence null.
+# the size-matched similarity null and the variance-explained strength null.
 ebmf_lfsr_threshold: 0.05
 # Membership only. REVISED BY HPC (swept over 0.3 / 0.5 / 0.75).
 ebmf_magnitude_threshold: 0.5
@@ -34,8 +34,13 @@ include_trans: true
 # Interpretability floor, not a discriminating gate: a 2-SNP program cannot be
 # annotated. Pass rates for this check are ~100% in every study.
 min_module_size: 3
-# Edge threshold for the weighted quorum statistic.
+# Edge threshold for the reported connectedness statistic.
 similarity_threshold: 0.2
-# Loading-permutation coherence null.
-coherence_n_perm: 2000
-coherence_q: 0.05
+# Size-matched similarity null: member SNPs vs random same-size SNP sets.
+# REVISED BY HPC.
+similarity_n_perm: 1000
+similarity_q: 0.05
+# Strength null: factor PVE vs the PVE of factors fitted to row-permuted data.
+# Reported flag only, not a gate (it removed real small programs on the Suzuki
+# T2D benchmark).
+strength_q: 0.05
