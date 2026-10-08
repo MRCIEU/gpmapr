@@ -205,7 +205,7 @@ test_that("evaluate_multitrait_simulation credits recall once per planted progra
   pairs <- data.frame(
     program_id_a = c("9001:1", "9001:2"),
     program_id_b = c("9002:1", "9002:1"),
-    link_tier = "primary",
+    linked = TRUE,
     direction = "concordant",
     stringsAsFactors = FALSE
   )
@@ -228,7 +228,7 @@ test_that("evaluate_multitrait_simulation counts unmatched links as false positi
   )
   pairs <- data.frame(
     program_id_a = "9001:1", program_id_b = "9002:1",
-    link_tier = "primary", direction = "concordant", stringsAsFactors = FALSE
+    linked = TRUE, direction = "concordant", stringsAsFactors = FALSE
   )
   ev <- evaluate_multitrait_simulation(pairs, mapping, sp$ground_truth)
   expect_equal(ev$n_true_positive, 0L)
@@ -246,7 +246,7 @@ test_that("sign accuracy is scored against the planted direction", {
     planted_label = label, score = 1, fold = 10, stringsAsFactors = FALSE
   )
   right <- data.frame(
-    program_id_a = "9001:1", program_id_b = "9002:1", link_tier = "primary",
+    program_id_a = "9001:1", program_id_b = "9002:1", linked = TRUE,
     direction = "antagonistic", stringsAsFactors = FALSE
   )
   wrong <- right
@@ -257,6 +257,16 @@ test_that("sign accuracy is scored against the planted direction", {
   expect_equal(
     evaluate_multitrait_simulation(wrong, mapping, sp$ground_truth)$sign_accuracy, 0
   )
+  # No direction call is not a wrong call.
+  undetermined <- right
+  undetermined$direction <- "undetermined"
+  expect_true(is.na(
+    evaluate_multitrait_simulation(undetermined, mapping, sp$ground_truth)$sign_accuracy
+  ))
+  # A pair that is not linked is not a link.
+  unlinked <- right
+  unlinked$linked <- FALSE
+  expect_equal(evaluate_multitrait_simulation(unlinked, mapping, sp$ground_truth)$n_links, 0L)
 })
 
 test_that("evaluate_multitrait_simulation handles an empty link table", {

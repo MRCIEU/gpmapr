@@ -1,0 +1,1424 @@
+---
+title: "Investigation of univariate analysis: BMI"
+output:
+  rmarkdown::html_vignette:
+    includes:
+      in_header: investigation-wide.html
+vignette: >
+  %\VignetteIndexEntry{Investigation of univariate analysis: BMI}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+params:
+  api: "local"
+  include_trans: true
+  trait_subset: "phenotypic"
+  min_snp_signals: 2
+  min_module_size: 3
+  compress_method: "asinh"
+  compress_scale: 5
+  include_situated_gene: false
+  similarity_threshold: 0.2
+  ebmf_magnitude_threshold: 0.75
+  ebmf_lfsr_threshold: 0.02
+  ebmf_prior: "point_laplace"
+  ebmf_backfit: true
+  n_null: 10
+  alpha_membership: 0.05
+  n_candidate_tier: 25
+  n_rep: 3
+  frac_traits: 0.8
+  stability_top_n: 20
+  posterior_stat: "median"
+  posterior_evidence_cap: 50
+  redundancy_threshold: 0.9
+  cores: 5
+  associations: "coloc"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+```{r libraries}
+pkg_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("devtools", quietly = TRUE)) {
+  devtools::load_all(pkg_root, quiet = TRUE)
+} else {
+  library(gpmapr)
+}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r trait-metadata, include=FALSE}
+api <- params$api
+target_trait_id <- 1992L
+select_api(api)
+target_trait <- trait(target_trait_id, include_associations = TRUE)
+target_trait_name <- target_trait$trait$trait_name
+```
+
+Single-trait SNP program discovery for **`r target_trait_name`** (trait id
+`r target_trait_id`). Each column of the matrix is a BMI GWAS SNP and each row
+a background study. Profiles are oriented to the BMI-raising allele,
+compressed, and factorised with empirical Bayes matrix factorization (EBMF)
+into overlapping programs. Each program then gets a confidence tier (high,
+medium or low) from a size-matched similarity test and connectedness.
+
+BMI loci have a strong shared direction: almost every BMI-raising allele also
+raises weight, fat mass, fat-free mass and other body-size measures. That makes
+two random BMI SNPs look alike, which hides the structure programs are meant to
+capture. This vignette fits and filters the programs two ways to see what
+removing that background changes:
+
+- **Run A: all traits.** Only other GWAS of BMI and obesity diagnoses are
+  removed.
+- **Run B: body-size traits removed.** Run A minus the traits that move with
+  BMI at almost every SNP.
+
+Step 4 compares the two runs' continuous enrichment of trait categories,
+tissues and pathways, and Steps 5–7 interpret both runs' programs side by
+side.
+
+```{r params}
+min_group_size <- 5
+max_snp_fraction <- 0.8
+top_n_traits <- 10L
+min_specificity <- 1.25
+
+# Shared analysis settings come from vignettes/_ebmf_settings.yml so the
+# simulation, null-simulation, univariate and multi-trait studies cannot drift
+# apart; anything supplied in params (e.g. by the HPC grid scripts) wins.
+ebmf_settings <- resolve_ebmf_settings(params)
+settings_signature <- ebmf_settings_signature(ebmf_settings)
+
+trait_subset <- ebmf_settings$trait_subset
+min_module_size <- as.integer(ebmf_settings$min_module_size)
+min_snp_signals <- as.integer(ebmf_settings$min_snp_signals)
+compress_method <- ebmf_settings$compress_method
+compress_scale <- as.numeric(ebmf_settings$compress_scale)
+include_trans <- isTRUE(ebmf_settings$include_trans)
+include_situated_gene <- isTRUE(params$include_situated_gene)
+similarity_threshold <- as.numeric(ebmf_settings$similarity_threshold)
+ebmf_lfsr_threshold <- as.numeric(ebmf_settings$ebmf_lfsr_threshold)
+ebmf_prior <- ebmf_settings$ebmf_prior
+ebmf_backfit <- isTRUE(ebmf_settings$ebmf_backfit)
+ebmf_magnitude_threshold <- as.numeric(
+  ebmf_settings$ebmf_magnitude_threshold
+)
+similarity_n_perm <- as.integer(ebmf_settings$similarity_n_perm)
+similarity_q_threshold <- as.numeric(ebmf_settings$similarity_q)
+high_similarity_q <- as.numeric(ebmf_settings$high_similarity_q)
+high_connectedness <- as.numeric(ebmf_settings$high_connectedness)
+min_effective_traits <- as.numeric(ebmf_settings$min_effective_traits)
+ebmf_greedy_Kmax <- as.integer(ebmf_settings$ebmf_greedy_Kmax)
+associations <- params$associations
+n_null <- as.integer(params$n_null)
+alpha_membership <- as.numeric(params$alpha_membership)
+n_candidate_tier <- as.integer(params$n_candidate_tier)
+n_rep <- as.integer(params$n_rep)
+frac_traits <- as.numeric(params$frac_traits)
+stability_top_n <- as.integer(params$stability_top_n)
+posterior_stat <- params$posterior_stat
+posterior_evidence_cap <- as.numeric(params$posterior_evidence_cap)
+redundancy_threshold <- as.numeric(params$redundancy_threshold)
+cores <- as.integer(params$cores)
+
+knitr::kable(
+  data.frame(
+    api = api,
+    gpmap_url = getOption("gpmap_url"),
+    min_snp_signals = min_snp_signals,
+    trait_subset = trait_subset,
+    compress_method = compress_method,
+    compress_scale = compress_scale,
+    include_trans = include_trans,
+    include_situated_gene = include_situated_gene,
+    min_specificity = min_specificity,
+    similarity_threshold = similarity_threshold,
+    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
+    ebmf_prior = ebmf_prior,
+    ebmf_backfit = ebmf_backfit,
+    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
+    n_null = n_null,
+    alpha_membership = alpha_membership,
+    n_candidate_tier = n_candidate_tier,
+    n_rep = n_rep,
+    frac_traits = frac_traits,
+    stability_top_n = stability_top_n,
+    posterior_stat = posterior_stat,
+    posterior_evidence_cap = posterior_evidence_cap,
+    similarity_n_perm = similarity_n_perm,
+    similarity_q = similarity_q_threshold,
+    high_similarity_q = high_similarity_q,
+    high_connectedness = high_connectedness,
+    min_effective_traits = min_effective_traits,
+    ebmf_greedy_Kmax = ebmf_greedy_Kmax,
+    redundancy_threshold = redundancy_threshold,
+    cores = cores,
+    associations = associations,
+    stringsAsFactors = FALSE
+  ),
+  caption = "Active run parameters",
+  row.names = FALSE
+)
+```
+
+## Step 1: Traits removed
+
+### BMI proxies (both runs)
+
+Other GWAS of BMI, and diagnoses defined by BMI, repeat the anchor trait at
+every SNP. They add no information about mechanism and are removed in both
+runs.
+
+```{r bmi-proxies}
+bmi_proxy_traits <- data.frame(
+  trait_id = c("3748", "2477", "2333", "3338"),
+  trait_name = c(
+    "Body mass index (BMI)",
+    "Body mass index (UKB data field 21001)",
+    "Obesity",
+    "Diagnoses - secondary ICD10: E66.9 Obesity, unspecified"
+  ),
+  reason = c("BMI GWAS", "BMI GWAS", "Defined by BMI", "Defined by BMI"),
+  stringsAsFactors = FALSE
+)
+
+proxy_counts <- target_trait$coloc_groups |>
+  dplyr::mutate(trait_id = as.character(trait_id)) |>
+  dplyr::filter(trait_id %in% bmi_proxy_traits$trait_id) |>
+  dplyr::group_by(trait_id) |>
+  dplyr::summarise(n_coloc_groups = dplyr::n_distinct(coloc_group_id), .groups = "drop")
+
+knitr::kable(
+  bmi_proxy_traits |>
+    dplyr::left_join(proxy_counts, by = "trait_id") |>
+    dplyr::mutate(n_coloc_groups = tidyr::replace_na(n_coloc_groups, 0L)),
+  caption = "BMI proxy traits removed in every run. n_coloc_groups = BMI coloc groups each trait shares.",
+  row.names = FALSE
+)
+
+coloc_groups_all <- target_trait$coloc_groups |>
+  dplyr::filter(!as.character(trait_id) %in% bmi_proxy_traits$trait_id)
+if (!include_trans && "cis_trans" %in% names(coloc_groups_all)) {
+  coloc_groups_all <- coloc_groups_all |>
+    dplyr::filter(is.na(cis_trans) | tolower(cis_trans) != "trans")
+}
+```
+
+### Body-size traits (removed in Run B)
+
+The list below was drawn up from the BMI coloc partners with a rule:
+anthropometric or body-composition traits observed at 10 or more BMI SNPs
+whose effect has the same sign at 80% or more of them after orienting to the
+BMI-raising allele (positive, or negative as for impedance). These traits move
+with BMI almost everywhere. Waist-hip ratio and waist-to-hip ratio adjusted for
+BMI also meet the rule but are kept, because fat distribution is what separates
+obesity sub-programs. Height, sitting height and appendicular lean mass do not
+meet the rule and are kept. The table shows each listed trait's concordance in
+the current data.
+
+```{r body-size-traits}
+body_size_trait_ids <- c(
+  "4241", "4400", "4286", "3584", "3699", "3090", "3775", "3759", "4503",
+  "3342", "2581", "2623", "3613", "3814", "2006", "2624", "1481", "3395",
+  "3499", "3424", "3084", "3242", "3744", "4472", "3709", "3265", "3143",
+  "3448", "3743", "3219", "4303", "3693", "3516", "4532", "4353", "4053",
+  "3992", "4423", "3827", "2465"
+)
+
+# Concordance of each listed trait with BMI in the current data: the share of
+# its observed effects that are positive at the BMI-raising allele.
+bmi_rows <- coloc_groups_all |>
+  dplyr::filter(as.character(trait_id) == as.character(target_trait_id)) |>
+  dplyr::filter(!is.na(beta), !is.na(se), se > 0) |>
+  dplyr::group_by(coloc_group_id) |>
+  dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
+  dplyr::ungroup() |>
+  dplyr::transmute(coloc_group_id, bmi_sign = sign(beta))
+body_size_concordance <- coloc_groups_all |>
+  dplyr::mutate(trait_id = as.character(trait_id)) |>
+  dplyr::filter(trait_id %in% body_size_trait_ids, !is.na(beta)) |>
+  dplyr::inner_join(bmi_rows, by = "coloc_group_id") |>
+  dplyr::group_by(trait_id, trait_name) |>
+  dplyr::summarise(
+    n_coloc_groups = dplyr::n_distinct(coloc_group_id),
+    pct_positive_at_bmi_raising = round(100 * mean(sign(beta) == bmi_sign)),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(dplyr::desc(n_coloc_groups))
+
+knitr::kable(
+  body_size_concordance,
+  caption = paste0(
+    "Body-size traits removed in Run B (", length(body_size_trait_ids), " traits). ",
+    "pct_positive_at_bmi_raising near 100 (or near 0) means the trait moves with ",
+    "(or against) BMI at almost every shared locus."
+  ),
+  row.names = FALSE
+)
+
+coloc_groups_cut <- coloc_groups_all |>
+  dplyr::filter(!as.character(trait_id) %in% body_size_trait_ids)
+```
+
+## Step 2: Two runs
+
+Each run builds the pleiotropy matrix from its trait set, factorises it with
+EBMF (`run_univariate_clustering()`), and scores the programs
+(`summarise_ebmf_programs()`) at the shared settings. Programs with fewer than
+`min_module_size` member SNPs are dropped before any check.
+
+A program's **confidence tier** comes from a similarity test and
+connectedness. `S` is the cosine similarity between two SNPs' oriented,
+compressed trait profiles (missing cells counted as 0, the BMI row left out).
+
+- **similarity_q** — the mean `S` between member SNPs is compared with
+  `similarity_n_perm` random groups of the same number of SNPs from the same
+  run; `similarity_q` is the BH-adjusted share of random groups at least as
+  similar. It is a significance test, so larger programs pass more easily, and
+  the run's background similarity sets how hard it is to pass.
+- **connectedness** — share of member pairs with `S >= similarity_threshold`.
+
+- **low** — `similarity_q >= similarity_q`: the member SNPs are no more alike
+  than random SNP groups of the same size. This is checked first, so a program
+  that fails it is low whatever its number of traits, and can be set aside.
+- **single_trait** — passes the similarity test, but the program's trait
+  loadings rest on fewer than `min_effective_traits` effective traits
+  (`effective_n_traits`). A program is defined as multi-trait: a factor
+  carried by one trait is just that trait's hits, which noise produces too,
+  so it needs a closer look rather than being discarded. Near-duplicate traits
+  each count, so a program spread over several body-size traits is not
+  flagged.
+- **high** — `similarity_q < high_similarity_q` and `connectedness >=
+  high_connectedness`.
+- **medium** — `similarity_q < similarity_q`, but not high.
+
+`excess_similarity` and `excess_connectedness` (each minus its value in the
+random groups: effect sizes that do not grow with program size), factor strength
+(`factor_pve`) and trait-subsampling `replication` are reported but do not
+affect the tier. A program whose SNPs are at least 90% contained in a larger
+program's loci is listed under it as a child.
+
+```{r two-runs}
+run_bmi_analysis <- function(label, coloc_groups) {
+  set.seed(20240214)
+  fit <- run_univariate_clustering(
+    list(trait = list(id = target_trait_id), coloc_groups = coloc_groups),
+    target_trait_id = target_trait_id,
+    associations = associations,
+    trait_subset = trait_subset,
+    include_trans = include_trans,
+    min_snp_signals = min_snp_signals,
+    max_snp_fraction = max_snp_fraction,
+    compress_method = compress_method,
+    compress_scale = compress_scale,
+    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
+    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
+    ebmf_greedy_Kmax = ebmf_greedy_Kmax,
+    ebmf_prior = ebmf_prior,
+    ebmf_backfit = ebmf_backfit,
+    min_module_size = min_module_size
+  )
+  summary <- summarise_ebmf_programs(
+    fit,
+    edge_threshold = similarity_threshold,
+    min_module_size = min_module_size,
+    similarity_n_perm = similarity_n_perm,
+    similarity_q_threshold = similarity_q_threshold,
+    high_similarity_q = high_similarity_q,
+    high_min_connectedness = high_connectedness,
+    min_effective_traits = min_effective_traits,
+    n_null = n_null,
+    alpha_membership = alpha_membership,
+    n_candidate_tier = n_candidate_tier,
+    n_rep = n_rep,
+    frac_traits = frac_traits,
+    top_n = stability_top_n,
+    posterior_stat = posterior_stat,
+    posterior_evidence_cap = posterior_evidence_cap,
+    redundancy_threshold = redundancy_threshold,
+    cores = cores,
+    verbose = FALSE
+  )
+  return(list(
+    label = label,
+    coloc_groups = fit$coloc_groups,
+    fit = fit,
+    summary = summary
+  ))
+}
+
+runs <- list(
+  A = run_bmi_analysis("A: all traits", coloc_groups_all),
+  B = run_bmi_analysis("B: body-size traits removed", coloc_groups_cut)
+)
+```
+
+### Comparison
+
+The **background** columns describe each run's matrix before any program is
+found. `background_mean_S` is the mean similarity over all pairs of BMI SNPs and
+`background_edge_rate` the share of pairs with `S >= similarity_threshold`: how
+alike two random BMI SNPs already are. `median_shared_traits` is how many
+traits two SNPs are typically both observed on, which is how much evidence each
+similarity rests on. A high background makes every program look coherent and
+shrinks the excess that real structure can show.
+
+```{r comparison}
+comparison <- dplyr::bind_rows(lapply(runs, function(r) {
+  p <- r$summary$programs
+  bg <- r$summary$background
+  X_run <- r$fit$x_matrix
+  return(data.frame(
+    run = r$label,
+    n_traits = nrow(X_run),
+    n_snps = ncol(X_run),
+    fraction_observed = round(mean(!is.na(X_run)), 4),
+    background_mean_S = round(bg$mean_similarity, 3),
+    background_edge_rate = round(bg$frac_pairs_edge, 3),
+    median_shared_traits = bg$median_shared_traits,
+    n_programs = nrow(p),
+    n_dropped_small = nrow(r$summary$dropped_programs),
+    n_high = sum(p$confidence_tier == "high"),
+    n_medium = sum(p$confidence_tier == "medium"),
+    n_single_trait = sum(p$confidence_tier == "single_trait"),
+    n_low = sum(p$confidence_tier == "low"),
+    median_excess_similarity = round(stats::median(p$excess_similarity, na.rm = TRUE), 3),
+    median_excess_connectedness = round(stats::median(p$excess_connectedness, na.rm = TRUE), 3),
+    stringsAsFactors = FALSE
+  ))
+}))
+knitr::kable(
+  comparison,
+  caption = paste0(
+    "The two runs side by side. n_programs counts programs with at least ",
+    "min_module_size member SNPs; n_dropped_small those removed below it."
+  ),
+  row.names = FALSE
+)
+```
+
+## Step 3: Programs per run
+
+Programs are listed by tier (green high, orange medium, grey single trait,
+red low), each child indented under its parent.
+
+```{r program-tables, results = "asis"}
+for (run_id in names(runs)) {
+  r <- runs[[run_id]]
+  cat("\n\n### Run ", r$label, "\n\n", sep = "")
+  print(kable_confidence(
+    r$summary$programs |>
+      dplyr::transmute(
+        program = program_label,
+        confidence_tier = as.character(confidence_tier),
+        n_snps_filtered,
+        effective_n_traits = round(effective_n_traits, 2),
+        mean_internal_similarity = round(mean_internal_similarity, 3),
+        excess_similarity = round(excess_similarity, 3),
+        connectedness = round(connectedness, 3),
+        excess_connectedness = round(excess_connectedness, 3),
+        similarity_q = signif(similarity_q, 3),
+        factor_pve_pct = round(100 * factor_pve, 2),
+        replication = round(replication, 2),
+        parent_program
+      ),
+    caption = paste0(
+      "Run ", r$label, ": programs by confidence tier. factor_pve_pct is the % ",
+      "of matrix variance the factor explains; similarity_q, factor_pve_pct and ",
+      "replication are reported, not used for the tier."
+    )
+  ))
+}
+```
+
+## Step 4: Continuous enrichment, Run A vs Run B
+
+Each run's high- and medium-confidence programs are annotated with
+**continuous loading-based enrichment** of trait categories, tissues and
+pathways (KEGG and Reactome, on the colocalising QTL genes). There is no
+membership cutoff: every SNP with a finite EBMF loading contributes to every
+program's test, weighted by its squared loading, in the regression
+`lm(loading^2 ~ membership)` against each annotation's 0/1 indicator
+(`enrich_program_loadings_trait_categories()`,
+`enrich_program_loadings_tissues()`, `enrich_program_loadings_pathways()`).
+A hit needs both FDR ≤ 0.05 and R² ≥ 0.05. The FDR is computed within each
+run, across every program tested, separately for categories, tissues and
+pathways (KEGG and Reactome pooled). R² is the share of a program's
+squared-loading variance the annotation explains; 0.05 sits between Cohen's
+"small" (0.01) and "medium" (0.09).
+
+Each run is a separate factorisation, so program numbers do not carry over:
+A3 and B3 are unrelated. The heatmap first matches programs across runs by the
+overlap of their member SNPs.
+
+```{r run-enrichment}
+min_r_squared <- 0.05
+enrichment_types <- c("trait category", "tissue", "Reactome", "KEGG")
+
+pathway_mapping_universe <- tryCatch(
+  pathway_mappings(),
+  error = function(e) {
+    cat("Pathway mappings endpoint unavailable (", conditionMessage(e), "); ",
+        "skipping continuous pathway enrichment.\n", sep = "")
+    return(NULL)
+  }
+)
+
+valid_programs_of <- function(r) {
+  p <- r$summary$programs
+  return(as.character(p$program[as.character(p$confidence_tier) %in% c("high", "medium")]))
+}
+
+run_continuous_enrichment <- function(r) {
+  return(list(
+    categories = enrich_program_loadings_trait_categories(
+      clustering_result = r$fit,
+      coloc_groups = r$coloc_groups,
+      snp_key = "variant_id"
+    ),
+    tissues = enrich_program_loadings_tissues(
+      clustering_result = r$fit,
+      coloc_groups = r$coloc_groups,
+      snp_key = "variant_id"
+    ),
+    pathways = if (is.null(pathway_mapping_universe)) {
+      NULL
+    } else {
+      enrich_program_loadings_pathways(
+        clustering_result = r$fit,
+        coloc_groups = r$coloc_groups,
+        mappings = pathway_mapping_universe,
+        snp_key = "variant_id",
+        sources = c("KEGG", "Reactome"),
+        include_situated_gene = include_situated_gene
+      )
+    }
+  ))
+}
+for (run_id in names(runs)) {
+  runs[[run_id]]$enrichment <- run_continuous_enrichment(runs[[run_id]])
+}
+
+# Significant hits (FDR <= 0.05 and R2 >= min_r_squared) of one enrichment
+# result, for the run's high- and medium-confidence programs.
+significant_hits <- function(res, run_id, valid, type, value_col, source = NULL) {
+  if (is.null(res)) {
+    return(NULL)
+  }
+  return(dplyr::bind_rows(lapply(res$by_program, function(x) {
+    hits <- x$comparison
+    if (!as.character(x$program) %in% valid || is.null(hits) || nrow(hits) == 0) {
+      return(NULL)
+    }
+    keep <- is.finite(hits$fdr) & hits$fdr <= 0.05 &
+      is.finite(hits$r_squared) & hits$r_squared >= min_r_squared
+    if (!is.null(source)) {
+      keep <- keep & hits$source == source
+    }
+    hits <- hits[keep, , drop = FALSE]
+    if (nrow(hits) == 0) {
+      return(NULL)
+    }
+    return(data.frame(
+      run = run_id,
+      program = as.character(x$program),
+      type = type,
+      annotation = hits[[value_col]],
+      effect = hits$enrichment,
+      r_squared = hits$r_squared,
+      fdr = hits$fdr,
+      stringsAsFactors = FALSE
+    ))
+  })))
+}
+enrichment_hits <- dplyr::bind_rows(lapply(names(runs), function(run_id) {
+  r <- runs[[run_id]]
+  valid <- valid_programs_of(r)
+  e <- r$enrichment
+  return(dplyr::bind_rows(
+    significant_hits(e$categories, run_id, valid, "trait category", "trait_category"),
+    significant_hits(e$tissues, run_id, valid, "tissue", "tissue"),
+    significant_hits(e$pathways, run_id, valid, "Reactome", "description", "Reactome"),
+    significant_hits(e$pathways, run_id, valid, "KEGG", "description", "KEGG")
+  ))
+}))
+```
+
+```{r run-program-match, fig.width = 8, fig.height = 7}
+# Jaccard overlap of member SNPs between every pair of high/medium programs.
+member_sets <- function(run_id) {
+  r <- runs[[run_id]]
+  valid <- valid_programs_of(r)
+  ordered <- order_programs_by_confidence(
+    r$summary$programs[as.character(r$summary$programs$program) %in% valid, , drop = FALSE]
+  )
+  a <- r$summary$assigned
+  sets <- lapply(as.character(ordered$program), function(k) {
+    return(unique(as.character(a$snp_id[as.character(a$program) == k])))
+  })
+  return(stats::setNames(sets, paste0(run_id, ordered$program)))
+}
+sets_a <- member_sets("A")
+sets_b <- member_sets("B")
+if (length(sets_a) == 0 || length(sets_b) == 0) {
+  cat("A run has no high- or medium-confidence programs; skipping the match.\n")
+} else {
+  program_jaccard <- expand.grid(
+    program_a = names(sets_a), program_b = names(sets_b), stringsAsFactors = FALSE
+  )
+  program_jaccard$jaccard <- mapply(function(a, b) {
+    return(length(intersect(sets_a[[a]], sets_b[[b]])) / length(union(sets_a[[a]], sets_b[[b]])))
+  }, program_jaccard$program_a, program_jaccard$program_b)
+  print(
+    program_jaccard |>
+      dplyr::mutate(
+        program_a = factor(program_a, levels = rev(names(sets_a))),
+        program_b = factor(program_b, levels = names(sets_b))
+      ) |>
+      ggplot2::ggplot(ggplot2::aes(x = program_b, y = program_a, fill = jaccard)) +
+      ggplot2::geom_tile(colour = "white") +
+      ggplot2::geom_text(
+        ggplot2::aes(label = ifelse(jaccard >= 0.1, sprintf("%.2f", jaccard), "")),
+        size = 2.6
+      ) +
+      ggplot2::scale_fill_gradient(low = "white", high = "#b2182b", limits = c(0, 1), name = "Jaccard") +
+      ggplot2::labs(
+        title = "Matching programs across runs",
+        subtitle = "Jaccard overlap of member SNPs; high/medium programs in confidence order; labels >= 0.1",
+        x = "Run B program", y = "Run A program"
+      ) +
+      ggplot2::theme_minimal(base_size = 9) +
+      ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5))
+  )
+}
+```
+
+The first table counts, for each enrichment type, the annotations that are
+significant in at least one high- or medium-confidence program of both runs,
+of Run A only, or of Run B only. The second lists every such annotation with
+the programs it is significant in, as `program (effect, R²)`.
+
+```{r run-enrichment-comparison, results = "asis"}
+if (nrow(enrichment_hits) == 0) {
+  cat("No significant continuous enrichment in either run.\n")
+} else {
+  # One run's hits for an annotation, as "A3 (effect, R2)", largest effect first.
+  format_run_hits <- function(run, program, effect, r_squared, which_run) {
+    keep <- run == which_run
+    if (!any(keep)) {
+      return("")
+    }
+    o <- order(-effect[keep])
+    return(paste0(
+      which_run, program[keep][o],
+      " (", signif(effect[keep][o], 2), ", ", signif(r_squared[keep][o], 2), ")",
+      collapse = "<br>"
+    ))
+  }
+  annotation_comparison <- enrichment_hits |>
+    dplyr::group_by(type, annotation) |>
+    dplyr::summarise(
+      run_A = format_run_hits(run, program, effect, r_squared, "A"),
+      run_B = format_run_hits(run, program, effect, r_squared, "B"),
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(
+      found_in = dplyr::case_when(
+        run_A != "" & run_B != "" ~ "both",
+        run_A != "" ~ "A only",
+        TRUE ~ "B only"
+      ),
+      found_in = factor(found_in, levels = c("both", "A only", "B only")),
+      type = factor(type, levels = enrichment_types)
+    ) |>
+    dplyr::arrange(type, found_in, annotation)
+
+  enrichment_summary <- annotation_comparison |>
+    dplyr::count(type, found_in, .drop = FALSE) |>
+    tidyr::pivot_wider(names_from = found_in, values_from = n, values_fill = 0) |>
+    dplyr::left_join(
+      enrichment_hits |>
+        dplyr::group_by(type = factor(type, levels = enrichment_types), run) |>
+        dplyr::summarise(n = dplyr::n_distinct(program), .groups = "drop") |>
+        tidyr::pivot_wider(names_from = run, values_from = n, names_prefix = "programs_with_hit_", values_fill = 0),
+      by = "type"
+    ) |>
+    dplyr::mutate(dplyr::across(dplyr::starts_with("programs_with_hit_"), function(x) return(tidyr::replace_na(x, 0L))))
+  print(knitr::kable(
+    enrichment_summary,
+    caption = paste0(
+      "Significant continuous-enrichment annotations (FDR <= 0.05, R2 >= ",
+      min_r_squared, ") by run. both / A only / B only count annotations; ",
+      "programs_with_hit_A/B count high/medium programs with at least one hit. ",
+      "Run A has ", length(sets_a), " high/medium programs and Run B ", length(sets_b), "."
+    ),
+    row.names = FALSE
+  ))
+
+  comparison_table <- knitr::kable(
+    annotation_comparison |>
+      dplyr::select(type, annotation, found_in, run_A, run_B),
+    format = "html",
+    escape = FALSE,
+    row.names = FALSE,
+    caption = "Every significant annotation and the programs it is significant in, as program (effect, R2)"
+  )
+  if (nrow(annotation_comparison) > 40) {
+    cat("<details><summary>All ", nrow(annotation_comparison),
+        " significant annotations (click to expand)</summary>\n\n", sep = "")
+    print(comparison_table)
+    cat("\n\n</details>\n")
+  } else {
+    print(comparison_table)
+  }
+}
+```
+
+## Step 5: Programs of each run
+
+Steps 5–7 interpret the high- and medium-confidence programs of both runs, one
+after the other, so the runs can be compared directly. The table below
+summarises each run's programs; each run then gets a SNP-similarity heatmap
+and an overlap plot.
+
+```{r interpret-setup}
+# High/medium programs of a run, as one row per (SNP, program) membership.
+run_members <- function(run_id) {
+  r <- runs[[run_id]]
+  valid <- valid_programs_of(r)
+  return(
+    r$summary$assigned |>
+      dplyr::filter(as.character(program) %in% valid) |>
+      dplyr::transmute(snp_id = as.character(snp_id), group = as.character(program)) |>
+      dplyr::distinct()
+  )
+}
+members_by_run <- lapply(stats::setNames(names(runs), names(runs)), run_members)
+
+# Run A's filtered matrix is written out, as before.
+data.table::fwrite(runs$A$fit$x_matrix, file = "pleiotropy_matrix_filtered.csv", row.names = TRUE)
+
+knitr::kable(
+  dplyr::bind_rows(lapply(names(runs), function(run_id) {
+    r <- runs[[run_id]]
+    p <- r$summary$programs
+    n_snps_total <- ncol(r$fit$x_matrix)
+    n_unique_snps_all <- dplyr::n_distinct(r$summary$assigned$snp_id)
+    n_unique_snps_valid <- dplyr::n_distinct(members_by_run[[run_id]]$snp_id)
+    return(data.frame(
+      run = r$label,
+      n_snps = n_snps_total,
+      n_programs = nrow(p),
+      n_high = sum(p$confidence_tier == "high"),
+      n_medium = sum(p$confidence_tier == "medium"),
+      n_children = sum(!is.na(p$parent_program)),
+      n_unique_snps_all = n_unique_snps_all,
+      n_unique_snps_valid = n_unique_snps_valid,
+      pct_of_total_snps_all = round(100 * n_unique_snps_all / n_snps_total, 1),
+      pct_of_total_snps_valid = round(100 * n_unique_snps_valid / n_snps_total, 1),
+      stringsAsFactors = FALSE
+    ))
+  })),
+  caption = paste0(
+    "Programs of each run. n_unique_snps counts each SNP once even when it ",
+    "belongs to several programs (valid = high- and medium-confidence ",
+    "programs); pct_of_total_snps is relative to the run's n_snps."
+  ),
+  row.names = FALSE
+)
+```
+
+**SNP similarity.** `S` between the member SNPs of the valid programs, with
+SNPs ordered by program, so each program should show as a block along the
+diagonal.
+
+**Program overlap.** Because EBMF programs are soft, the same SNP can belong
+to several programs. The UpSet plot shows all valid programs, and for every
+observed intersection how many SNPs are shared by exactly that combination (a
+Venn diagram generalised to any number of programs). The left-hand bar chart
+is each program's size; the dot matrix marks which programs each intersection
+involves.
+
+```{r step5-per-run, results = "asis", fig.height = 7, fig.width = 8}
+plot_similarity_heatmap <- function(run_id) {
+  members <- members_by_run[[run_id]]
+  S_run <- runs[[run_id]]$fit$s_matrix
+  if (nrow(members) < 2) {
+    cat("Fewer than 2 SNPs in valid programs; skipping heatmap.\n\n")
+    return(invisible(NULL))
+  }
+  first_program <- members[!duplicated(members$snp_id), , drop = FALSE]
+  snp_order <- first_program$snp_id[order(as.integer(first_program$group))]
+  snp_order <- intersect(snp_order, rownames(S_run))
+  if (length(snp_order) < 2) {
+    cat("Fewer than 2 valid-program SNPs are in the similarity matrix; skipping heatmap.\n\n")
+    return(invisible(NULL))
+  }
+  heatmap(
+    S_run[snp_order, snp_order, drop = FALSE],
+    Rowv = NA,
+    Colv = NA,
+    scale = "none",
+    main = paste0("SNP similarity, Run ", runs[[run_id]]$label),
+    xlab = "SNPs",
+    ylab = "SNPs"
+  )
+  return(invisible(NULL))
+}
+
+plot_program_overlap <- function(run_id) {
+  members <- members_by_run[[run_id]]
+  n_programs <- dplyr::n_distinct(members$group)
+  if (n_programs < 2) {
+    cat("Fewer than 2 valid programs; skipping the overlap plot.\n\n")
+    return(invisible(NULL))
+  }
+  membership <- members |>
+    dplyr::mutate(value = 1L) |>
+    tidyr::pivot_wider(
+      id_cols = "snp_id",
+      names_from = "group",
+      names_prefix = run_id,
+      values_from = "value",
+      values_fill = 0L
+    )
+  set_order <- names(sort(colSums(membership[, -1, drop = FALSE]), decreasing = TRUE))
+  if (n_programs > 40) {
+    cat("More than 40 programs; showing the 40 largest only.\n\n")
+    set_order <- set_order[seq_len(40)]
+  }
+  plot_ok <- tryCatch({
+    membership_plot <- as.data.frame(membership[, c("snp_id", set_order), drop = FALSE])
+    rownames(membership_plot) <- membership_plot$snp_id
+    membership_plot$snp_id <- NULL
+    print(UpSetR::upset(
+      membership_plot,
+      sets = set_order,
+      order.by = "freq",
+      nsets = length(set_order),
+      nintersects = 100,
+      main.bar.color = "#1b9e77",
+      sets.bar.color = "#7570b3",
+      point.size = 2.6,
+      line.size = 0.6
+    ))
+    TRUE
+  }, error = function(e) {
+    cat("UpSet plot failed (", conditionMessage(e),
+        "); showing pairwise SNP-overlap counts instead.\n\n")
+    return(FALSE)
+  })
+  if (!plot_ok) {
+    sizes <- colSums(membership[, set_order, drop = FALSE])
+    overlaps <- outer(set_order, set_order, Vectorize(function(a, b) {
+      return(sum(membership[[a]] & membership[[b]]))
+    }))
+    dimnames(overlaps) <- list(set_order, set_order)
+    diag(overlaps) <- sizes[set_order]
+    print(knitr::kable(
+      as.data.frame(overlaps),
+      row.names = TRUE,
+      caption = "Pairwise SNP overlap between programs (diagonal = program size)"
+    ))
+  }
+  return(invisible(NULL))
+}
+
+for (run_id in names(runs)) {
+  cat("\n\n### Run ", runs[[run_id]]$label, "\n\n", sep = "")
+  plot_similarity_heatmap(run_id)
+  cat("\n\n")
+  plot_program_overlap(run_id)
+  cat("\n\n")
+}
+```
+
+## Step 6: Module-specific traits and continuous enrichment
+
+One table per run, with one row per high- or medium-confidence program in
+confidence order (green high, orange medium) and each child indented under
+its parent. Program numbers are prefixed with the run (A3, B3), as in Step 4.
+
+- **module_specific_traits:** the background traits most elevated in the
+  program relative to the rest of the BMI SNPs
+  (`summarise_module_specific_traits()`), with
+  `specificity = mean |z| in the program / (mean |z| in the rest + 0.1)` in
+  brackets. Traits need a specificity of at least `r min_specificity`, and
+  the top 6 are listed. This highlights traits specifically elevated in the
+  program rather than merely large everywhere.
+- **n_unique_snps:** member SNPs not in any other high/medium program of the
+  same run.
+- **trait_categories, tissues, reactome, kegg:** the continuous loading-based
+  hits from Step 4 (FDR ≤ 0.05 and R² ≥ 0.05), largest effect first, as
+  `(effect, R², FDR)`.
+
+```{r step6-module-overview, results = "asis"}
+# Step 4 hits of one run and type, collapsed to one cell per program.
+format_hits <- function(run_id, type_name) {
+  hits <- enrichment_hits[enrichment_hits$run == run_id & enrichment_hits$type == type_name, , drop = FALSE]
+  if (nrow(hits) == 0) {
+    return(data.frame(program = character(0), value = character(0)))
+  }
+  return(
+    hits |>
+      dplyr::arrange(program, dplyr::desc(effect)) |>
+      dplyr::group_by(program) |>
+      dplyr::summarise(
+        value = paste0(
+          annotation, " (", signif(effect, 2), ", ", signif(r_squared, 2), ", ",
+          signif(fdr, 3), ")",
+          collapse = "<br>"
+        ),
+        .groups = "drop"
+      )
+  )
+}
+
+module_overview <- function(run_id) {
+  r <- runs[[run_id]]
+  members <- members_by_run[[run_id]]
+  group_traits <- summarise_module_specific_traits(
+    trait_matrix = r$fit$trait_matrix,
+    groups = members,
+    trait_info = r$fit$trait_info,
+    coloc_groups = r$coloc_groups,
+    exclude_trait_ids = target_trait_id,
+    min_group_size = min_module_size,
+    top_n = top_n_traits,
+    n_categories = 3L,
+    min_specificity = min_specificity
+  )
+  specific_traits <- dplyr::bind_rows(lapply(group_traits$by_group, function(x) {
+    passing <- x$traits |>
+      dplyr::filter(passes_min_specificity) |>
+      utils::head(6L)
+    return(data.frame(
+      program = as.character(x$group),
+      module_specific_traits = if (nrow(passing) == 0) {
+        "none"
+      } else {
+        paste0(passing$trait_name, " (", round(passing$specificity, 2), ")", collapse = "<br>")
+      },
+      stringsAsFactors = FALSE
+    ))
+  }))
+  # SNPs that belong to exactly one program: not shared with any other program.
+  snp_group_counts <- dplyr::count(members, snp_id, name = "n_groups")
+  unique_by_group <- members |>
+    dplyr::filter(snp_id %in% snp_group_counts$snp_id[snp_group_counts$n_groups == 1]) |>
+    dplyr::count(program = group, name = "n_unique_snps")
+
+  return(
+    r$summary$programs |>
+      dplyr::filter(as.character(program) %in% valid_programs_of(r)) |>
+      dplyr::transmute(
+        program = as.character(program),
+        confidence_tier = as.character(confidence_tier),
+        similarity_z,
+        n_snps_filtered,
+        parent_program
+      ) |>
+      dplyr::left_join(dplyr::count(members, program = group, name = "n_snps"), by = "program") |>
+      dplyr::left_join(unique_by_group, by = "program") |>
+      dplyr::left_join(specific_traits, by = "program") |>
+      dplyr::left_join(dplyr::rename(format_hits(run_id, "trait category"), trait_categories = value), by = "program") |>
+      dplyr::left_join(dplyr::rename(format_hits(run_id, "tissue"), tissues = value), by = "program") |>
+      dplyr::left_join(dplyr::rename(format_hits(run_id, "Reactome"), reactome = value), by = "program") |>
+      dplyr::left_join(dplyr::rename(format_hits(run_id, "KEGG"), kegg = value), by = "program") |>
+      dplyr::mutate(
+        n_unique_snps = as.integer(tidyr::replace_na(n_unique_snps, 0L)),
+        dplyr::across(
+          c(module_specific_traits, trait_categories, tissues, reactome, kegg),
+          function(x) return(tidyr::replace_na(x, "none"))
+        )
+      ) |>
+      order_programs_by_confidence() |>
+      dplyr::transmute(
+        program = sub("([0-9]+)$", paste0(run_id, "\\1"), program_label),
+        confidence_tier, n_snps, n_unique_snps, module_specific_traits,
+        trait_categories, tissues, reactome, kegg
+      )
+  )
+}
+
+for (run_id in names(runs)) {
+  cat("\n\n### Run ", runs[[run_id]]$label, "\n\n", sep = "")
+  if (nrow(members_by_run[[run_id]]) == 0) {
+    cat("No high- or medium-confidence programs to interpret.\n\n")
+    next
+  }
+  print(kable_confidence(
+    module_overview(run_id),
+    drop_tier_col = TRUE,
+    caption = paste0(
+      "Run ", runs[[run_id]]$label, ": top 6 module-specific traits ",
+      "(specificity) and continuous enrichment hits (effect, R2, FDR) per ",
+      "high/medium program. n_unique_snps = member SNPs in no other program."
+    )
+  ))
+}
+```
+
+## Step 7: Pleiotropy of program-unique vs shared SNPs
+
+Because EBMF programs are soft, a SNP can be assigned to exactly one valid
+program (**unique**) or to several (**shared**). If programs capture distinct
+biological programmes, SNPs that uniquely define a single program should be
+more specific, i.e. carry a lower pleiotropy score (fewer distinct trait
+categories and protein-coding genes via coloc groups) than SNPs whose signal is
+shared across programs. This is tested in each run with
+`get_all_variant_pleiotropies()`.
+
+Gene pleiotropy has a long tail: most SNPs reach 1–4 genes, while a few reach
+hundreds. The y-axis is therefore on a **pseudo-log scale**, which is linear
+near 0 and logarithmic above it, so the bulk of SNPs stays readable and the
+tail is squashed rather than cut off. Boxes and medians are unaffected by the
+scale; the diamond marks each group's mean.
+
+```{r step7-unique-vs-shared-pleiotropy, results = "asis", fig.width = 9, fig.height = 7, out.width = "100%"}
+variant_pleiotropy <- get_all_variant_pleiotropies() |>
+  dplyr::mutate(variant_id = as.character(variant_id)) |>
+  dplyr::select(variant_id, distinct_trait_categories, distinct_protein_coding_genes)
+
+pleio <- dplyr::bind_rows(lapply(names(runs), function(run_id) {
+  members <- members_by_run[[run_id]]
+  if (nrow(members) == 0) {
+    return(NULL)
+  }
+  return(
+    members |>
+      dplyr::count(snp_id, name = "n_programs") |>
+      dplyr::mutate(
+        run = runs[[run_id]]$label,
+        membership_class = dplyr::if_else(n_programs == 1, "unique", "shared")
+      )
+  )
+})) |>
+  dplyr::left_join(variant_pleiotropy, by = c("snp_id" = "variant_id")) |>
+  tidyr::pivot_longer(
+    c(distinct_trait_categories, distinct_protein_coding_genes),
+    names_to = "metric",
+    values_to = "pleiotropy"
+  ) |>
+  dplyr::mutate(
+    metric = dplyr::if_else(
+      metric == "distinct_trait_categories",
+      "trait-category pleiotropy (distinct categories per SNP)",
+      "gene pleiotropy (distinct genes per SNP)"
+    ),
+    membership_class = factor(membership_class, levels = c("unique", "shared"))
+  )
+
+if (nrow(pleio) == 0) {
+  cat("No valid programs to classify SNPs.\n")
+} else {
+  tests <- pleio |>
+    dplyr::group_by(run, metric) |>
+    dplyr::summarise(
+      wilcoxon_p = tryCatch(
+        signif(stats::wilcox.test(pleiotropy ~ membership_class)$p.value, 3),
+        error = function(e) return(NA_real_)
+      ),
+      .groups = "drop"
+    )
+  print(knitr::kable(
+    pleio |>
+      dplyr::group_by(run, metric, membership_class) |>
+      dplyr::summarise(
+        n_snps = sum(!is.na(pleiotropy)),
+        mean_pleiotropy = round(mean(pleiotropy, na.rm = TRUE), 2),
+        median_pleiotropy = round(stats::median(pleiotropy, na.rm = TRUE), 2),
+        max_pleiotropy = max(pleiotropy, na.rm = TRUE),
+        .groups = "drop"
+      ) |>
+      dplyr::left_join(tests, by = c("run", "metric")),
+    row.names = FALSE,
+    caption = paste0(
+      "Pleiotropy of program-unique vs shared SNPs of the valid programs, by ",
+      "run. wilcoxon_p compares unique with shared SNPs within each run and ",
+      "metric (Wilcoxon rank-sum test)."
+    )
+  ))
+
+  # Means on the original scale: stat_summary() would average the
+  # pseudo-log-transformed values instead.
+  pleio_means <- pleio |>
+    dplyr::group_by(run, metric, membership_class) |>
+    dplyr::summarise(pleiotropy = mean(pleiotropy, na.rm = TRUE), .groups = "drop")
+  print(
+    ggplot2::ggplot(
+      pleio |> dplyr::filter(!is.na(pleiotropy)),
+      ggplot2::aes(x = membership_class, y = pleiotropy, fill = membership_class)
+    ) +
+      ggplot2::geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+      ggplot2::geom_jitter(width = 0.15, height = 0, alpha = 0.35, size = 0.8) +
+      ggplot2::geom_point(data = pleio_means, shape = 23, size = 3, fill = "white") +
+      ggplot2::facet_grid(metric ~ run, scales = "free_y") +
+      ggplot2::scale_y_continuous(
+        transform = "pseudo_log",
+        breaks = c(0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000)
+      ) +
+      ggplot2::scale_fill_manual(values = c(unique = "#1b9e77", shared = "#7570b3")) +
+      ggplot2::labs(
+        title = "Pleiotropy of program-unique vs shared SNPs",
+        subtitle = paste0(
+          "unique = in exactly one valid program; shared = in >= 2. ",
+          "Pseudo-log y-axis; diamond = mean"
+        ),
+        x = NULL,
+        y = "pleiotropy score"
+      ) +
+      ggplot2::theme_minimal() +
+      ggplot2::theme(legend.position = "none")
+  )
+}
+```
+
+## Why the body-size traits change the results so much
+
+Run B drops `r length(body_size_trait_ids)` of Run A's
+`r nrow(runs$A$fit$x_matrix) - 1L` background traits, yet the two runs
+disagree on almost everything: how alike two random BMI SNPs look,
+which programs pass, and whether any program has tissue or pathway
+enrichment. That other BMI GWASes have to go is expected, since they repeat
+the anchor trait at nearly every SNP. That the body-size traits matter as much
+is less obvious, because weight, fat mass or hip circumference each have GWAS
+hits that BMI does not share.
+
+In short, at BMI's own SNPs the body-size traits are close to being BMI
+measured again, and there are forty of them. Three things act together, and
+the table puts numbers on each.
+
+```{r body-size-weight}
+# Run A's oriented, compressed matrix (BMI row left out), split into the
+# body-size traits and the rest.
+x_a <- runs$A$fit$x_star
+bmi_id <- as.character(target_trait_id)
+z_bmi <- runs$A$fit$x_matrix[bmi_id, ]
+background_ids <- setdiff(rownames(x_a), bmi_id)
+body_ids <- intersect(background_ids, body_size_trait_ids)
+other_ids <- setdiff(background_ids, body_ids)
+# The other traits observed at the most BMI SNPs, as many as there are
+# body-size traits, for a like-for-like comparison of the two set-level checks.
+dense_other_ids <- other_ids[
+  order(-rowSums(!is.na(x_a[other_ids, , drop = FALSE])))
+][seq_along(body_ids)]
+trait_names <- stats::setNames(
+  as.character(runs$A$fit$trait_info$trait_name),
+  as.character(runs$A$fit$trait_info$trait_id)
+)
+
+n_observed_per_snp <- function(ids) {
+  return(colSums(!is.na(x_a[ids, , drop = FALSE])))
+}
+# Share of a trait set's signal on its first component, missing cells as 0
+# (as in S).
+first_component_share <- function(ids) {
+  m <- x_a[ids, , drop = FALSE]
+  m[is.na(m)] <- 0
+  d <- svd(m, nu = 0, nv = 0)$d
+  return(d[1]^2 / sum(d^2))
+}
+# Median correlation between two traits over the BMI SNPs both are observed at.
+median_trait_correlation <- function(ids) {
+  r <- suppressWarnings(
+    stats::cor(t(x_a[ids, , drop = FALSE]), use = "pairwise.complete.obs")
+  )
+  return(stats::median(r[upper.tri(r)], na.rm = TRUE))
+}
+# Mean S between BMI SNPs on these traits alone, computed as in Step 2.
+mean_similarity_on <- function(ids) {
+  s <- withCallingHandlers(
+    snp_similarity_matrix(x_a[ids, , drop = FALSE]),
+    warning = function(w) {
+      if (grepl("zero norm", conditionMessage(w), fixed = TRUE)) {
+        invokeRestart("muffleWarning")
+      }
+    }
+  )
+  return(.similarity_background(
+    s$s_matrix, s$overlap_matrix, similarity_threshold
+  )$mean_similarity)
+}
+
+n_body_per_snp <- n_observed_per_snp(body_ids)
+n_other_per_snp <- n_observed_per_snp(other_ids)
+cells <- rowSums(!is.na(x_a[background_ids, , drop = FALSE]))
+sum_sq <- rowSums(x_a[background_ids, , drop = FALSE]^2, na.rm = TRUE)
+height_ids <- intersect(
+  names(trait_names)[trait_names %in% c("Height", "Standing height")],
+  background_ids
+)
+height_pct_positive <- vapply(height_ids, function(i) {
+  return(100 * mean(x_a[i, ] > 0, na.rm = TRUE))
+}, numeric(1))
+
+# How much of Run A's factorisation rests on the body-size traits.
+flash_a <- runs$A$fit$cluster_details$flash_fit
+loadings_a <- flash_a$L_pm[background_ids, , drop = FALSE]
+body_share_of <- function(k) {
+  l2 <- loadings_a[, k]^2
+  return(sum(l2[body_ids]) / sum(l2))
+}
+body_factor <- vapply(seq_len(flash_a$n_factors), body_share_of, numeric(1)) > 0.5
+programs_a <- runs$A$summary$programs |>
+  dplyr::filter(as.character(program) %in% valid_programs_of(runs$A)) |>
+  order_programs_by_confidence()
+body_size_programs <- dplyr::bind_rows(lapply(seq_len(nrow(programs_a)), function(i) {
+  k <- as.integer(as.character(programs_a$program[i]))
+  snps <- members_by_run$A$snp_id[members_by_run$A$group == as.character(k)]
+  top <- names(sort(abs(loadings_a[, k]), decreasing = TRUE))[1:3]
+  return(data.frame(
+    program = sub("([0-9]+)$", "A\\1", programs_a$program_label[i]),
+    confidence_tier = as.character(programs_a$confidence_tier[i]),
+    n_snps = length(snps),
+    body_size_share = 100 * body_share_of(k),
+    top_traits = paste(trait_names[top], collapse = "<br>"),
+    body_size_traits_per_snp = stats::median(n_body_per_snp[snps], na.rm = TRUE),
+    bmi_abs_z = round(stats::median(abs(z_bmi[snps]), na.rm = TRUE), 1),
+    stringsAsFactors = FALSE
+  ))
+}))
+
+n_hits <- function(run_id, types) {
+  if (nrow(enrichment_hits) == 0) {
+    return(0L)
+  }
+  return(dplyr::n_distinct(
+    enrichment_hits$annotation[enrichment_hits$run == run_id & enrichment_hits$type %in% types]
+  ))
+}
+coverage <- function(run_id) {
+  return(100 * dplyr::n_distinct(members_by_run[[run_id]]$snp_id) / ncol(runs[[run_id]]$fit$x_matrix))
+}
+concordance_pct <- body_size_concordance$pct_positive_at_bmi_raising
+comparison_a <- comparison[comparison$run == runs$A$label, , drop = FALSE]
+
+bs <- list(
+  n_body = length(body_ids),
+  n_background = length(background_ids),
+  n_snps = ncol(x_a),
+  pct_rows = 100 * length(body_ids) / length(background_ids),
+  pct_cells = 100 * sum(cells[body_ids]) / sum(cells),
+  pct_sum_sq = 100 * sum(sum_sq[body_ids]) / sum(sum_sq),
+  snps_with_body = sum(n_body_per_snp > 0),
+  median_body_per_snp = stats::median(n_body_per_snp),
+  min_concordance = min(pmax(concordance_pct, 100 - concordance_pct)),
+  rho_body = stats::cor(n_body_per_snp, abs(z_bmi), method = "spearman"),
+  rho_other = stats::cor(n_other_per_snp, abs(z_bmi), method = "spearman"),
+  cor_body = median_trait_correlation(body_ids),
+  pc1_body = 100 * first_component_share(body_ids),
+  pc1_dense_other = 100 * first_component_share(dense_other_ids),
+  s_body = mean_similarity_on(body_ids),
+  s_all = mean_similarity_on(background_ids),
+  s_other = mean_similarity_on(other_ids),
+  excess_a = comparison_a$median_excess_similarity,
+  n_low_a = comparison_a$n_low,
+  n_programs_a = comparison_a$n_programs,
+  n_factors = flash_a$n_factors,
+  n_body_factors = sum(body_factor),
+  pve_body = 100 * sum(flash_a$pve[body_factor]),
+  pve_all = 100 * sum(flash_a$pve),
+  n_valid_a = nrow(body_size_programs),
+  n_valid_a_body = sum(body_size_programs$body_size_share >= 90),
+  n_tissue_pathway_a = n_hits("A", c("tissue", "Reactome", "KEGG")),
+  n_reactome_b = n_hits("B", "Reactome"),
+  n_kegg_b = n_hits("B", "KEGG"),
+  height_pct_min = min(height_pct_positive),
+  height_pct_max = max(height_pct_positive),
+  empty_without_body = sum(n_other_per_snp == 0),
+  coverage_a = coverage("A"),
+  coverage_b = coverage("B")
+)
+
+knitr::kable(
+  data.frame(
+    measure = c(
+      "Background traits",
+      "Share of the matrix's observed cells",
+      "Share of the matrix's sum of squares",
+      "Mean |value| of an observed cell",
+      "BMI SNPs where at least one is observed",
+      "Traits observed at a typical BMI SNP (median)",
+      "Rank correlation of that number with BMI's own |z|",
+      "Median correlation between two of the traits, over SNPs both are observed at *",
+      "Share of the traits' signal in their first component *",
+      "Mean S between BMI SNPs, on these traits alone"
+    ),
+    body_size_traits = c(
+      bs$n_body,
+      sprintf("%.0f%%", bs$pct_cells),
+      sprintf("%.0f%%", bs$pct_sum_sq),
+      sprintf("%.1f", mean(abs(x_a[body_ids, ]), na.rm = TRUE)),
+      bs$snps_with_body,
+      bs$median_body_per_snp,
+      sprintf("%.2f", bs$rho_body),
+      sprintf("%.2f", bs$cor_body),
+      sprintf("%.0f%%", bs$pc1_body),
+      sprintf("%.3f", bs$s_body)
+    ),
+    other_traits = c(
+      length(other_ids),
+      sprintf("%.0f%%", 100 - bs$pct_cells),
+      sprintf("%.0f%%", 100 - bs$pct_sum_sq),
+      sprintf("%.1f", mean(abs(x_a[other_ids, ]), na.rm = TRUE)),
+      sum(n_other_per_snp > 0),
+      stats::median(n_other_per_snp),
+      sprintf("%.2f", bs$rho_other),
+      sprintf("%.2f", median_trait_correlation(dense_other_ids)),
+      sprintf("%.0f%%", bs$pc1_dense_other),
+      sprintf("%.3f", bs$s_other)
+    ),
+    stringsAsFactors = FALSE
+  ),
+  caption = paste0(
+    "The ", bs$n_body, " body-size traits against the rest of Run A's background ",
+    "traits, on Run A's oriented, compressed matrix (BMI row left out). ",
+    "* other traits: the ", bs$n_body, " observed at the most BMI SNPs, for a ",
+    "like-for-like comparison."
+  ),
+  row.names = FALSE
+)
+```
+
+**The matrix only sees BMI's SNPs.** Its columns are BMI SNPs, so a
+background trait enters only through its effects at those SNPs. Whether a
+body-size trait shares BMI's hits genome-wide does not matter: its hits
+elsewhere never reach the matrix. At BMI's SNPs the body-size traits are
+almost everywhere. At least one of them is observed at
+`r bs$snps_with_body` of the `r bs$n_snps` SNPs, and
+`r bs$median_body_per_snp` at a typical one. Step 1 shows each moving with
+BMI at `r bs$min_concordance`–100% of the SNPs it shares (impedance moves
+against it, just as consistently).
+
+**At those SNPs they are BMI measured again.** BMI is weight over height
+squared, weight is fat mass plus fat-free mass, and waist and hip are girths
+of the same body. A variant that raises BMI raises these as part of the same
+change in the body, not through a separate route. The data say the same:
+
+- Two body-size traits typically correlate at
+  `r sprintf("%.2f", bs$cor_body)` across the BMI SNPs they share.
+- One component carries `r round(bs$pc1_body)`% of their combined signal,
+  against `r round(bs$pc1_dense_other)`% for a matched set of other traits.
+- How many of them reach significance at a SNP follows the strength of BMI's
+  own signal there: the rank correlation with BMI's |z| is
+  `r sprintf("%.2f", bs$rho_body)`, against
+  `r sprintf("%.2f", bs$rho_other)` for the other traits.
+
+Many are literally one measurement. 29 of the 40 come from UK Biobank's
+bioimpedance measurement in the same 455,000 or so people: fat mass, fat
+percentage, fat-free mass, predicted mass and impedance of each arm, each leg,
+the trunk and the whole body, with left and right limbs as separate traits.
+Waist and hip circumference each appear twice, from two analyses of the same
+UK Biobank measurement.
+
+**And there are forty of them.** One extra BMI-like trait would add little.
+Forty count the same measurement forty times, both in `S` and in
+the factorisation. In Run A the body-size traits are
+`r round(bs$pct_rows, 1)`% of the background traits but hold
+`r round(bs$pct_cells)`% of the observed cells and
+`r round(bs$pct_sum_sq)`% of the sum of squares. That is not because their
+values are larger (an observed cell is no larger on average than another
+trait's) but because they are observed at so many SNPs. EBMF fits only the
+observed cells, so about two-thirds of what it fits in Run A is body size.
+The BMI GWASes removed from both runs (Step 1) are the same problem in its
+purest form; the body-size traits are forty slightly weaker copies of it.
+
+**What this does to Run A.**
+
+- **Random BMI SNPs already look alike.** `S` is a cosine over traits, so
+  two SNPs that both carry a few body-size traits share several large entries
+  of the same sign and look alike whatever else they do. On the body-size
+  traits alone, the mean `S` between two BMI SNPs is
+  `r sprintf("%.3f", bs$s_body)`, against `r sprintf("%.3f", bs$s_all)` on
+  all of Run A's traits and `r sprintf("%.3f", bs$s_other)` without them.
+  The confidence tier's similarity test compares each program with random
+  groups of BMI SNPs, and in Run A those random groups already look alike, so
+  real structure has little room to stand out. Run A's median excess similarity is
+  `r bs$excess_a`, and `r bs$n_low_a` of its `r bs$n_programs_a` programs are
+  low.
+- **The factorisation spends itself on body size.** Of Run A's
+  `r bs$n_factors` factors, the `r bs$n_body_factors` that put most of their
+  trait loading on body-size traits explain `r round(bs$pve_body, 1)`% of the
+  matrix variance, out of `r round(bs$pve_all, 1)`% for all factors together.
+  In the table below, `r bs$n_valid_a_body` of Run A's `r bs$n_valid_a` high-
+  and medium-confidence programs put 90% or more of their trait loading on
+  body-size traits. Most draw on SNPs that carry more body-size traits than a
+  typical BMI SNP, which are the stronger BMI signals.
+
+```{r body-size-programs, results = "asis"}
+print(kable_confidence(
+  dplyr::bind_rows(
+    data.frame(
+      program = "all BMI SNPs", confidence_tier = "background", n_snps = bs$n_snps,
+      body_size_share = "", top_traits = "",
+      body_size_traits_per_snp = stats::median(n_body_per_snp),
+      bmi_abs_z = round(stats::median(abs(z_bmi)), 1),
+      stringsAsFactors = FALSE
+    ),
+    body_size_programs |>
+      dplyr::mutate(body_size_share = sprintf("%.0f%%", body_size_share))
+  ),
+  drop_tier_col = TRUE,
+  caption = paste0(
+    "Run A's high- and medium-confidence programs. body_size_share = share of ",
+    "the program's squared trait loadings (BMI row left out) on body-size ",
+    "traits; top_traits = its three largest trait loadings; ",
+    "body_size_traits_per_snp and bmi_abs_z = medians over its member SNPs. ",
+    "The first row is the same over all BMI SNPs."
+  )
+))
+```
+
+These programs are not noise. They split BMI SNPs by which body measures move
+most (`top_traits`), which is real biology. But it is variation within body
+size, carried by forty near-copies of one measurement, and it says little
+about mechanism. Run A's programs have `r bs$n_tissue_pathway_a` tissue or
+pathway hits between them; Run B's have `r bs$n_reactome_b` Reactome and
+`r bs$n_kegg_b` KEGG hits. Traits that BMI itself moves, such as cholesterol
+and glucose, probably act the same way in weaker form: they reach
+significance more often at the strongest BMI SNPs, which would explain why
+they top Step 6's specific traits for Run A's two largest programs.
+
+**It is not body size as such.** Height, sitting height and appendicular lean
+mass are body measurements too, and were kept. At BMI SNPs they go both ways:
+the two height GWASes, for example, are positive at the BMI-raising allele at
+`r round(bs$height_pct_min)`–`r round(bs$height_pct_max)`% of the SNPs they
+share, close to an even split. So they separate BMI SNPs rather than make them alike, and height
+shows up among the specific traits of Run B's programs. The problem is a
+trait that moves with the anchor trait at almost every SNP; for BMI, the
+body-size traits are the large family that does.
+
+**What removing them costs.** `r bs$empty_without_body` of the
+`r bs$n_snps` BMI SNPs have no observation outside the body-size traits. In
+Run B their profile is empty and they cannot join any program. That is why
+Run B's valid programs cover `r round(bs$coverage_b, 1)`% of the SNPs (Run A:
+`r round(bs$coverage_a, 1)`%), and why two SNPs in Run B typically share no
+observed trait at all. So Run B is not a clean answer either: it describes the
+SNPs that have something to say beyond body size, and is silent about the
+rest. It also gives up any body-composition biology (fat against lean mass,
+fat distribution) that only the removed traits carried.
+
+**What this says about the method.** The similarity tests and the
+factorisation both weigh a phenotype by how many times the database happens
+to measure it. Neither can tell a re-measurement of the anchor trait from an
+independent trait that shares its SNPs. Any anchor with a large family of
+close, consistently signed measurements will behave this way: glycaemic
+traits and diabetes definitions for type 2 diabetes, or other lipid fractions
+for a lipid trait. Which traits count as the anchor measured again is
+therefore a decision made before the factorisation, here by the rule in
+Step 1, and this vignette shows how much rests on it.

@@ -7,46 +7,70 @@
 build_program_families(
   result,
   program_info = NULL,
-  fdr_threshold = 0.05,
-  rule = c("reciprocal_best_match", "components")
+  rule = c("communities", "components"),
+  seed = 1,
+  program_data = NULL,
+  mutual_best = FALSE
 )
 }
 \arguments{
-\item{result}{Either a result from \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}} or its
-\code{pairs} data.frame.}
+\item{result}{A result from \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}}.}
 
-\item{program_info}{Optional data.frame with \code{program_id} and \code{trait_id}
-(one row per program). Defaults to the programs appearing in \code{result}.}
+\item{program_info}{Optional data.frame with \code{program_id}, \code{trait_id} and
+\code{trait_name} (one row per program), used to fill in trait names.}
 
-\item{fdr_threshold}{FDR at or below which a \code{"components"} edge is kept.
-Defaults to \code{0.05}.}
+\item{rule}{Family rule: \code{"communities"} (default) or \code{"components"}.}
 
-\item{rule}{Edge rule: \code{"reciprocal_best_match"} (default) or \code{"components"}.}
+\item{seed}{RNG seed for the community detection.}
+
+\item{program_data}{Optional extraction result(s) from
+\code{\link[=extract_program_loadings]{extract_program_loadings()}}, needed for the family locus sets.}
+
+\item{mutual_best}{If \code{TRUE}, keep only links that are each program's
+highest-\verb{|phi_traits|} link to the other program's trait. Defaults to
+\code{FALSE}.}
 }
 \value{
 A list with:
 \itemize{
-\item nodes: one row per program with \code{program_id}, \code{trait_id},
-\code{trait_name} (when available), and \code{family}
+\item nodes: one row per linked program with \code{program_id}, \code{trait_id},
+\code{trait_name} and \code{family}
 \item families: one row per family with \code{family}, \code{n_programs},
-\code{n_traits}, \code{traits}, \code{n_edges}, \code{mean_locus_concordance},
-\code{median_locus_concordance}, \code{mean_concordance_z}, \code{n_concordant},
-\code{n_antagonistic}, and \code{n_shared_loci}
-\item graph: an \code{igraph} object (or \code{NULL} when there are no edges)
-\item edges: the pair table used as edges (after the chosen rule)
+\code{n_traits}, \code{traits}, \code{n_edges}, \code{mean_phi}, \code{n_tier_high},
+\code{n_tier_medium},
+\code{n_rg_concordant}, \code{n_rg_antagonistic}, \code{n_rg_undetermined} (edges by
+\code{\link[=module_rg]{module_rg()}} direction; links with no estimate count in none), and
+\code{n_core_loci} (claimed by every member) and \code{n_union_loci} (by any
+member)
+\item family_loci: one row per family x locus with \code{family}, \code{locus},
+\code{n_programs}, \code{n_traits}, \code{programs}, \code{traits} and \code{snp_ids}
+\item edges: the linked pairs, with the \code{\link[=module_rg]{module_rg()}} columns joined on
+\item graph: an \code{igraph} object (or \code{NULL} when there are no links)
+\item modularity: modularity of the family partition
+\item n_unlinked: number of programs with no link
 }
 }
 \description{
-Turn a calibrated program-correspondence result into multi-trait
-program families. Programs are nodes and correspondence edges are drawn from
-\code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}}.
+Turn a program-correspondence result into multi-trait program
+families. Programs are nodes and the \code{linked} pairs from
+\code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}} are edges; programs with no link are left
+out (their count is returned as \code{n_unlinked}).
 
-By default (\code{rule = "reciprocal_best_match"}) an edge is used only when it is
-the mutual best match of two significant programs, i.e. the calibrated
-\code{shared} flag (the primary link tier), so families are one-to-one
-correspondences rather than transitive chains. \code{rule = "components"} instead
-uses every pair whose pair-level \code{q_concordance <= fdr_threshold} (the
-candidate tier as well as the primary one), giving the more permissive,
-transitive connected-components behaviour. Isolated programs form their own
-size-1 family.
+By default (\code{rule = "communities"}) families are the communities of the
+link graph found by Louvain modularity optimisation
+(\code{\link[igraph:cluster_louvain]{igraph::cluster_louvain()}}), with each edge weighted by its profile
+congruence \verb{|phi_traits|}. Plain connected components (\code{rule = "components"})
+chain through any shared partner: on real data a few dozen links between
+four traits joined most programs into one component, while their
+communities were well separated. Louvain is randomised, so \code{seed} fixes it.
+
+With \code{mutual_best = TRUE} a link is kept only when each of its two programs
+is the other's closest partner (highest \verb{|phi_traits|}) among the linked
+programs of the other's trait, so a program keeps at most one partner per
+other trait and a family tends to hold one program per trait.
+
+When \code{program_data} is supplied, each family is also described by the loci
+its programs claim as high-confidence members, on one locus id space across
+traits (an uploaded GWAS trait's own \code{coloc_group_id}s are translated through
+\code{result$bridges}, see \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}}).
 }

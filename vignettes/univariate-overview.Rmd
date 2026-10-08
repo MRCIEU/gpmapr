@@ -1,0 +1,831 @@
+---
+title: "SNP biological clustering"
+output:
+  rmarkdown::html_vignette:
+    includes:
+      in_header: investigation-wide.html
+vignette: >
+  %\VignetteIndexEntry{SNP biological clustering}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+## Goal
+
+Take a **single trait** and decompose its genetic architecture by grouping SNPs
+according to their phenome-wide pleiotropic profiles.
+
+The central question is: **within one trait, what distinct biological programs
+are represented by its associated SNPs?**
+
+The output is a set of SNP programs (latent factors), each annotated with
+background traits, trait categories, tissues and pathways. The runnable
+implementation is
+[Investigation of univariate analysis](investigation-univariate-analysis.html),
+and [Suzuki T2D](investigation-suzuki-t2d.html) benchmarks the programs against
+a published clustering of type 2 diabetes loci. The same single-trait programs
+are also the input to a **multi-trait** analysis that links the programs of
+different traits when they are driven by the same background traits and,
+where the traits share loci, carried by the same SNPs (Step 6 below, and
+[Multi-trait programs](investigation-multitrait-programs.html)).
+
+Background traits stay at **study level**. Molecular QTL studies are not
+collapsed by gene, tissue, cis/trans, or QTL type.
+
+### Core clustering preferences
+
+The grouping method should satisfy:
+
+1. **Handles high sparsity** — Must natively process large, sparse matrices
+   (thousands of singleton feature rows) without treating structural zeros as
+   low-variance signal. EBMF does this by leaving missing cells out of the fit
+   (`flashier` skips `NA`); we additionally limit sparsity with a hard threshold
+   on the number of non-missing SNPs per trait (`min_snp_signals`).
+2. **Signed and sign-driven clustering** — Must preserve the meaning of
+   continuous positive/negative z-scores so variants group by **directional
+   alignment**, not magnitude alone. We orient every SNP column by
+   \(\mathrm{sign}(z_{\mathrm{target}})\) before factorization.
+3. **Automated \(K\) discovery** — The engine should learn the number of
+   clusters or latent factors from the data. EBMF adds factors greedily while
+   the variational lower bound (ELBO) improves, then backfits; filtering the
+   resulting factors by an lFSR/magnitude membership gate and by the
+   validation checks below controls the final program count.
+4. **Overlapping membership** — A SNP can belong to more than one biological
+   program. EBMF produces soft factor loadings, so membership is per-SNP-per-
+   program rather than a single hard label.
+
+```{r workflow-diagram, echo=FALSE, fig.height=8, fig.width=8}
+workflow_dot <- "
+digraph workflow {
+  graph [rankdir=TB bgcolor=transparent fontname=Helvetica nodesep=0.35 ranksep=0.45]
+  node [shape=box style=filled fontname=Helvetica fontsize=10 margin=0.12
+        fillcolor=\"#e1f5fe\" color=\"#01579b\"]
+  S1 [label=\"1. Pleiotropy matrix\\n(study-level rows x SNPs)\\nremove target proxies and near-duplicate traits\"]
+  S2 [label=\"2. Orient by sign(z_target)\\noptional asinh compression\"]
+  S3 [label=\"3. EBMF factorization Y = L F^T + E\\nlFSR + magnitude membership gate\"]
+  S4 [label=\"4. Confidence tier\\nsimilarity vs random SNP sets, then trait breadth, then connectedness\"]
+  S5 [label=\"5. Interpret high/medium programs\\nmodule-specific traits, continuous enrichment\"]
+  S1 -> S2 -> S3 -> S4 -> S5
+}
+"
+if (requireNamespace("DiagrammeR", quietly = TRUE)) {
+  DiagrammeR::grViz(workflow_dot)
+}
+```
+
+## Steps
+
+The investigation vignettes take their settings from
+`vignettes/_ebmf_settings.yml`, so the simulation, null-simulation, univariate
+and multi-trait studies cannot drift apart. The values quoted below are the
+ones in that file; a vignette parameter supplied at render time overrides them.
+The package functions have their own, older defaults, which differ in places.
+
+### 1. Construct the pleiotropy matrix
+
+Given:
+
+- `nsnp` = independent SNPs associated with the target trait (coloc groups)
+- `ntrait` = background studies in GPMap (phenotypic and molecular)
+
+Construct a **traits x SNPs** matrix of signed z-scores (\(z = \beta / \mathrm{SE}\)).
+Conceptually this is a SNP-by-trait profile matrix; the code stores traits as
+rows and SNPs as columns.
+
+```text
+              SNP1   SNP2   SNP3   SNP4   ...
+Trait A        z      z      z      z
+Trait B        z      z      z      z
+Trait C        z      z      z      z
+...
+```
+
+Which rows and columns back this matrix is controlled by these choices:
+
+- **`include_trans`** — whether trans-QTL association rows
+  (`cis_trans == "trans"`) are kept. Including them (canonical setting) can
+  surface distributed regulatory programs at the cost of density and noise;
+  excluding them keeps the analysis cis-focused.
+- **`trait_subset`** — `"all"` keeps every available background trait;
+  `"phenotypic"` (canonical) keeps only phenotype traits (rows whose
+  `feature_type` is `"phenotypic"` or missing) plus the target trait, dropping
+  molecular / gene-annotated rows. Molecular traits are much sparser, so
+  clustering on phenotype traits only can recover structure that sparse
+  molecular rows dilute.
+- **`min_snp_signals`** — rows observed in fewer than this many SNPs are
+  dropped (canonical 2); ubiquitous rows (non-missing on more than
+  `max_snp_fraction` of SNPs) are dropped too. The target trait row is always
+  kept.
+- **Duplicate traits** — other GWAS of the target trait, and background traits
+  that repeat one another, are removed by hand before the matrix is built. This
+  is the most consequential choice of the five; it has its own section below.
+
+#### Removing duplicate traits
+
+GPMap often holds several GWAS of the same trait, and many traits that are
+near-copies of each other at a given trait's loci. Two kinds matter.
+
+**Duplicates of the anchor trait.** Other GWAS of the target trait, and traits
+defined by it, repeat the target row at every SNP. For BMI these are the other
+BMI GWAS and obesity diagnoses; for T2D, the other T2D GWAS, diabetes
+diagnoses, diabetes medication, family history and complications (see the
+"T2D proxy traits" section of [Suzuki T2D](investigation-suzuki-t2d.html)).
+After orientation each of them is positive at almost every SNP, so it adds the
+same component to every SNP's profile. The target row itself is left out of
+`S` for exactly this reason (Step 4), and a proxy left in the matrix brings the
+problem back. Proxies also give EBMF extra weight to spend on small
+differences between near-identical rows.
+
+**Duplicates within the background.** Two cases:
+
+- **The same trait measured several ways.** For example, a consortium GWAS and
+  the UK Biobank data field of the same trait, or the SPA- and Firth-corrected
+  versions of one UK Biobank binary trait. In the Suzuki T2D analysis the top
+  module-specific traits of one program were "High blood pressure (UKB data
+  field 6150)" twice, once with each correction.
+- **Traits that move with the anchor almost everywhere.** For BMI, body-size
+  and body-composition measures (weight, fat mass, fat-free mass, impedance,
+  hip circumference, ...) have the same sign at nearly every BMI SNP.
+
+Either kind makes two random SNPs look alike, because they share the same block
+of near-identical, same-signed rows. That background similarity hides the
+structure programs are meant to capture, and it raises the bar for the
+similarity test, which compares each program with random SNP sets from the
+same matrix (Step 4). Near-duplicates also inflate `effective_n_traits`: each
+copy counts as a separate trait, so a program carried by five versions of one
+trait does not look like a single-trait program.
+
+**Evidence from BMI.**
+[Investigation of univariate analysis](investigation-univariate-analysis.html)
+fits BMI twice. Run A removes only the 4 BMI proxies. Run B also removes 40
+body-size traits, chosen by a rule: anthropometric or body-composition traits
+observed at 10 or more BMI SNPs whose effect has the same sign at 80% or more
+of them after orientation. Waist-hip ratio meets the rule but is kept, because
+fat distribution is what separates obesity sub-programs. At the time of
+writing (local GPMap build):
+
+| | Run A: proxies removed | Run B: + 40 body-size traits removed |
+|---|---|---|
+| Background traits | 719 | 679 |
+| Mean `S` over all SNP pairs | 0.246 | 0.011 |
+| Share of SNP pairs with `S >= 0.2` | 0.51 | 0.035 |
+| High / medium programs | 3 / 2 | 7 / 6 |
+| Low programs | 40 | 17 |
+| Annotations with continuous enrichment (categories / Reactome / KEGG) | 2 / 0 / 0 | 7 / 104 / 48 |
+
+Removing 40 of 719 rows (6%) cut the background similarity more than
+twentyfold, more than doubled the number of usable programs, and is the
+difference between no pathway signal and 152 pathway hits. In Run A, half of
+all random SNP pairs were already "connected", so almost no program could show
+that its SNPs were more alike than chance.
+
+**The cost.** Removing traits also removes observations. In Run B the matrix
+is 1.0% observed against 2.5% in Run A, and the median pair of SNPs shares no
+observed trait (2 in Run A), so many similarities rest on few traits. A
+removed trait can also carry real biology. The aim is to remove the axis every
+SNP shares, and to keep traits that differ between SNPs, such as fat
+distribution.
+
+**Current practice.** The lists are curated by hand for each target trait: a
+search of the target's coloc partners for proxies, and for background
+duplicates a concordance rule like the one above. Neither is automated yet.
+Check the background similarity of every run (`summary$background` from
+`summarise_ebmf_programs()`, shown as `background_mean_S` and
+`background_edge_rate` in the univariate vignette). A high background is the
+signal that duplicates are still in the matrix.
+
+### 2. Orient SNP profiles relative to the target trait
+
+Remove arbitrary allele coding so every column represents increasing target
+liability. For SNP \(j\):
+
+\[
+X^*_{tj} = \mathrm{sign}(z_j)\, X_{tj}
+\]
+
+Optional \(\mathrm{asinh}(z)\) compression (`compress_method = "asinh"`, with
+`compress_scale`; canonical `asinh` at scale 5) then limits the leverage of
+extreme z-scores without a hard clip. `"none"` preserves effect scale but lets
+outliers dominate direction and norm.
+
+The oriented, compressed matrix is what EBMF factorises (stored as
+`ebmf_input`). The returned `x_matrix` holds the raw, un-oriented z-scores;
+use `ebmf_input` whenever profiles must be aligned to the risk allele.
+
+### 3. Fit the EBMF latent-program model
+
+Treat the oriented (and optionally compressed) traits x SNPs matrix as noisy
+observations of latent programs:
+
+\[
+Y = LF^{\top} + E
+\]
+
+- \(Y\) = features x SNPs matrix (traits and molecular QTL studies as rows)
+- \(L\) = feature loadings (which traits drive each program)
+- \(F\) = SNP factors (which SNPs each program loads on)
+- \(E\) = residual error
+
+**Two loading matrices, two kinds of output each.** `flashier` returns
+posterior summaries for both \(L\) and \(F\), and for each matrix it
+separately reports a point estimate and an uncertainty measure. These are
+easy to conflate — both are called "loadings" — but they answer different
+questions about different axes of the model:
+
+| | SNP-loading matrix `F` | trait-loading matrix `L` |
+|---|---|---|
+| point estimate | `F_pm` — posterior mean loading of each SNP on the program | `L_pm` — posterior mean loading of each background trait on the program |
+| uncertainty | `F_lfsr` — local false sign rate: how confident EBMF is in that SNP's sign/nonzero-ness | `L_lfsr` — same, for the trait loadings |
+
+`F_pm`/`F_lfsr` decide SNP membership (the gate just below), and squared
+`F_pm` is the weight each SNP carries in the continuous enrichment of Step 5.
+`L_pm` describes which background traits drive a program; it gives the
+program's `effective_n_traits` (Step 4). Neither feeds the SNP-similarity
+matrix `S`, which is built from the oriented SNP profiles themselves.
+
+Magnitude and lfsr are not the same axis, even within one matrix: magnitude
+(\(|F_{pm}|\)) is how big the point estimate is; lfsr is how much to trust it
+— specifically, the posterior probability that the true sign is the opposite
+of what was estimated. A locus can have a large magnitude and still a high
+lfsr if it is weakly powered: the point estimate looks big, but the posterior
+around it is wide enough that it could easily be near zero or flipped. That
+is why membership gates on both, not magnitude alone.
+
+Implemented via `flashier`: factors are added greedily while the variational
+lower bound improves (up to `ebmf_greedy_Kmax`, canonical 100), then
+cyclically backfit. The number of programs is learned, not fixed. The sparse
+prior on loadings and factors is `ebmf_prior`:
+
+- `"point_laplace"` (canonical) — heavier tails; often better when true
+  effects are large relative to noise.
+- `"point_normal"` — a sparse, spike-and-slab style prior.
+
+**Extracting programs.** A SNP belongs to a program when its posterior factor
+loading is both *significant* and *non-negligible*:
+
+- `lfsr` < `ebmf_lfsr_threshold` (canonical 0.05)
+- `|loading|` > `ebmf_magnitude_threshold` (absolute posterior mean of `F_pm`;
+  canonical 0.5)
+
+Because EBMF is soft, one SNP can pass the gate for several programs
+(overlapping membership). Before extraction, at most one *global* mega-factor
+— a factor that soft-assigns nearly every SNP or explains a large share of PVE
+— is dropped (`ebmf_drop_global = TRUE` via `identify_ebmf_global_factors()`);
+this guards against the "one giant cluster" failure mode. Nothing assumes
+factor 1 is global.
+
+Why EBMF:
+
+- SNPs can belong to multiple programs; biology is overlapping, not mutually
+  exclusive.
+- \(K\) is inferred by the fit (ELBO) rather than by a graph-resolution or
+  edge-threshold parameter.
+- The input is the dense oriented z-score matrix itself, so no information is
+  lost to a pairwise similarity threshold.
+- Missing data are handled probabilistically instead of being zero-filled into
+  similarity edges.
+
+The cost is that factors are not guaranteed to be disjoint SNP modules and can
+capture broad technical/global effects — which is exactly why the validation
+layer in Step 4 exists.
+
+### 4. Validating programs
+
+`run_univariate_clustering()` returns the fit and soft memberships;
+`summarise_ebmf_programs()` folds everything into a per-program table and gives
+each program a **confidence tier**: high, medium, single_trait or low.
+Programs with fewer than `min_module_size` member SNPs (canonical 3) are
+dropped before any check. Programs of high or medium confidence are the
+**valid** programs interpreted downstream.
+
+#### The SNP x SNP similarity matrix
+
+EBMF never sees pairwise SNP similarity — it factorises the traits x SNPs
+matrix directly — but the same oriented (and optionally compressed) SNP
+profiles are used to build the SNP x SNP cosine similarity matrix `S`, which
+backs the similarity test below. Missing cells count as 0. The target row is
+left out: after orientation it is positive at every SNP, so it would add the
+same similarity to every pair. For SNPs \(j\) and \(k\):
+
+\[
+S_{jk} = \frac{{x^*_j}^{\top} x^*_k}{\|x^*_j\|\,\|x^*_k\|}
+\]
+
+- \(+1\) = concordant (parallel) profiles
+- \(0\) = unrelated, or no trait observed at both SNPs
+- \(-1\) = discordant (anti-parallel) profiles
+
+#### What `similarity_q` measures
+
+`similarity_q` asks: **are this program's SNPs more alike than the same number
+of SNPs picked at random from this trait?**
+
+1. **Observed.** `mean_internal_similarity` is the mean of `S` over every pair
+   of the program's \(n\) member SNPs.
+2. **Random sets.** `similarity_n_perm` (canonical 10,000) sets of \(n\) SNPs
+   are drawn at random from the same trait (from the SNPs with a non-zero
+   similarity to at least one other SNP), and the same mean is computed for
+   each. Programs of the same size share one set of draws.
+3. **Empirical p.** `similarity_emp_p` = (1 + number of random sets at least
+   as similar as the program) / (1 + `similarity_n_perm`). With 10,000 sets the
+   smallest possible p is about 0.0001.
+4. **q.** `similarity_q` is the Benjamini-Hochberg adjustment of
+   `similarity_emp_p` across all the trait's kept programs.
+
+Read it as a significance test, not an effect size:
+
+- **It favours larger programs.** The spread of the random-set means shrinks
+  as \(n\) grows, so a 40-SNP program passes with a small margin over random,
+  while a 3-SNP program needs a large one.
+- **It is relative to the trait's own background.** The random sets come from
+  the same matrix, so in a trait where every SNP already looks like every other
+  (BMI with body-size traits left in), random sets are already similar and
+  programs struggle to pass. The test is calibrated within each trait, which is
+  what lets one threshold work across traits of different size, density and
+  background.
+
+#### Confidence tier
+
+The tier is assigned in this order:
+
+1. **low** — `similarity_q >= similarity_q` (canonical 0.05), or no estimate.
+   The member SNPs are no more alike than random SNP sets of the same size.
+   This is checked first, so a program that fails it is low whatever its
+   number of traits, and can be set aside.
+2. **single_trait** — passes the similarity test, but
+   `effective_n_traits < min_effective_traits` (canonical 1.5). A program is
+   defined as multi-trait: a factor carried by one trait is just that trait's
+   hits, which noise produces too, and SNPs that share one trait look coherent
+   to the similarity test whether or not they are real. It needs a closer look
+   rather than being discarded or accepted, so it sorts above low.
+3. **high** — `similarity_q < high_similarity_q` (canonical 0.01) and
+   `connectedness >= high_connectedness` (canonical 0.4).
+4. **medium** — passes the similarity test, but not high.
+
+The quantities behind it:
+
+- **Trait breadth** — `effective_n_traits` is \(1 / \sum_t p_t^2\), where
+  \(p_t\) is trait \(t\)'s squared loading on the program (`L_pm`) as a share
+  of the total (target row left out): 1 for a program on one trait, \(n\) for
+  \(n\) equally loaded traits. Near-duplicate traits each count, which is one
+  more reason to remove them (Step 1).
+- **Connectedness** — the share of member pairs with
+  \(S \ge\) `similarity_threshold` (canonical 0.2; positive similarity only).
+  It asks whether the similarity is spread across the program or carried by a
+  few very similar pairs.
+
+Under a true null, almost every EBMF program rests on one trait (98.5% of null
+programs in a quick run of the
+[null simulation study](investigation-univariate-null-simulations.html)), but
+most fail the similarity test and are therefore `low`. The `single_trait` share
+under the null is how often noise lands in the tier that needs a closer look.
+
+**Reported alongside** (not used for the tier):
+
+- **excess_similarity / excess_connectedness** — `mean_internal_similarity` and
+  `connectedness` minus their means in the random sets. Because the random sets
+  are drawn from the same pool whatever the program's size, their expected mean
+  is the trait's background similarity, so within one run these are the
+  observed values minus a constant. In the Suzuki T2D run the difference was
+  0.030 for every one of 44 programs (SD 0.0002), equal to the background mean
+  `S`, and the two columns correlate perfectly with the unadjusted ones. They add
+  nothing within a run; across runs, the background itself
+  (`summary$background`) says the same thing more directly.
+- **similarity_z** — the program's mean similarity in standard deviations of
+  the random-set means; used to order programs within a tier.
+- **factor_pve** — the share of the matrix variance the factor explains.
+- **replication** — the mean Jaccard overlap between the program's top
+  `top_n` SNPs and the best-matching factor when `1 - frac_traits` of the
+  trait rows are held out and flashier is refit (`n_rep` replicates).
+- **parent_program** — when at least 90% of a program's SNPs sit within
+  500 kb of the SNPs of a larger program, that program is its parent. Nested
+  sub-programs are kept; `order_programs_by_confidence()` lists them under
+  their parent.
+- **posterior_evidence** — aggregate (`median` or `mean`) of `-log10(lfsr)`
+  across the program's assigned SNPs (capped so lFSR underflow does not blow
+  up).
+- **max_abs_factor_corr / redundant** — the maximum absolute correlation of the
+  program's SNP loading vector with any other program; programs exceeding
+  `redundancy_threshold` are flagged `redundant` (near-duplicate factors).
+
+`kable_confidence()` colours program tables by tier (green high, orange
+medium, grey single_trait, red low).
+
+**Permutation calibration (reporting layer).** `calibrate_ebmf_programs()`
+additionally shuffles each trait row independently (`n_null` replicates,
+preserving each trait's sparsity and effect distribution), refits the pipeline,
+and pools the null loading distribution. Each SNP x program loading gets an
+empirical p-value and BH q-value against this null; cells with `q <=
+alpha_membership` are labelled `core`, and the top remaining loadings per
+program form an explicitly uncertified `candidate` tier. This is a membership
+labelling layer, not a program-level validity gate.
+
+### 5. Interpret valid programs
+
+Valid (high or medium) programs are interpreted with two kinds of annotation:
+the background traits that set the program apart, and a **continuous**
+loading-based enrichment of trait categories, tissues and pathways. Both are
+shown together in one table per run in the univariate and Suzuki vignettes.
+
+**Module-specific traits** (`summarise_module_specific_traits()`). For each
+background trait, `specificity = mean |z| in the program / (mean |z| in the
+rest of the trait's SNPs + 0.1)`. Traits are listed if their specificity is at
+least `min_specificity` (1.25 in the vignettes). This picks out traits that
+are elevated in the program in particular, rather than traits that are large
+at every SNP, which ranking by `|z|` alone would over-emphasise.
+
+#### Continuous loading-based enrichment
+
+`enrich_program_loadings_trait_categories()`, `enrich_program_loadings_tissues()`
+and `enrich_program_loadings_pathways()` ask whether a program's SNP loadings
+are larger at SNPs linked to an annotation. There is no membership gate: every
+SNP with a finite EBMF loading contributes to every program's test. For
+program \(k\) and annotation term \(a\) (a trait category, a tissue, or a KEGG
+or Reactome pathway):
+
+- \(y_j = F_{jk}^2\), SNP \(j\)'s squared loading on the program;
+- \(x_j = 1\) if SNP \(j\) is linked to the term, else 0. A SNP is linked to a
+  category or tissue through its coloc rows, and to a pathway through its
+  colocalising QTL genes.
+
+An ordinary least squares regression
+
+\[
+y = \beta_0 + \beta_1 x + \varepsilon
+\]
+
+(`lm(loading^2 ~ membership)`) is fitted for each program and term. The fitted
+\(\beta_1\), the difference in mean squared loading between linked and
+unlinked SNPs, is reported as `enrichment`; its `p` comes from the usual OLS
+\(t\)-test.
+
+Why this replaced the hard-cutoff approach (gate SNPs into a program, then
+test the gated set with a hypergeometric test):
+
+- **No threshold on membership.** The hard-cutoff test depends on the
+  lFSR/magnitude gate: a SNP just below it counts for nothing, one just above
+  counts fully, and a program of 5 gated SNPs has little power whatever its
+  loadings say. The continuous test uses the whole loading vector, weighting
+  each SNP by how strongly it loads.
+- **One correction for the whole trait.** See below.
+
+Details:
+
+- **Soft membership gate** (`min_loading_magnitude`, default 0.02). A linked SNP
+  counts as \(x = 1\) for a program only if its absolute loading on that program
+  exceeds this value; otherwise it is treated as \(x = 0\) for that program's
+  test. This keeps near-zero, shrinkage-only loadings from diluting the
+  contrast. SNPs are never dropped, only relabelled.
+- **Minimum term size** (`min_category_size`, default 5). Terms linked to fewer
+  SNPs are not tested.
+- **Effect size.** `enrichment` is in squared-loading units, so it is not
+  comparable between programs. `r_squared`, the share of the program's
+  squared-loading variance the term explains, is bounded in \([0, 1]\) and
+  comparable. The vignettes require **FDR ≤ 0.05 and R² ≥ 0.05** (between
+  Cohen's "small", 0.01, and "medium", 0.09), and order hits by `enrichment`.
+  FDR alone is not enough: with hundreds of SNPs in every regression, a
+  negligible difference can still be significant. Because the number of SNPs
+  is about the same for every program of a trait, `r_squared` tracks `p`
+  closely; it is a bounded, readable rescaling of the same evidence, not an
+  independent second filter.
+- **Multiple testing.** Each of the three functions Benjamini-Hochberg-corrects
+  across *every* program's tests for that annotation type at once, so `fdr`
+  reflects the number of regressions actually run for the trait. Every
+  fitted EBMF factor is tested, including those below `min_module_size` and
+  those of low confidence, and the vignettes then report the high and medium
+  ones. KEGG and Reactome are pooled into one pathway family; categories,
+  tissues and pathways are three separate families.
+- **SNPs are treated as independent observations.** Nearby SNPs in LD are not
+  independent, so the p-values are optimistic. A formal analysis would
+  aggregate SNPs to genes, or use cluster-robust standard errors or a
+  permutation within LD blocks.
+
+The hard-cutoff functions (`enrich_snp_group_trait_categories()`,
+`enrich_snp_group_tissues()`, `enrich_snp_group_pathways()`) remain in the
+package; the trait-category and tissue versions are still used by
+[Multi-trait programs](investigation-multitrait-programs.html).
+
+#### Comparing runs and benchmarks
+
+- **Runs with different trait sets.** EBMF is refitted for each trait set, so
+  program numbers do not carry over between runs. The univariate vignette
+  matches programs across runs by the Jaccard overlap of their member SNPs,
+  then compares which annotations are significant in both runs or in one only.
+- **Unique vs shared SNPs.** A SNP in exactly one valid program should be more
+  specific (fewer distinct trait categories and genes) than a SNP shared by
+  several. The univariate vignette tests this with
+  `get_all_variant_pleiotropies()`. Gene pleiotropy has a long tail (a median
+  of 1 gene per SNP across GPMap, but a maximum in the thousands), so it is
+  plotted on a pseudo-log axis and read through medians and a rank test rather
+  than means.
+- **External benchmark.** [Suzuki T2D](investigation-suzuki-t2d.html) matches
+  each Suzuki et al. (2024) index SNV to the GPMap SNP in its LD block and
+  compares program and cluster trait profiles, to check whether the programs
+  recover a published clustering.
+
+### 6. Linking programs across traits
+
+Each target trait is decomposed on its own, so a program found for one trait
+and a program found for another are separate objects with arbitrary numbers.
+The multi-trait analysis
+([Multi-trait programs](investigation-multitrait-programs.html), methods in
+[Multi-trait correspondence](investigation-multitrait-correspondence.html))
+asks of every pair of programs from two traits whether they describe the
+same biology, using both matrices of Step 3.
+
+**Same biology? — profile congruence.** A program's trait profile (`L_pm`)
+says which background traits drive it and how strongly. The two programs'
+profiles are compared with Tucker's congruence coefficient, an uncentred
+correlation:
+
+\[
+\phi = \frac{\sum_t \tilde l_a(t)\, \tilde l_b(t)}
+{\sqrt{\sum_t \tilde l_a(t)^2 \sum_t \tilde l_b(t)^2}},
+\qquad \tilde l = l \cdot (1 - 2\,\text{lfsr})_+
+\]
+
+- **Which traits are compared.** Each trait's matrix has its own rows, so the
+  sum runs over the background traits **both** fits carry, leaving out the
+  two anchor traits (each is positive at every SNP in its own fit but an
+  ordinary row in the other) and any trait removed from either fit as a proxy
+  (Step 1). On real data this left 550–660 traits per pair of traits.
+- **No magnitude cutoff.** Every trait loading counts, in proportion to its
+  size and its confidence: the weight \((1 - 2\,\text{lfsr})_+\) is 0 for a
+  loading whose sign is a coin flip and 1 for a certain one.
+- **The sign is a direction.** Each trait's SNPs are oriented to its own risk
+  allele (Step 2), so a module that raises one trait and lowers the other
+  appears in the second trait's fit with every background trait mirrored:
+  \(\phi < 0\) is an antagonistic program, \(\phi > 0\) a concordant one.
+- **How many traits carry it** (`n_eff_traits`, the participation ratio of
+  the per-trait contributions) is reported: a congruence carried by one or two
+  traits is a narrower claim than one carried by dozens.
+
+**Same SNPs? — locus alignment.** Where the two traits were fine-mapped to the
+same loci (`coloc_group_id`; an uploaded GWAS is bridged by its own coloc
+record, variant and LD), the programs' SNP loadings (`F_pm`) are compared
+directly: `alignment` is the R² between the two loading vectors over the
+shared loci, with the same confidence weights and no magnitude cutoff. Loci
+only one trait carries cannot agree or disagree, so they are left out, and
+`comparability` reports how much of each program they leave out. Two traits
+typically share only 5–30% of their loci, so the locus check confirms a
+profile match where it can rather than deciding it. Its result
+(`locus_status`) is `too_few_loci` when the pair shares fewer than 3
+high-confidence loci or fewer than 5 loci effectively carry it; otherwise
+`agree` when `alignment >= 0.5` and a permutation test of the
+loading-weighted concordance passes (BH across all pairs), and `disagree`
+when either fails.
+
+**Tiers.** The two are combined: a strong profile (\(\lvert\phi\rvert \ge
+0.85\)) is **high** when the loci agree, **medium** when there are too few
+loci to check, and **low** when the loci disagree; a moderate profile
+(\(0.70 \le \lvert\phi\rvert < 0.85\)) is medium only when the loci
+agree. The full table, and what each measure checks, is in
+[Multi-trait EBMF program correspondence](multitrait-overview.html).
+
+High and medium pairs are **links**; links are grouped into multi-trait
+**families** by community detection, and each family's SNPs, pooled per
+trait, are annotated with trait categories, tissues and pathways as in
+Step 5, so that agreement across traits is independent support. The cutoffs
+follow Tucker's conventions for factor similarity (0.85 "fair similarity",
+0.95 "equal"), which were set for psychometric factors, not genetic loadings,
+so they are parameters to tune against the observed distributions. A link's
+direction is the sign of \(\phi\); where enough loci are shared,
+`module_rg()`, the correlation of the two traits' own allele effects across
+the program's loci, checks it (`direction_check`) without changing the tier.
+
+## Variables to consider
+
+Parameters fall into three groups: the **EBMF clustering parameters** that
+control matrix construction and membership, the **program validation
+parameters** that set the confidence tier, and the **continuous enrichment
+parameters**. "Canonical" values are those in `vignettes/_ebmf_settings.yml`.
+
+### EBMF clustering parameters
+
+| Parameter | Canonical | Values | Explanation |
+|---|---|---|---|
+| Duplicate-trait removal | by hand, per trait | proxies only; proxies + near-duplicates | The most consequential choice (Step 1). Leaving duplicates in inflates background similarity, which hides programs and makes the similarity test hard to pass; removing them also removes observations. |
+| `include_trans` | `TRUE` | `TRUE`, `FALSE` | Including trans effects can reveal distributed regulatory programs and improve tissue/pathway interpretation, while increasing density and possible noise. Excluding them gives a more local cis-focused analysis but may miss system-level mechanisms. |
+| `trait_subset` | `phenotypic` | `all`, `phenotypic` | `phenotypic` drops sparse molecular / gene-annotated rows (keeping the target trait), recovering structure that sparse molecular rows dilute but losing QTL-level signal. `all` keeps every available background trait at the cost of extra sparsity. |
+| `min_snp_signals` | `2` | `1`, `2`, `3`, `5` | Raising it removes singleton or very sparse rows, reducing unstable factors and computation. It can also remove rare, module-specific biology. Lowering it preserves those signals but makes factorization more sensitive to sparse observations. |
+| `compress_method` / `compress_scale` | `asinh` / `5` | `asinh`, `none` | `asinh` is nearly linear around zero but compresses extreme values, so factors reflect patterns across several traits rather than one very large z-score. `none` preserves effect scale but allows outliers to dominate direction and norm. |
+| `ebmf_lfsr_threshold` | `0.05` | `0.02`, `0.05`, `0.1` | Lowering it keeps only SNPs whose program loading has very strong posterior sign evidence, shrinking and sharpening programs. Raising it adds borderline memberships. |
+| `ebmf_magnitude_threshold` | `0.5` | `0.25`, `0.5`, `0.75`, `NA` | Raising it keeps only SNPs with substantial program loadings. `NA` gates membership on lFSR alone. |
+| `ebmf_prior` | `point_laplace` | `point_normal`, `point_laplace` | `point_laplace` has heavier tails and is often better when true effects are large relative to noise; `point_normal` is a spike-and-slab style prior. |
+
+### Program validation parameters
+
+| Parameter | Canonical | Meaning | Explanation |
+|---|---|---|---|
+| `min_module_size` | `3` | Minimum member SNPs | Programs below it are dropped before any check: a 2-SNP program cannot be annotated. |
+| `similarity_n_perm` | `10000` | Random same-size SNP sets for the similarity test | Sets the smallest possible p (about 1 / `similarity_n_perm`), so it must be large enough for `high_similarity_q` to be reachable. |
+| `similarity_q` | `0.05` | BH q below which a program passes the similarity test | Failing it makes a program `low`, whatever its traits. |
+| `min_effective_traits` | `1.5` | Effective number of traits below which a program that passes the similarity test is `single_trait` | A program resting on one trait's hits needs a closer look before being treated as a program. |
+| `high_similarity_q` | `0.01` | BH q threshold for high confidence | Together with `high_connectedness`. |
+| `high_connectedness` | `0.4` | Minimum connectedness for high confidence | Share of member pairs with `S` at or above `similarity_threshold`. |
+| `similarity_threshold` | `0.2` | Edge cutoff for connectedness | Connectedness counts member pairs with `S >= similarity_threshold` (positive similarity only). Also used for the background edge rate. |
+| `redundancy_threshold` | `0.9` | Factor-loading correlation above which a program is flagged `redundant` | A flag for near-duplicate factors; redundant programs are not removed. |
+
+The confidence tier therefore rests on `min_module_size`, `similarity_q`,
+`min_effective_traits`, `high_similarity_q` and `high_connectedness`, on top of
+the membership gates `ebmf_lfsr_threshold` and `ebmf_magnitude_threshold`.
+`excess_*`, `similarity_z`, `factor_pve`, `replication`, `parent_program`,
+`posterior_evidence` and `max_abs_factor_corr`/`redundant` are reported
+descriptively.
+
+### Continuous enrichment parameters
+
+| Parameter | Values | Meaning | Explanation |
+|---|---|---|---|
+| `min_category_size` | `5` (default) | Minimum linked SNPs for a term to be tested | Below this, a term is skipped rather than tested on too few SNPs to fit a stable regression. |
+| `min_loading_magnitude` | `0.02` (default), `0` | Soft membership gate on `x = 1` | `0` counts every linked SNP as a member. Raising it relabels linked SNPs with negligible loadings on this program to `x = 0` for that program's test only. SNPs are never dropped. |
+| `r_squared` floor (applied in the vignettes) | `0.01` (Cohen small), `0.05`, `0.09` (Cohen medium) | Minimum variance explained for a hit, on top of `FDR <= 0.05` | `enrichment` is not comparable across programs, so the fixed cutoff is applied to `r_squared`. The vignettes use `0.05`. |
+
+## Verification Strategy
+
+Two complementary checks verify that the pipeline produces reliable, meaningful
+programs: **simulation**, where the ground truth is planted and exactly known,
+and an **external benchmark**, where real GPMap data is compared against an
+independent, published clustering whose "ground truth" is itself one
+algorithm's answer on one trait panel, not certain. Simulation controls what
+real data cannot — exactly which SNPs belong to which module; the external
+benchmark supplies what simulation cannot — real trait duplication, real
+sample-size imbalance between studies, real LD, and a result from independent
+data and an independent method to agree or disagree with. A pipeline that only
+passes simulations might still fail on real data's mess; a pipeline that only
+matches one published partition might be overfit to it. The two checks are
+read together, not as a single pass/fail.
+
+### Simulation
+
+The simulation plan — null simulations (hallucination), module simulations
+(recovery) and multi-trait simulations (correspondence) — is described in
+[Simulation overview](simulations-overview.html).
+
+### External benchmark: Suzuki et al. (2024) T2D clusters
+
+[Suzuki T2D](investigation-suzuki-t2d.html) runs the full pipeline above on a
+type 2 diabetes GWAS and compares the resulting programs with a published,
+independently derived partition of T2D loci: Suzuki *et al.* (2024) clustered
+1,289 T2D index SNVs into 8 mechanistic groups (Obesity, Lipodystrophy,
+Metabolic syndrome, two beta-cell clusters, Residual glycaemic, Body fat,
+Liver/lipid metabolism) by k-means over each SNV's standardised associations
+with 37 cardiometabolic traits. Nothing about this partition comes from
+gpmapr: different trait panel (their 37 traits vs. whatever colocalises with
+the T2D upload in GPMap), different population (their multi-ancestry
+meta-regression vs. GPMap's EUR fine-mapping), different algorithm (hard
+k-means vs. soft EBMF), different unit (a single index SNV vs. a GPMap SNP
+that may represent a different, correlated variant at the same locus). Getting
+the comparison right is as much about **bridging two separate ID spaces**
+as it is about the statistics on either side of the bridge.
+
+**Why this can't be one clustering-comparison statistic.** The module
+simulations ([Simulation overview](simulations-overview.html)) score recovery with the adjusted Rand index because the
+planted partition and the recovered programs live over the *same* set of
+SNPs, so every item can be looked up in both at once. Suzuki's SNVs and
+GPMap's SNPs are not the same set: they come from independent fine-mapping of
+different data, so the two partitions share no common index to compare
+directly. The comparison therefore has to go through several independent
+lines of evidence, each of which turns one half of the mismatch into
+something comparable, rather than through a single number.
+
+**Bridging SNPs to SNVs.** Suzuki's index SNV and GPMap's lead variant at the
+same locus are usually different variants, but GPMap already treats
+colocalisation within an **LD block** as "the same signal", so that is the
+unit the match is made in: each Suzuki SNV is placed in the LD block of its
+GRCh38 position, and matched to the nearest pleiotropy-matrix SNP in that
+block. A SNV with no upload signal in its block, or one that colocalises with
+too few traits to enter the matrix at all, cannot be matched and says so
+explicitly rather than being silently dropped. Several SNVs, sometimes from
+different clusters, can land on the same matrix SNP (one locus held more than
+one Suzuki signal); each matched SNP then contributes a weight of 1, split
+evenly across the SNVs it matches, so one promiscuous SNP cannot inflate every
+cluster it touches.
+
+**Is a program's cluster mix more than chance? (the SNV enrichment test.)**
+Once a program's member SNPs are matched to Suzuki SNVs, the question is
+whether their cluster composition differs from what matched SNPs look like
+overall — the same *is this more than a random draw* logic as
+`similarity_q` (Step 4), applied to cluster labels instead of SNP similarity:
+
+1. **Observed.** For program \(k\) and cluster \(c\), the weighted count of
+   \(k\)'s matched member SNPs labelled \(c\).
+2. **Background.** The same count's share over *every* matched SNP in the
+   matrix — what a program with no preference for any cluster would show.
+3. **Enrichment.** The program's share of cluster \(c\) divided by the
+   background share: a fold change, the effect size. It says *which* cluster
+   and *how much*, but not how sure.
+4. **Permutation p.** 2,000 random sets of matched SNPs, of the program's
+   size, drawn from the same matched pool; `p` is the share of random sets
+   whose count for cluster \(c\) is at least the program's. This asks *how
+   sure*, holding the program's size and the pool fixed, exactly as the
+   similarity-test null does.
+5. **q.** Benjamini-Hochberg over every program × cluster cell, because a
+   program with 8 clusters and dozens of programs tested means hundreds of
+   tests, most of which should show nothing.
+
+Enrichment and q are the same two-axis split used throughout this document
+(`similarity_lift`/`similarity_z` vs `similarity_q`; `enrichment` vs `fdr` in
+continuous enrichment): a large fold change with a weak q is not evidence, and
+a significant q on a tiny fold change is not a strong claim either. A
+`top_cluster` is only named when the program has at least 2 matched SNPs — below
+that the permutation test has essentially no power to say anything.
+
+**Does a program's trait profile look like a cluster's? (profile cosine.)**
+Suzuki also publish each cluster's own mean profile over the 37 clustering
+traits (`beta / se`, their Supplementary Table 7). A program's profile is the
+mean of its member SNPs' rows in the same (oriented, asinh-compressed) matrix
+EBMF factorises, restricted to the Suzuki traits GPMap actually has (4a). The
+two profiles are **not on the same scale** — compressed colocalisation
+z-scores against the z of a published cluster mean — so only their *pattern*
+across traits is compared, not the size of either: the cosine between them,
+1 for the same pattern of signs and relative sizes, 0 for unrelated, -1 for
+opposite. This is the same reasoning as the SNP-similarity matrix `S` in Step
+4 — cosine is invariant to overall scale, so it measures shape, not
+magnitude, which is exactly what's comparable between two quantities on
+different units.
+
+A resolution ceiling has to be checked before reading any program's cosine:
+the cosine **between Suzuki's own cluster profiles**, over the same 37 traits.
+Three pairs come out close (Beta cell +PI vs −PI: 0.92; Metabolic syndrome vs
+Lipodystrophy: 0.81; Body fat vs Obesity: 0.73) — these clusters already look
+almost identical on the traits GPMap has, so no program, however good, can be
+expected to separate them on this axis. A program's low cosine with one of a
+close pair and high cosine with the other would be more surprising than
+useful; the honest reading credits the program with the pair, not a false
+precision.
+
+**Combining the evidence (4f).** The SNV enrichment test and the profile
+cosine measure different things — discrete locus overlap against continuous
+trait pattern — and can disagree: a program with a clean profile match can
+have too few matched SNVs for the enrichment test to say anything, and vice
+versa. Gene-level anchors (4b: Suzuki's own worked-example loci, checked
+positionally and through colocalising QTLs) and the full SNV-to-program
+table (4c) sit alongside both as further, qualitative evidence. Because no
+single statistic resolves every case, the final call is a hand-written,
+three-level judgement — **clear** (SNV enrichment and profile agree on the
+cluster), **partial** (only one agrees, or the program sits between two
+indistinguishable clusters), **none** — with the reasoning for each program
+written down next to it, rather than either a black-box composite score or an
+unaudited claim. A machine check re-derives each call's two quantitative
+conditions against the current run and flags any program whose numbers no
+longer support what the text says, so the hand-written reading cannot drift
+silently from a re-render's results.
+
+## Structure of Results
+
+The aim is not to produce a definitive biological truth for every SNP. Instead,
+the method produces a structured, evidence-based decomposition of a trait's
+genetic architecture, with results that can be assessed at several levels.
+
+For practical use, the framework should provide results at the overall, program, and SNP level.
+
+| Level       | Primary question                                                                         | Main output                                                             |
+| ----------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **Trait**   | How much of this trait's genetic architecture can be decomposed into distinct structure? | Number of programs, SNP coverage, overlap, overall signal captured      |
+| **Program** | Is this structure reliable, and what biology does it represent?                          | Reliability metrics plus trait, tissue, gene and pathway interpretation |
+| **SNP**     | Which program or programs does this variant contribute to?                               | Soft memberships, posterior evidence, rank and molecular annotations    |
+
+This standard report would be returned by gpmapr and as a framework for the Results section of the paper. It should keep the distinction clear between statistical evidence, which establishes whether a program is reliable, and biological annotation, which provides its interpretation.
+
+#### Overall trait-level metrics
+- Number of SNPs analysed, and the traits removed as proxies or near-duplicates
+- Background similarity of the matrix (`background_mean_S`, `background_edge_rate`)
+- Number of programs in each confidence tier (high, medium, single_trait, low)
+- Proportion of SNPs assigned to at least one valid program
+- Proportion of SNPs unassigned
+- Degree of overlapping membership, for example the proportion of assigned SNPs belonging to more than one program
+- Overall matrix signal explained by validated programs, if this can be meaningfully derived from the EBMF fit
+- Number/proportion of programs with some evidence of biological interpretation
+
+#### Program Level metrics
+- Number of member SNPs (maybe also report number of SNPs that were filtered out by the lFSR/magnitude gate)
+- Membership overlap with other programs
+- Top SNPs by posterior loading or membership evidence
+- Statistical reliability: confidence tier, `similarity_q`, `mean_internal_similarity`, connectedness, `effective_n_traits`, factor variance explained, replication, parent program
+- Biological interpretation: module-specific traits, and continuous loading-based enrichment of trait categories, tissues and pathways (effect, r_squared, FDR)
+
+#### SNP Level metrics
+- Program membership(s)
+- Posterior loading in each program
+- Membership lFSR
+- Magnitude of membership/loading
+- Core versus candidate membership status
+- Rank within each program, if useful
+- Whether the SNP belongs to multiple programs
+- Similarity to other SNPs within its assigned program
+- Variant-level pleiotropic profile, for example breadth of associated trait categories
+- Molecular annotations, including associated genes and tissues where available

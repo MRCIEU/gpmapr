@@ -68,7 +68,9 @@ test_that("simulation evaluation accepts overlapping EBMF memberships", {
     n_rep = 0,
     verbose = FALSE
   )
-  valid <- summary$programs$program[summary$programs$status == "valid"]
+  valid <- summary$programs$program[
+    as.character(summary$programs$confidence_tier) %in% c("high", "medium")
+  ]
   ev <- evaluate_univariate_simulation(
     sim,
     predicted_memberships = summary$assigned[

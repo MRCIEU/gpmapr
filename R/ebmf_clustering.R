@@ -464,7 +464,7 @@ select_ebmf_comparison_run <- function(comparison, min_total_pve = 0.01) {
 #'   Defaults to \code{0.01}.
 #' @param min_pve_share Candidate if the factor explains at least this share of
 #'   total PVE, regardless of how many SNPs it soft-assigns. Defaults to
-#'   \code{0.4}.
+#'   \code{0.7}.
 #' @param min_soft_frac Candidate if the factor soft-assigns at least this
 #'   fraction of SNPs. Defaults to \code{0.25}.
 #' @param max_drop Maximum number of factors to return. Defaults to 1.
@@ -474,7 +474,7 @@ select_ebmf_comparison_run <- function(comparison, min_total_pve = 0.01) {
 identify_ebmf_global_factors <- function(flash_fit,
                                          membership = NULL,
                                          min_total_pve = 0.01,
-                                         min_pve_share = 0.4,
+                                         min_pve_share = 0.7,
                                          min_soft_frac = 0.25,
                                          max_drop = 1L) {
   if (!inherits(flash_fit, "flash")) {

@@ -4,9 +4,8 @@
 #' numbering into the planted labels before cross-trait links can be scored.
 #'
 #' Mapping is done on SNP membership by default. Set `by = "drivers"` to map on
-#' the program's loading over background studies instead, which is the right
-#' choice when scoring the profile axis at low locus overlap: a program whose
-#' loci were planted privately still has the planted driver studies loading on it.
+#' the program's loading over background studies instead: a program whose loci
+#' were planted privately still has the planted driver studies loading on it.
 #' @param loadings A `extract_program_loadings()` loadings table (SNP axis) or
 #'   profiles table (feature axis), depending on `by`.
 #' @param ground_truth The `ground_truth` component of
@@ -147,13 +146,13 @@ map_programs_to_planted <- function(loadings,
 #' programs are concordant -- the split is what shows it cannot see antagonism
 #' at all. The `direction` column scored is whichever the caller supplies, so
 #' the same function scores the concordance sign or [module_rg()]'s
-#' `rg_direction`.
-#' @param pairs The `pairs` table from `compare_program_pairs_profiles()` or
-#'   `compare_program_pairs_loadings()`.
+#' `rg_direction`. A link with no direction call (`NA` or `"undetermined"`) is
+#' left out of the sign accuracy rather than counted as wrong.
+#' @param pairs The `pairs` table from `compare_program_pairs_loadings()`. When
+#'   it has a `linked` column only the linked pairs are scored; otherwise every
+#'   row is treated as a link.
 #' @param mapping Result of `map_programs_to_planted()`.
 #' @param ground_truth The `ground_truth` component of `simulate_trait_pair()`.
-#' @param tiers Link tiers to score. Defaults to `"primary"` only, which is the
-#'   calibrated one-to-one claim.
 #' @return A one-row dataframe: `n_links`, `n_true_positive`,
 #'   `n_false_positive`, `precision`, `recall`, `f1`, `sign_accuracy`,
 #'   `sign_accuracy_concordant`, `sign_accuracy_antagonistic`,
@@ -161,8 +160,7 @@ map_programs_to_planted <- function(loadings,
 #' @export
 evaluate_multitrait_simulation <- function(pairs,
                                            mapping,
-                                           ground_truth,
-                                           tiers = "primary") {
+                                           ground_truth) {
   planted <- ground_truth$correspondence
   n_planted <- nrow(planted)
   empty <- data.frame(
@@ -176,9 +174,8 @@ evaluate_multitrait_simulation <- function(pairs,
   if (is.null(pairs) || nrow(pairs) == 0) {
     return(empty)
   }
-  if (!is.null(tiers) && "link_tier" %in% names(pairs)) {
-    pairs <- pairs[!is.na(pairs$link_tier) & pairs$link_tier %in% tiers, ,
-                   drop = FALSE]
+  if ("linked" %in% names(pairs)) {
+    pairs <- pairs[!is.na(pairs$linked) & pairs$linked, , drop = FALSE]
   }
   if (nrow(pairs) == 0) {
     return(empty)
@@ -201,6 +198,7 @@ evaluate_multitrait_simulation <- function(pairs,
   if (n_tp > 0 && "direction" %in% names(pairs)) {
     truth_dir <- unname(direction_of[la[is_tp]])
     called <- pairs$direction[is_tp]
+    called[called %in% "undetermined"] <- NA_character_
     sign_rate <- function(keep) {
       if (!any(keep)) {
         return(NA_real_)

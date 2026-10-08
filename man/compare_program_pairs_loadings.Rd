@@ -2,7 +2,7 @@
 % Please edit documentation in R/multitrait_concordance.R
 \name{compare_program_pairs_loadings}
 \alias{compare_program_pairs_loadings}
-\title{Compare EBMF Programs Across Traits By Loading Concordance}
+\title{Compare EBMF Programs Across Traits}
 \usage{
 compare_program_pairs_loadings(
   program_data,
@@ -10,108 +10,167 @@ compare_program_pairs_loadings(
   fdr_threshold = 0.05,
   seed = 1,
   min_shared_loci = 3L,
-  coloc_groups = NULL
+  exclude_features = NULL,
+  phi_high = 0.85,
+  phi_low = 0.7,
+  min_alignment = 0.5,
+  min_eff_loci = 5,
+  coloc_groups = NULL,
+  min_ld_r = 0.5,
+  ld_proxies_fn = ld_proxies
 )
 }
 \arguments{
 \item{program_data}{An extraction result from \code{\link[=extract_program_loadings]{extract_program_loadings()}},
-or a list of such results (one per target trait).}
+or a list of such results (one per target trait). Needs \code{profiles} for
+the profile congruence.}
 
-\item{n_perm}{Number of permutation replicates. Defaults to \code{1000}.}
+\item{n_perm}{Number of permutation replicates for the locus test. Defaults
+to \code{1000}.}
 
-\item{fdr_threshold}{BH FDR at or below which a program is significant.
+\item{fdr_threshold}{BH FDR for the locus permutation test; a testable
+pair needs \code{q_concordance <= fdr_threshold} for its loci to \code{agree}.
 Defaults to \code{0.05}.}
 
 \item{seed}{RNG seed for the permutations.}
 
 \item{min_shared_loci}{Minimum shared high-confidence loci (\code{n_loci_shared})
-for a pair to be eligible as a link; eligible pairs are flagged in the
-\code{candidate} column. Defaults to \code{3}. Set to \code{0} to let any scored pair
-link.}
+for the loci to be testable; below it \code{locus_status} is \code{too_few_loci}.
+Defaults to \code{3}.}
+
+\item{exclude_features}{Optional named list, keyed by trait id, of feature
+(background trait) ids excluded from that trait's fit as proxies; they
+are left out of every profile comparison involving either trait. The
+anchor traits themselves are always left out.}
+
+\item{phi_high, phi_low}{Profile-congruence cutoffs for the tiers. Default
+\code{0.85} and \code{0.70}.}
+
+\item{min_alignment}{Minimum locus \code{alignment} for a testable pair's loci
+to \code{agree}. Defaults to \code{0.5}.}
+
+\item{min_eff_loci}{Minimum \code{n_eff_loci} for the loci to be testable; below
+it \code{locus_status} is \code{too_few_loci}. Defaults to \code{5}.}
 
 \item{coloc_groups}{Optional named list of coloc-group data.frames, keyed by
-trait id. When supplied, \code{\link[=module_rg]{module_rg()}} is run on every linked pair (both
-tiers) and returned as \code{module_rg}.}
+trait id. When supplied, \code{\link[=module_rg]{module_rg()}} is run on every linked pair and
+returned as \code{module_rg}. Also required to build the LD locus bridge (see
+\code{min_ld_r}) for any pair involving an uploaded GWAS trait.}
+
+\item{min_ld_r}{For a pair where at least one trait is an uploaded GWAS
+(its own coloc_group_id numbering is private to that upload, not shared
+with other traits -- see \code{.needs_locus_bridge()}), loci are matched first
+by the upload's own coloc record of the other trait
+(\code{existing_study_extraction_id}), then by exact \code{variant_id}, then by
+\code{ld_proxies()} LD looked up from both traits' leads. \code{min_ld_r} is the
+minimum \verb{|r|} for that last step. GPMap's proxy table only holds pairs at
+\code{r^2 >= 0.8} (\verb{|r|} about 0.89), so values below that have no effect.
+Defaults to \code{0.5}. Ignored for pairs where neither trait is an upload.}
 }
 \value{
 A list with:
 \itemize{
-\item pairs: one row per cross-trait program pair with the locus-overlap
-columns (\code{n_loci_a}, \code{n_loci_b}, \code{n_loci_shared}, \code{jaccard_loci},
-\code{p_locus}), the concordance columns (\code{n_loci_axis},
-\code{locus_concordance}, \code{cosine_loci}, \code{n_eff_loci}, \code{concordance_z},
-\code{p_concordance}, \code{q_concordance}), \code{direction}, and the two link
-columns \code{shared} and \code{link_tier}.
-\item matches: one row per program with \code{best_partner},
-\code{best_concordance_z}, \code{emp_p}, \code{q} and \code{significant}.
-\item module_rg: cross-trait effect correlation per \code{shared} pair when
+\item pairs: one row per cross-trait program pair with the profile
+columns (\code{phi_traits}, \code{n_traits_shared}, \code{n_eff_traits},
+\code{direction_profile}), the locus columns (\code{n_loci_a}, \code{n_loci_b},
+\code{n_loci_shared}, \code{jaccard_loci}, \code{p_locus}, \code{n_loci_axis},
+\code{locus_concordance}, \code{alignment}, \code{comparability}, \code{n_eff_loci},
+\code{concordance_z}, \code{p_concordance}, \code{q_concordance}, \code{eligible}),
+and \code{profile_strength}, \code{locus_status}, \code{tier} and \code{linked}.
+\item programs: one row per program with \code{program_id}, \code{trait_id},
+\code{trait_name}, \code{program} and \code{n_links}.
+\item module_rg: cross-trait effect correlation per linked pair when
 \code{coloc_groups} is supplied, otherwise an empty table.
-\item settings: settings used.
+\item bridges: the per-trait-pair locus bridges built for uploaded GWAS
+traits (a named list, empty when none were needed), for reuse by
+\code{\link[=build_program_families]{build_program_families()}} and \code{\link[=family_module_rg]{family_module_rg()}}.
+\item settings: settings used, including \code{exclude_features}.
 }
 }
 \description{
 Decide whether two programs discovered independently in
-different target traits describe the same biology, using their continuous
-SNP loadings on the \strong{locus} axis.
+different target traits describe the same biology. Two questions are asked
+of every cross-trait pair, on the two axes of the EBMF fit:
 
-For a pair of programs the locus axis is the set of loci both traits carry
-(shared \code{coloc_group_id}s) that \strong{at least one of the two programs claims}
-as a high-confidence member (all of a program's loci if it has none). Within
-that axis each locus contributes in proportion to how strongly it loads in
-both programs:
-\deqn{\mathrm{concordance} = \sum_l w_l f_a(l) f_b(l), \quad
-w_l = (1 - \mathrm{lfsr}_a(l))(1 - \mathrm{lfsr}_b(l))}
-The restriction matters because every program carries a small loading at
-every locus. Over the whole shared universe those near-zero tails can be
-faintly correlated between two traits (for instance through the target
-traits' own effects at shared loci), and a shuffle null standardises that
-into a large \code{concordance_z} for loadings of no real magnitude. The pair's
-permutation null shuffles the second program's loadings over the whole
-shared universe and reads them off at the pair's axis, so co-loading on the
-claimed loci is compared against loading drawn from anywhere the two traits
-share.
-
-A pair can only be linked when the two programs share at least
-\code{min_shared_loci} high-confidence loci (\code{n_loci_shared}): the correspondence
-this function reports is shared architecture at the same loci, and a pair
-sharing none has none to report. Pairs below the floor are still scored and
-reported, but they take no part in the best-partner search or its null and
-cannot be \code{primary} or \code{candidate} links.
-
-The score is deliberately \strong{covariance-like rather than correlation-like}: a
-fully normalised (cosine) score is scale-free and so cannot distinguish a pair
-co-loading on three loci from a pair co-loading on thirty. \code{cosine_loci} is
-reported alongside as a diagnostic so the difference is visible.
-
-Significance is calibrated in two stages: a per-pair permutation null (locus
-labels of the second program are shuffled, carrying its confidence weights,
-so the null preserves each program's loading distribution and sparsity), then
-a per-program max-statistic null over that program's partners, BH-corrected
-across programs so that searching many partners does not inflate it. Links are reported in two tiers:
 \describe{
-\item{\code{primary}}{the mutual best match of two significant programs — the
-strict, one-to-one correspondence, flagged by \code{shared = TRUE}.}
-\item{\code{candidate}}{any other pair whose own \code{q_concordance} clears
-\code{fdr_threshold}. These allow one program to correspond to several in the
-other trait, which EBMF factor splitting makes genuinely possible, at the
-cost of not being calibrated for the search over partners.}
+\item{Same biology? -- profile congruence (\code{phi_traits}).}{Tucker's
+congruence coefficient (an uncentred correlation) between the two
+programs' \strong{trait loadings} (\code{L_pm}, the background traits that drive
+them), over the background traits both fits carry. Each trait's loading
+is weighted by its confidence, \eqn{\tilde l = l\, w(\mathrm{lfsr})}, with
+no magnitude cutoff:
+\deqn{\phi = \frac{\sum_t \tilde l_a(t) \tilde l_b(t)}{\sqrt{\sum_t
+  \tilde l_a(t)^2 \sum_t \tilde l_b(t)^2}}.}
+The comparable traits leave out both anchor (target) traits -- each is
+positive by construction in its own fit but an ordinary row in the other
+-- and any trait excluded from either fit as a proxy (\code{exclude_features}).
+\code{phi_traits} is signed: each trait's SNPs are oriented to its own risk
+allele, so two programs carrying the same biology in opposite directions
+have mirrored profiles and \eqn{\phi < 0}. \code{n_traits_shared} counts the
+comparable traits and \code{n_eff_traits} how many effectively carry the
+agreement (participation ratio of \eqn{|\tilde l_a \tilde l_b|}); a small
+value means a few traits dominate.}
+\item{Same SNPs? -- locus alignment (\code{alignment}) and comparability
+(\code{comparability}).}{The squared uncentred correlation of the two
+programs' \strong{SNP loadings} (\code{F_pm}, weighted the same way) over the loci
+both traits carry, \eqn{A = (\sum_U \tilde f_a \tilde f_b)^2 / (\sum_U
+  \tilde f_a^2 \sum_U \tilde f_b^2)}. Loci the other trait never measured
+cannot agree or disagree, so they are left out of \code{alignment} and
+reported instead as \code{comparability}, the share of each program's loading
+on the shared loci, multiplied: \eqn{C = (\sum_U \tilde f_a^2 / \sum_a
+  \tilde f_a^2)(\sum_U \tilde f_b^2 / \sum_b \tilde f_b^2)}.}
 }
 
-Because \code{\link[=extract_program_loadings]{extract_program_loadings()}} sign-orients each program to its target
-trait, \code{sign(concordance)} is interpretable: positive is a concordant
-(target-aligned) architecture, negative an antagonistic one.
+\strong{Profile strength} (\code{profile_strength}): \code{strong} when
+\eqn{|\phi| \ge} \code{phi_high}, \code{moderate} when \code{phi_low} \eqn{\le |\phi| <}
+\code{phi_high}, \code{weak} otherwise.
 
-CAVEAT on direction: each trait's matrix is oriented to that trait's own
-risk allele before fitting, so a locus belonging to a shared program loads
-positively in both traits' programs whether the program is concordant or
-antagonistic. On this axis antagonism therefore does not change the sign, so
-an antagonistic link is reported as concordant (see the multi-trait
-simulation vignette). Take direction from \code{\link[=module_rg]{module_rg()}} instead, which
-correlates the two traits' own effects in a common allele frame.
+\strong{Locus status} (\code{locus_status}): \describe{
+\item{\code{too_few_loci}}{the pair shares fewer than \code{min_shared_loci}
+high-confidence loci (\code{n_loci_shared}), or fewer than \code{min_eff_loci} loci
+effectively carry its locus score (\code{n_eff_loci}): the loci cannot settle
+whether the same SNPs carry the two programs.}
+\item{\code{agree}}{testable, \code{alignment >= min_alignment} and the permutation
+test passes (\code{q_concordance <= fdr_threshold}, below).}
+\item{\code{disagree}}{testable, but \code{alignment} or \code{q_concordance} fails.}
+}
 
-IMPORTANT: loci are treated as independent observations. The candidate loci
-are fine-mapped colocalising signals, so LD between them is largely handled
-upstream, but no correction is made for sample overlap between the two target
-traits' GWAS — for trait pairs drawn from the same cohort the concordance (and
-\code{\link[=module_rg]{module_rg()}}) will be biased away from the null.
+\strong{Tiers.} \describe{
+\item{\code{high}}{strong profile, loci agree: same biology, carried by the
+same SNPs.}
+\item{\code{medium}}{strong profile, too few loci to test; or moderate
+profile, loci agree.}
+\item{\code{low}}{strong profile, loci disagree (same background biology, but
+the shared SNPs do not carry it); moderate profile, too few loci; or weak
+profile, loci agree (shared loci, different biology, typical of large
+pleiotropic loci).}
+\item{\code{none}}{otherwise, including a moderate profile whose loci
+disagree.}
+}
+\code{linked} pairs are those of high or medium tier; \code{\link[=build_program_families]{build_program_families()}}
+groups them into families. The default cutoffs follow Tucker's conventions
+for factor similarity (0.85 "fair similarity", 0.95 "equal"); they are
+judgements, not calibrated tests. \code{\link[=profile_contributions]{profile_contributions()}} names the
+background traits that carry each pair's \eqn{\phi}.
+
+\strong{Locus permutation test.} For the locus axis, every pair is also scored by
+its loading-weighted concordance on the shared loci either program claims,
+\eqn{\sum_l \tilde f_a(l) \tilde f_b(l)}, against a two-sided permutation
+null that shuffles the second program's loadings over the loci the two
+traits share (\code{concordance_z}, \code{p_concordance}). \code{q_concordance} is the
+Benjamini-Hochberg adjustment across all scored pairs (eligibility is not
+independent of the statistic, so correcting over eligible pairs alone would
+be anti-conservative). The sign of \code{concordance_z} is not a direction:
+both programs are oriented to their own anchor, so a shared module loads
+positively in both whichever way the traits move. Direction comes from
+the sign of \code{phi_traits}, checked against \code{\link[=module_rg]{module_rg()}}
+(\code{direction_check}); \code{rg} never changes a tier.
+
+\strong{Confidence weights.} \eqn{w(\mathrm{lfsr}) = (1 - 2\,\mathrm{lfsr})_+} by
+default -- 0 for a coin-flip sign, 1 for a certain one -- set by
+\code{options(gpmapr.lfsr_weight = "two_sided")}; \code{"one_sided"} gives
+\eqn{1 - \mathrm{lfsr}}.
+
+IMPORTANT: loci are treated as independent observations, and no correction
+is made for sample overlap between the two target traits' GWAS.
 }

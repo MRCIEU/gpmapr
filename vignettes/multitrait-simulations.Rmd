@@ -31,11 +31,10 @@ params:
   # shared program.
   snp_overlap: [0.1, 0.2, 0.33, 0.66, 1.0]
   directions: ["concordant", "antagonistic"]
-  # --- stability gate, as in investigation-multitrait-programs.Rmd -----------
+  # --- replication (reported), as in investigation-multitrait-programs.Rmd --
   stability_n_rep: 2
   frac_traits: 0.8
   stability_top_n: 20
-  stability_threshold: 0.5
   # --- cross-trait comparison ----------------------------------------------
   n_perm: 1000
   fdr_threshold: 0.05
@@ -77,7 +76,7 @@ library(dplyr)
 quick <- isTRUE(params$quick)
 n_sim <- if (quick) min(as.integer(params$n_sim), 2L) else as.integer(params$n_sim)
 n_perm <- if (quick) 300L else as.integer(params$n_perm)
-similarity_perm <- if (quick) 300L else 1000L
+similarity_perm <- if (quick) 300L else 10000L
 
 # Shared EBMF settings, from the same file the univariate and real-data studies
 # read, so the per-trait discovery step here is the same discovery step used
@@ -169,12 +168,16 @@ reports the mean with its Monte Carlo standard error in parentheses.
 - **Orientation**: before fitting, every locus is flipped to its own target
   trait's risk-increasing allele, as on real data. This is where antagonism
   reaches the fit: in the antagonistic trait the driver studies end up negative.
-- **status**: the validation outcome of a fitted program. `valid`, or the
-  gates it failed (`size`, `similarity`, `stability`, `redundancy`),
-  joined by `; `.
-- **Primary / candidate link**: a *primary* link is a mutual best match between
-  two significant programs, the strict one-to-one claim. A *candidate* link is
-  any other pair whose own FDR clears the threshold.
+- **status**: the validation outcome of a fitted program: `valid` when its
+  confidence tier is high or medium, otherwise the tier (`single_trait` when
+  it passes the similarity test but its trait loadings rest on essentially one
+  trait, or `low` when it fails the similarity test).
+- **Link**: a pair of programs, one per trait, of high or medium tier --
+  congruent trait profiles, graded with the alignment of their SNP loadings
+  at the loci the traits share (see
+  [Multi-trait correspondence](investigation-multitrait-correspondence.html)).
+  The results shown were rendered with an earlier, locus-only link rule. A
+  program may link to more than one program in the other trait.
 - **Recall**: the fraction of planted shared programs linked (here 0 or 1 per
   replicate).
 - **Precision**: the fraction of reported links that are real.
@@ -191,7 +194,7 @@ knitr::kable(
   data.frame(
     parameter = c(
       names(generative_base), "snp_overlap", "directions", "stability_n_rep",
-      "frac_traits", "stability_top_n", "stability_threshold", "n_sim",
+      "frac_traits", "stability_top_n", "n_sim",
       "n_perm", "fdr_threshold", "quick", "ebmf_settings_signature"
     ),
     value = c(
@@ -199,7 +202,7 @@ knitr::kable(
       paste(params$snp_overlap, collapse = ", "),
       paste(params$directions, collapse = ", "),
       params$stability_n_rep, params$frac_traits, params$stability_top_n,
-      params$stability_threshold, n_sim, n_perm, params$fdr_threshold, quick,
+      n_sim, n_perm, params$fdr_threshold, quick,
       settings_signature
     ),
     stringsAsFactors = FALSE
@@ -243,15 +246,15 @@ valid in each trait, whether it is linked, and the planted direction of the
 link. This is a selection-plus-sign target, not a parameter.
 
 **Methods.** The real-data pipeline, unchanged: `run_univariate_clustering()`
-and `summarise_ebmf_programs()` per trait at the shared settings (with the
-stability gate as in the real-data study), then
+and `summarise_ebmf_programs()` per trait at the shared settings, then
 `compare_program_pairs_loadings()` across traits, at its defaults: each pair is
 scored on the shared loci either program claims, and a pair needs at least 3
 shared high-confidence loci to be linked. Linking is run twice, on every fitted
-program and on the valid programs only; stability is computed for every
-program (`stability_all_programs = TRUE`), so filtered programs carry the same
-metrics as valid ones. Direction is read two ways: the sign
-of `concordance_z`, and `rg_direction` from `module_rg()`.
+program and on the valid (high- or medium-confidence) programs only;
+replication is computed for every program, so low-confidence programs carry
+the same metrics as valid ones. Direction is read from `rg_direction`
+(`module_rg()`); the sign of `concordance_z` is scored alongside it only to
+show that it is not a direction.
 
 **Performance measures.** Discovered programs are mapped onto planted programs
 by SNP membership (`map_programs_to_planted()`, Jaccard at least 0.1).
@@ -264,12 +267,12 @@ by SNP membership (`map_programs_to_planted()`, Jaccard at least 0.1).
   planted SNPs, and the correlation of its loadings with the planted per-locus
   effects.
 - *Linking*: `evaluate_multitrait_simulation()` reports `recall` (planted
-  shared program linked) and `precision` (links that are real), at the primary
-  tier and at primary + candidate.
+  shared program linked) and `precision` (links that are real).
 - *Direction*: sign accuracy on true links, from the concordance sign and from
   `module_rg()`, split by planted direction. `module_rg()` needs at least 10
-  usable shared loci; when it has fewer the direction is *undetermined*, which
-  is reported rather than dropped.
+  usable shared loci, and calls a direction only when its bootstrap CI
+  excludes 0; otherwise the direction is *undetermined*, which is reported
+  rather than dropped and does not count towards sign accuracy.
 - *Null*: under `K_shared = 0` every link is a false discovery.
 
 **Monte Carlo uncertainty.** Every estimate is a mean over `n_sim` replicates
@@ -332,33 +335,40 @@ discover_one_trait <- function(trait_object, trait_id) {
     min_module_size = as.integer(ebmf_settings$min_module_size),
     similarity_n_perm = similarity_perm,
     similarity_q_threshold = as.numeric(ebmf_settings$similarity_q),
-    strength_q_threshold = as.numeric(ebmf_settings$strength_q),
+    high_similarity_q = as.numeric(ebmf_settings$high_similarity_q),
+    high_min_connectedness = as.numeric(ebmf_settings$high_connectedness),
+    min_effective_traits = as.numeric(ebmf_settings$min_effective_traits),
     n_null = 2,
     n_rep = as.integer(params$stability_n_rep),
     frac_traits = as.numeric(params$frac_traits),
     top_n = as.integer(params$stability_top_n),
-    stability_threshold = as.numeric(params$stability_threshold),
-    stability_all_programs = TRUE,
     verbose = FALSE
+  )
+  # "valid" = high or medium confidence, as extract_program_loadings() keeps.
+  program_tier <- as.character(smry$programs$confidence_tier)
+  program_status <- ifelse(
+    program_tier %in% c("high", "medium"), "valid", program_tier
   )
   status <- data.frame(
     program_id = paste0(trait_id, ":", smry$programs$program),
-    status = as.character(smry$programs$status),
+    status = program_status,
     stringsAsFactors = FALSE
   )
   metric_cols <- intersect(
     c(
-      "program", "n_snps", "n_snps_filtered", "similarity_q",
-      "similarity_lift", "mean_internal_similarity", "connectedness",
-      "replication", "posterior_evidence", "factor_pve", "strength_q",
+      "program", "n_snps", "n_snps_filtered", "effective_n_traits",
+      "similarity_q",
+      "excess_similarity", "excess_connectedness",
+      "mean_internal_similarity", "connectedness",
+      "replication", "posterior_evidence", "factor_pve",
       "parent_program", "max_abs_factor_corr", "max_pair_redundancy",
-      "size_pass", "similarity_pass", "strength_pass", "stability_pass",
-      "status"
+      "confidence_tier"
     ),
     names(smry$programs)
   )
   metrics <- smry$programs[, metric_cols, drop = FALSE]
-  metrics$status <- as.character(metrics$status)
+  metrics$confidence_tier <- as.character(metrics$confidence_tier)
+  metrics$status <- program_status
   metrics$program_id <- paste0(trait_id, ":", metrics$program)
   metrics$trait_id <- as.character(trait_id)
   return(list(
@@ -411,22 +421,16 @@ link_and_score <- function(extraction, mapping, status, gt, tids, sp, programs) 
       pairs, rg, by = c("program_id_a", "program_id_b")
     )
     pairs_rg$direction <- pairs_rg$rg_direction
+    # The concordance sign, scored only to show it is not a direction.
+    pairs$direction <- ifelse(pairs$concordance_z > 0, "concordant", "antagonistic")
   }
 
-  tier_sets <- list(primary = "primary", any = c("primary", "candidate"))
-  links <- dplyr::bind_rows(lapply(names(tier_sets), function(ts) {
-    by_sign <- evaluate_multitrait_simulation(
-      pairs, mapping, gt, tiers = tier_sets[[ts]]
-    )
-    by_rg <- evaluate_multitrait_simulation(
-      pairs_rg, mapping, gt, tiers = tier_sets[[ts]]
-    )
-    out <- by_sign
-    out$tiers <- ts
-    out$rg_sign_accuracy_concordant <- by_rg$sign_accuracy_concordant
-    out$rg_sign_accuracy_antagonistic <- by_rg$sign_accuracy_antagonistic
-    return(out)
-  }))
+  by_sign <- evaluate_multitrait_simulation(pairs, mapping, gt)
+  by_rg <- evaluate_multitrait_simulation(pairs_rg, mapping, gt)
+  links <- by_sign
+  links$tiers <- "linked"
+  links$rg_sign_accuracy_concordant <- by_rg$sign_accuracy_concordant
+  links$rg_sign_accuracy_antagonistic <- by_rg$sign_accuracy_antagonistic
   links$programs <- programs
   links$n_programs_a <- n_programs[[1]]
   links$n_programs_b <- n_programs[[2]]
@@ -436,7 +440,7 @@ link_and_score <- function(extraction, mapping, status, gt, tids, sp, programs) 
   link_details <- data.frame()
   true_link <- data.frame()
   if (!is.null(pairs_rg) && nrow(pairs_rg) > 0) {
-    linked <- pairs_rg[!is.na(pairs_rg$link_tier), , drop = FALSE]
+    linked <- pairs_rg[!is.na(pairs_rg$linked) & pairs_rg$linked, , drop = FALSE]
     if (nrow(linked) > 0) {
       label_a <- unname(label_of[as.character(linked$program_id_a)])
       label_b <- unname(label_of[as.character(linked$program_id_b)])
@@ -444,7 +448,6 @@ link_and_score <- function(extraction, mapping, status, gt, tids, sp, programs) 
         programs = programs,
         program_id_a = as.character(linked$program_id_a),
         program_id_b = as.character(linked$program_id_b),
-        link_tier = linked$link_tier,
         concordance_z = linked$concordance_z,
         n_loci_shared = linked$n_loci_shared,
         status_a = unname(status_of[as.character(linked$program_id_a)]),
@@ -457,18 +460,18 @@ link_and_score <- function(extraction, mapping, status, gt, tids, sp, programs) 
       )
     }
     # The true link itself (both programs map to the shared program), for the
-    # module_rg readout: primary tier first, then the strongest candidate.
+    # module_rg readout: the strongest true link.
     if (nrow(gt$correspondence) > 0) {
       shared_label <- gt$correspondence$program_label[1]
-      is_true <- !is.na(pairs_rg$link_tier) &
+      is_true <- !is.na(pairs_rg$linked) & pairs_rg$linked &
         label_of[as.character(pairs_rg$program_id_a)] %in% shared_label &
         label_of[as.character(pairs_rg$program_id_b)] %in% shared_label
       tl <- pairs_rg[is_true, , drop = FALSE]
       if (nrow(tl) > 0) {
-        tl <- tl[order(tl$link_tier != "primary", -abs(tl$concordance_z)), ][1, ]
+        tl <- tl[order(-abs(tl$concordance_z)), ][1, ]
         true_link <- data.frame(
           programs = programs,
-          link_tier = tl$link_tier, concordance_z = tl$concordance_z,
+          concordance_z = tl$concordance_z,
           rg = tl$rg,
           ci_excludes_zero = is.finite(tl$rg_ci_lower) &
             is.finite(tl$rg_ci_upper) &
@@ -786,14 +789,15 @@ A gate is doing its job when it keeps the shared and trait-specific programs
 and removes the unmatched ones. The figure shows where each metric separates
 the three, which is the evidence for where a threshold should sit.
 
-- **n_snps_filtered** (size gate): SNPs passing the lFSR/magnitude membership
-  cut.
-- **similarity_q** (similarity gate): BH q of the test that the member SNPs'
-  mean similarity beats random SNP sets of the same size, shown as −log10.
-- **strength_q** (reported, not a gate): BH q of the test that the factor
-  explains more variance than factors fitted to row-permuted data, shown as
-  −log10.
-- **replication** (stability gate): mean Jaccard overlap between the program's
+- **n_snps_filtered**: SNPs passing the lFSR/magnitude membership cut;
+  programs below `min_module_size` are dropped before any check.
+- **similarity_q** and **connectedness** (the confidence tier): whether the
+  member SNPs are more alike than random SNP groups of the same size
+  (BH-adjusted, shown as −log10), and the share of member pairs with `S >=
+  similarity_threshold`.
+- **excess_similarity** and **excess_connectedness** (reported): the same
+  quantities minus their values in the random groups.
+- **replication** (reported): mean Jaccard overlap between the program's
   top SNPs and the best-matching factor when 20% of the background studies are
   held out and EBMF is refit. Computed here for every program.
 - **posterior_evidence**: median −log10(lFSR) of the program's members.
@@ -802,11 +806,10 @@ the three, which is the evidence for where a threshold should sit.
 
 ```{r program-overview, results='asis'}
 threshold_lines <- data.frame(
-  metric = c("n_snps_filtered", "-log10(similarity_q)", "replication"),
+  metric = c("-log10(similarity_q)", "connectedness"),
   value = c(
-    as.numeric(ebmf_settings$min_module_size),
     -log10(as.numeric(ebmf_settings$similarity_q)),
-    as.numeric(params$stability_threshold)
+    as.numeric(ebmf_settings$high_connectedness)
   )
 )
 truth_levels <- c("shared", "trait-specific", "unmatched")
@@ -833,14 +836,14 @@ if (nrow(program_metrics) == 0) {
       dplyr::group_by(truth) |>
       dplyr::summarise(
         per_trait_fit = round(dplyr::n() / n_fits, 1),
-        pass_size = pct(size_pass),
-        pass_similarity = pct(similarity_pass),
-        pass_strength = pct(strength_pass),
-        pass_stability = pct(stability_pass),
+        high = pct(confidence_tier == "high"),
+        medium = pct(confidence_tier == "medium"),
+        single_trait = pct(confidence_tier == "single_trait"),
         valid = pct(valid),
         n_snps_filtered = med(n_snps_filtered),
         similarity_q = med(similarity_q),
-        strength_q = med(strength_q),
+        connectedness = med(connectedness),
+        excess_similarity = med(excess_similarity),
         replication = med(replication),
         posterior_evidence = med(posterior_evidence),
         factor_pve = med(factor_pve),
@@ -852,7 +855,8 @@ if (nrow(program_metrics) == 0) {
       "Every fitted program, pooled over versions, replicates and traits (",
       n_fits, " trait fits). per_trait_fit = programs of this kind per trait ",
       "fit, over all fits including the null versions, which have no shared ",
-      "program; pass_* = share passing each gate; valid = share passing all; ",
+      "program; pass_* = share passing each check; high / medium / ",
+      "single_trait = share in each confidence tier; valid = high or medium; ",
       "the metric columns are medians."
     )
   ))
@@ -866,7 +870,7 @@ if (nrow(program_metrics) > 0 && requireNamespace("ggplot2", quietly = TRUE)) {
       truth, valid,
       n_snps_filtered = as.numeric(n_snps_filtered),
       `-log10(similarity_q)` = -log10(pmax(similarity_q, 1e-10)),
-      `-log10(strength_q)` = -log10(pmax(strength_q, 1e-10)),
+      connectedness, excess_similarity,
       replication, posterior_evidence,
       factor_pve = 100 * factor_pve,
       jaccard
@@ -875,7 +879,8 @@ if (nrow(program_metrics) > 0 && requireNamespace("ggplot2", quietly = TRUE)) {
     dplyr::filter(is.finite(value)) |>
     dplyr::mutate(
       metric = factor(metric, levels = c(
-        "n_snps_filtered", "-log10(similarity_q)", "-log10(strength_q)",
+        "n_snps_filtered", "-log10(similarity_q)", "connectedness",
+        "excess_similarity",
         "replication", "posterior_evidence", "factor_pve", "jaccard"
       )),
       gate = ifelse(valid, "valid", "filtered")
@@ -930,8 +935,9 @@ if (nrow(program_metrics) > 0) {
         version, rep, trait, program, planted_label,
         jaccard = round(jaccard, 2),
         n_snps_filtered,
-        similarity_q = signif(similarity_q, 2),
-        strength_q = signif(strength_q, 2),
+        excess_similarity = round(excess_similarity, 3),
+        excess_connectedness = round(excess_connectedness, 3),
+        confidence_tier,
         replication = round(replication, 2),
         posterior_evidence = round(posterior_evidence, 1),
         factor_pve_pct = round(100 * factor_pve, 2),
@@ -974,17 +980,17 @@ if (nrow(program_metrics) > 0) {
 
 **How to read it.**
 
-- **Size and similarity** should remove most unmatched programs on their own.
-  Check that no shared or trait-specific program sits below their lines in the
-  figure.
-- **Stability.** If shared and trait-specific programs cluster near 1 and
-  unmatched ones spread lower, the stability threshold can be read off the gap.
-  Where the two groups overlap, no threshold on that metric separates them.
+- **similarity_q and connectedness** decide the tier. Check that shared and
+  trait-specific programs sit above their dashed lines in the figure and
+  unmatched ones below.
+- **Replication** is reported, not used for the tier. If shared and
+  trait-specific programs cluster near 1 and unmatched ones spread lower, it
+  separates them; where the two groups overlap, it does not.
 - **The two lists** are the direct evidence. Real programs removed by a gate
   argue for loosening it; noise passing every gate argues for tightening one.
 - **Quick mode floors similarity.** With `quick = TRUE` the similarity null
   uses 300 random SNP sets, so the smallest possible p is about 0.003. The full
-  run uses 1000, which leaves more room.
+  run uses 10000, which leaves more room.
 
 ## 2. Was the shared program found in each trait?
 
@@ -1013,8 +1019,8 @@ if (nrow(discovery) == 0) {
   print(knitr::kable(
     tbl, row.names = FALSE,
     caption = paste0(
-      "Discovery of the shared program, per trait. 'filtered: <status>' names ",
-      "the validation gates the best-matching program failed; 'not found' ",
+      "Discovery of the shared program, per trait. 'filtered: low' means the ",
+      "best-matching program was of low confidence; 'not found' ",
       "means no fitted program overlaps the planted loci (Jaccard >= 0.1)."
     )
   ))
@@ -1035,11 +1041,9 @@ if (nrow(discovery) == 0) {
 **How to read it.** SNP overlap should not change discovery much: each trait's
 fit sees only its own matrix, and the shared program is an ordinary program
 there. If the `valid` column is well below 100%, the shared program is being
-lost before linking, and the `filtered:` columns say which gate removed it.
-A program that fails `stability` survives the full fit but not a refit on 80%
-of the background studies; `similarity` means its member SNPs are no more
-alike than random SNP sets of the same size. The redundancy gate is off by
-default (`snp_redundancy_threshold = Inf`), so `redundancy` should not appear.
+lost before linking: `filtered: low` means the best-matching program was of
+low confidence, i.e. its member SNPs are no more alike than random SNP sets of
+the same size, or it is below the size floor.
 
 ## 2b. How closely do the resolved programs match the planted ones?
 
@@ -1206,8 +1210,7 @@ assigned to the wrong program.
 
 For each setting and program set, the table shows how many links were reported
 per replicate, the fraction of replicates in which the shared program was
-linked (`recall`), and the fraction of links that were real (`precision`). Both
-are given at the strict primary tier and at primary + candidate (`any`).
+linked (`recall`), and the fraction of links that were real (`precision`).
 
 ```{r link-table, results='asis'}
 shared_links <- if (nrow(links) > 0) {
@@ -1219,15 +1222,12 @@ if (nrow(shared_links) == 0) {
   cat("No replicates completed.\n\n")
 } else {
   tbl <- shared_links |>
-    dplyr::group_by(version, programs, tiers) |>
+    dplyr::group_by(version, programs) |>
     dplyr::summarise(
       links = fmt_mc(n_links, 1),
       recall = fmt_mc(recall),
       precision = fmt_mc(precision),
       .groups = "drop"
-    ) |>
-    tidyr::pivot_wider(
-      names_from = tiers, values_from = c(links, recall, precision)
     ) |>
     dplyr::mutate(
       version = factor(version, levels = version_order),
@@ -1290,7 +1290,7 @@ if (nrow(link_details) > 0) {
   if (nrow(false_detail) > 0) {
     print(knitr::kable(
       false_detail |>
-        dplyr::count(arm, pair_status, truth_a, truth_b, link_tier) |>
+        dplyr::count(arm, pair_status, truth_a, truth_b) |>
         dplyr::arrange(arm, pair_status, dplyr::desc(n)),
       row.names = FALSE,
       caption = "False links in the all-programs run, by what the two linked programs really are."
@@ -1304,10 +1304,7 @@ if (nrow(link_details) > 0) {
 ```{r link-plot, fig.width=9, fig.height=6}
 if (requireNamespace("ggplot2", quietly = TRUE) && nrow(shared_links) > 0) {
   plot_df <- shared_links |>
-    dplyr::mutate(
-      tiers = ifelse(tiers == "primary", "primary links", "primary + candidate links")
-    ) |>
-    dplyr::group_by(snp_overlap, direction_planted, programs, tiers) |>
+    dplyr::group_by(snp_overlap, direction_planted, programs) |>
     dplyr::summarise(recall = mean(recall, na.rm = TRUE), .groups = "drop") |>
     dplyr::mutate(programs = paste(programs, "programs"))
   print(
@@ -1319,7 +1316,7 @@ if (requireNamespace("ggplot2", quietly = TRUE) && nrow(shared_links) > 0) {
     ) +
       ggplot2::geom_line(linewidth = 0.7) +
       ggplot2::geom_point(size = 2.5) +
-      ggplot2::facet_grid(programs ~ tiers) +
+      ggplot2::facet_wrap(~programs) +
       ggplot2::scale_colour_manual(values = palette_direction) +
       ggplot2::scale_y_continuous(limits = c(0, 1)) +
       ggplot2::labs(
@@ -1334,16 +1331,16 @@ if (requireNamespace("ggplot2", quietly = TRUE) && nrow(shared_links) > 0) {
 
 ## 4. Was the direction right?
 
-**What this table shows.** For the all-programs run: among real links (primary +
-candidate), the fraction called in the planted direction, from the sign of `concordance_z` and from
-`module_rg()`. For the true link itself: the mean `rg`, how often its bootstrap
+**What this table shows.** For the all-programs run: among real links, the
+fraction called in the planted direction, from the sign of `concordance_z` and
+from `module_rg()` (links whose `rg` is undetermined are left out). For the true link itself: the mean `rg`, how often its bootstrap
 CI excludes 0, and how often `module_rg()` could not estimate it (fewer than 10
 usable shared loci).
 
 ```{r sign-table, results='asis'}
 if (nrow(shared_links) > 0) {
   sign_tbl <- shared_links[
-    shared_links$tiers == "any" & shared_links$programs == "all", ,
+    shared_links$programs == "all", ,
     drop = FALSE
   ] |>
     dplyr::group_by(version, direction_planted) |>
@@ -1417,7 +1414,7 @@ if (nrow(null_res) == 0) {
 } else {
   print(knitr::kable(
     null_res |>
-      dplyr::group_by(programs, tiers) |>
+      dplyr::group_by(programs) |>
       dplyr::summarise(
         false_links = fmt_mc(n_links, 2),
         reps_with_any_link = sprintf("%d of %d", sum(n_links > 0), dplyr::n()),
@@ -1435,7 +1432,7 @@ if (nrow(null_res) == 0) {
 
 **How to read it.** The trait-specific programs share no loci, so the locus
 statistic has nothing to score between them, and false links should be
-essentially 0 at both tiers. Treat this as optimistic: the background is
+essentially 0. Treat this as optimistic: the background is
 unstructured by default, and a false-discovery rate is only as realistic as the
 noise it is measured in (see Notes).
 
@@ -1447,7 +1444,7 @@ of them survived validation, per setting.
 ```{r scale, results='asis'}
 if (nrow(links) > 0) {
   print(knitr::kable(
-    links[links$tiers == "primary", , drop = FALSE] |>
+    links |>
       dplyr::group_by(version) |>
       dplyr::summarise(
         fitted_trait_a = fmt_mc(n_programs_a[programs == "all"], 1),

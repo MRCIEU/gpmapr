@@ -43,8 +43,6 @@ test_that("calibrate_ebmf_programs returns factor strength and null calibration"
     "programs", "memberships", "null_summary", "settings"
   ))
   expect_true(all(is.finite(unlist(cal$null_summary$max_masses))))
-  expect_true(is.numeric(cal$null_summary$factor_pve))
-  expect_true(all(cal$null_summary$factor_pve >= 0 & cal$null_summary$factor_pve <= 1))
   expect_setequal(
     names(cal$programs),
     c("program", "loading_mass", "raw_factor_signal", "factor_strength",
@@ -101,7 +99,7 @@ test_that("parallel stability replicates match serial results", {
   expect_identical(s1, s5)
 })
 
-test_that("summarise_ebmf_programs folds filters and additional scores", {
+test_that("summarise_ebmf_programs reports metrics and a confidence tier", {
   r <- make_ebmf_result()
   ps <- summarise_ebmf_programs(
     r$res,
@@ -111,17 +109,21 @@ test_that("summarise_ebmf_programs folds filters and additional scores", {
   )
   expect_true(all(c(
     "program", "n_snps", "n_snps_filtered", "mean_internal_similarity",
-    "connectedness", "similarity_lift", "similarity_z", "similarity_emp_p",
-    "similarity_q", "factor_pve", "strength_emp_p", "strength_q",
-    "replication", "parent_program", "parent_containment",
-    "posterior_evidence", "max_abs_factor_corr", "redundant",
-    "size_pass", "similarity_pass", "strength_pass", "internal_pass",
-    "stability_pass", "fail_reason", "status"
+    "connectedness", "excess_similarity", "excess_connectedness",
+    "similarity_lift", "similarity_z", "similarity_emp_p",
+    "similarity_q", "factor_pve", "replication", "sd_replication",
+    "parent_program", "parent_containment", "posterior_evidence",
+    "max_abs_factor_corr", "redundant", "max_pair_redundancy",
+    "most_redundant_program", "effective_n_traits", "confidence_tier",
+    "depth", "program_label"
   ) %in% names(ps$programs)))
   expect_false(any(c(
     "weighted_internal", "weighted_quorum", "n_eff", "coherence_q",
     "quorum_q", "factor_strength", "factor_strength_per_snp",
-    "raw_factor_signal"
+    "raw_factor_signal", "strength_q", "strength_pass", "internal_pass",
+    "stability_pass", "stability_checked", "redundancy_pass",
+    "internal_similarity_pass", "connectedness_pass", "fail_reason", "status",
+    "size_pass", "similarity_pass", "mean_external_similarity", "separation"
   ) %in% names(ps$programs)))
   expect_true(all(ps$programs$n_snps >= ps$programs$n_snps_filtered))
   filtered_counts <- ps$assigned |>
@@ -130,55 +132,64 @@ test_that("summarise_ebmf_programs folds filters and additional scores", {
     ps$programs$n_snps_filtered,
     filtered_counts$n[match(ps$programs$program, filtered_counts$program)]
   )
+  expect_true(is.ordered(ps$programs$confidence_tier))
   expect_equal(
-    ps$programs$internal_pass,
-    ps$programs$size_pass & ps$programs$similarity_pass
+    as.character(ps$programs$confidence_tier),
+    as.character(.program_confidence_tier(
+      ps$programs$similarity_q, ps$programs$connectedness,
+      ps$settings$similarity_q_threshold, ps$settings$high_similarity_q,
+      ps$settings$high_min_connectedness,
+      effective_n_traits = ps$programs$effective_n_traits,
+      min_effective_traits = ps$settings$min_effective_traits
+    ))
   )
-  expect_true(all(ps$programs$status == "valid" |
-                    grepl("^(size|similarity|stability|redundancy)",
-                          ps$programs$status)))
+  # Programs below the size floor are dropped before any check.
+  expect_true(all(ps$programs$n_snps_filtered >= ps$settings$min_module_size))
+  expect_true(all(ps$dropped_programs$n_snps_filtered < ps$settings$min_module_size))
+  expect_false(any(ps$dropped_programs$program %in% ps$programs$program))
+  expect_true(all(ps$assigned$program %in% ps$programs$program))
+  expect_true(all(c("mean_similarity", "frac_pairs_edge", "frac_pairs_abs_edge",
+                    "median_shared_traits") %in% names(ps$background)))
+  fit <- r$res$cluster_details$flash_fit
+  expect_equal(ps$programs$factor_pve, as.numeric(fit$pve[ps$programs$program]))
+  # Effective number of traits from the trait loadings, target row excluded.
+  target_id <- as.character(r$res$parameters$target_trait_id)
+  L <- fit$L_pm[rownames(fit$L_pm) != target_id, , drop = FALSE]
+  expected_traits <- vapply(ps$programs$program, function(k) {
+    p <- L[, k]^2 / sum(L[, k]^2)
+    return(1 / sum(p^2))
+  }, numeric(1))
+  expect_equal(ps$programs$effective_n_traits, expected_traits)
+  # Replication is reported for every program with members.
+  has_members <- ps$programs$n_snps_filtered > 0
+  expect_true(all(is.finite(ps$programs$replication[has_members])))
   expect_true(is.null(ps$factor_correlation) || is.matrix(ps$factor_correlation))
-  expect_true(all(c(
-    "max_pair_redundancy", "most_redundant_program", "redundancy_pass"
-  ) %in% names(ps$programs)))
-  expect_true(all(ps$programs$redundancy_pass %in% c(TRUE, FALSE)))
   expect_true(all(is.na(ps$programs$max_pair_redundancy) |
                     (ps$programs$max_pair_redundancy >= 0 &
                        ps$programs$max_pair_redundancy <= 1)))
+  expect_true(all(c("similarity_n_perm", "similarity_q_threshold",
+                    "high_similarity_q", "high_min_connectedness",
+                    "min_effective_traits") %in%
+                    names(ps$settings)))
+  expect_false(any(c("min_excess_similarity", "min_excess_connectedness") %in%
+                     names(ps$settings)))
+  expect_false(any(c("stability_threshold", "strength_q_threshold",
+                     "snp_redundancy_threshold") %in% names(ps$settings)))
+  expect_false("factor_pve" %in% names(ps$null_summary))
   expect_setequal(
     names(ps),
-    c("programs", "memberships", "assigned", "factor_correlation",
-      "null_summary", "settings")
+    c("programs", "dropped_programs", "background", "memberships", "assigned",
+      "factor_correlation", "null_summary", "settings")
   )
 })
 
-test_that("strength is the factor PVE calibrated against the null fits", {
+test_that("summarise_ebmf_programs rows follow order_programs_by_confidence()", {
   r <- make_ebmf_result()
-  ps <- summarise_ebmf_programs(
-    r$res,
-    n_null = 3,
-    n_rep = 0,
-    verbose = FALSE
+  ps <- summarise_ebmf_programs(r$res, n_null = 3, n_rep = 0, verbose = FALSE)
+  reordered <- order_programs_by_confidence(
+    ps$programs[rev(seq_len(nrow(ps$programs))), , drop = FALSE]
   )
-  fit <- r$res$cluster_details$flash_fit
-  expect_equal(ps$programs$factor_pve, as.numeric(fit$pve[ps$programs$program]))
-  null_pve <- ps$null_summary$factor_pve
-  if (length(null_pve) > 0) {
-    expected <- vapply(ps$programs$factor_pve, function(x) {
-      return((1 + sum(null_pve >= x)) / (1 + length(null_pve)))
-    }, numeric(1))
-    expect_equal(ps$programs$strength_emp_p, expected)
-    expect_equal(
-      ps$programs$strength_q,
-      stats::p.adjust(ps$programs$strength_emp_p, method = "BH")
-    )
-  } else {
-    expect_true(all(ps$programs$strength_pass))
-  }
-  expect_true(all(c("similarity_n_perm", "similarity_q_threshold",
-                    "strength_q_threshold") %in% names(ps$settings)))
-  # Strength is reported, not gated.
-  expect_false(any(grepl("strength", ps$programs$status)))
+  expect_equal(reordered$program, ps$programs$program)
 })
 
 test_that("the similarity matrix excludes the target row", {
@@ -194,21 +205,6 @@ test_that("the similarity matrix excludes the target row", {
     r$res$x_star[target_id, ], res2$x_star[target_id, ]
   )))
   expect_equal(r$res$s_matrix, res2$s_matrix)
-})
-
-test_that("the SNP-containment redundancy gate is off unless a threshold is given", {
-  r <- make_ebmf_result()
-  expect_identical(formals(summarise_ebmf_programs)$snp_redundancy_threshold, Inf)
-  ps <- summarise_ebmf_programs(r$res, n_null = 3, n_rep = 0, verbose = FALSE)
-  expect_true(all(ps$programs$redundancy_pass))
-  expect_false(any(grepl("redundancy", ps$programs$status)))
-
-  # Supplying a threshold still gates: at 0 every program with a partner fails.
-  gated <- summarise_ebmf_programs(
-    r$res, n_null = 3, n_rep = 0, snp_redundancy_threshold = 0, verbose = FALSE
-  )
-  has_partner <- !is.na(gated$programs$max_pair_redundancy)
-  expect_true(all(!gated$programs$redundancy_pass[has_partner]))
 })
 
 test_that("reciprocal SNP-containment redundancy flags near-duplicate programs", {
@@ -248,41 +244,4 @@ test_that("reciprocal SNP-containment redundancy flags near-duplicate programs",
   expect_equal(red4$program, 1L)
   expect_true(is.na(red4$max_pair_redundancy[1]))
   expect_true(is.na(red4$most_redundant_program[1]))
-})
-
-test_that("summarise_ebmf_programs checks stability only for programs passing size and similarity", {
-  r <- make_ebmf_result()
-  ps <- summarise_ebmf_programs(
-    r$res,
-    n_null = 3,
-    n_rep = 2,
-    verbose = FALSE
-  )
-  coherent <- ps$programs$internal_pass %in% TRUE
-  expect_true(all(ps$programs$stability_checked[coherent]))
-  expect_true(all(!ps$programs$stability_checked[!coherent]))
-  expect_true(all(is.finite(ps$programs$replication[coherent])))
-})
-
-test_that("summarise_ebmf_programs can report stability for every program", {
-  r <- make_ebmf_result()
-  ps <- summarise_ebmf_programs(
-    r$res,
-    n_null = 3,
-    n_rep = 2,
-    stability_all_programs = TRUE,
-    verbose = FALSE
-  )
-  has_members <- ps$programs$n_snps_filtered > 0
-  expect_true(all(ps$programs$stability_checked[has_members]))
-  expect_true(all(is.finite(ps$programs$replication[has_members])))
-
-  # The default still checks programs passing size and similarity only, with
-  # the same values.
-  default <- summarise_ebmf_programs(r$res, n_null = 3, n_rep = 2, verbose = FALSE)
-  coherent <- default$programs$internal_pass %in% TRUE
-  expect_equal(
-    default$programs$replication[coherent],
-    ps$programs$replication[coherent]
-  )
 })

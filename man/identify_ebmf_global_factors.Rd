@@ -8,7 +8,7 @@ identify_ebmf_global_factors(
   flash_fit,
   membership = NULL,
   min_total_pve = 0.01,
-  min_pve_share = 0.4,
+  min_pve_share = 0.7,
   min_soft_frac = 0.25,
   max_drop = 1L
 )
@@ -24,7 +24,7 @@ Defaults to \code{0.01}.}
 
 \item{min_pve_share}{Candidate if the factor explains at least this share of
 total PVE, regardless of how many SNPs it soft-assigns. Defaults to
-\code{0.4}.}
+\code{0.7}.}
 
 \item{min_soft_frac}{Candidate if the factor soft-assigns at least this
 fraction of SNPs. Defaults to \code{0.25}.}

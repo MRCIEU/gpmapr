@@ -39,10 +39,8 @@ A list with:
 raw_factor_signal, factor_strength)
 \item memberships: dataframe (snp_id, program, loading, abs_loading,
 lfsr, emp_p, q, core, tier)
-\item null_summary: list with per-replicate max masses, pooled loading
-quantiles, and \code{factor_pve} (the proportion of variance explained by
-every factor of every null fit, pooled; used by
-\code{summarise_ebmf_programs()} to calibrate program strength)
+\item null_summary: list with per-replicate max masses and pooled loading
+quantiles
 \item settings: calibration settings used
 }
 }

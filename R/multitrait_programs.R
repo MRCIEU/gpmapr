@@ -18,17 +18,20 @@
 #' reflected by the sign of the target trait's `L_pm` loading (making that
 #' loading positive) while preserving the rank-1 product. When the target trait
 #' does not load on a program (or `L_pm` is unavailable), the program is
-#' alternatively anchored on the sign of its largest-|loading| SNP. This makes a
-#' positive cross-trait comparison interpretable as a concordant
-#' (target-aligned) architecture. High-confidence membership follows the same
-#' lFSR / magnitude gate used elsewhere in the pipeline.
+#' alternatively anchored on the sign of its largest-|loading| SNP. Because each
+#' trait's matrix is also oriented to its own risk allele, two programs that
+#' share a module have positive SNP loadings at its loci whether the two traits
+#' move together or apart, so the sign of a cross-trait SNP-loading comparison
+#' is not a direction (see [compare_program_pairs_loadings()] and
+#' [module_rg()]). High-confidence membership follows the same lFSR / magnitude
+#' gate used elsewhere in the pipeline.
 #' @param clustering_result Result of [run_univariate_clustering()] (EBMF).
 #' @param program_summary Optional result of [summarise_ebmf_programs()], used
-#'   only to restrict to programs with `status == "valid"` when
+#'   only to restrict to programs of high or medium confidence when
 #'   `valid_only = TRUE`.
 #' @param valid_only If `TRUE` (default) and `program_summary` is supplied, keep
-#'   only programs whose `status == "valid"`. Otherwise all fitted programs are
-#'   returned.
+#'   only programs of high or medium confidence (not `"low"` or
+#'   `"single_trait"`). Otherwise all fitted programs are returned.
 #' @return A list with:
 #'   \itemize{
 #'     \item loadings: one row per locus x program with `program_id`, `trait_id`,
@@ -60,7 +63,7 @@ extract_program_loadings <- function(clustering_result,
   if (valid_only && !is.null(program_summary) &&
         !is.null(program_summary$programs) && nrow(program_summary$programs) > 0) {
     programs <- program_summary$programs$program[
-      program_summary$programs$status == "valid"
+      as.character(program_summary$programs$confidence_tier) %in% c("high", "medium")
     ]
   }
   posterior <- posterior[posterior$program %in% programs, , drop = FALSE]
@@ -267,18 +270,25 @@ extract_program_loadings <- function(clustering_result,
 }
 
 
-.locus_pair_stats <- function(key, locus_sets, universe_by_trait) {
+.locus_pair_stats <- function(key, locus_sets, universe_by_trait, bridges = NULL) {
   set_a <- locus_sets[[key$program_id_a]]
   set_b <- locus_sets[[key$program_id_b]]
   universe_b <- universe_by_trait[[key$trait_id_b]]
   if (is.null(set_a)) set_a <- character(0)
   if (is.null(set_b)) set_b <- character(0)
   if (is.null(universe_b)) universe_b <- character(0)
+  n_a <- length(set_a)
+  n_b <- length(set_b)
+
+  # set_a is native to trait_id_a; translate into trait_id_b's space before
+  # comparing against set_b/universe_b, which are already native to trait_id_b
+  # (a no-op unless this pair needs LD bridging -- see .needs_locus_bridge()).
+  # n_a/n_b stay as the untranslated native sizes: a program's own size
+  # shouldn't depend on which partner it's being compared to.
+  set_a <- .translate_locus_ids(set_a, key$trait_id_a, key$trait_id_b, bridges)
 
   shared <- intersect(set_a, set_b)
   union_size <- length(union(set_a, set_b))
-  n_a <- length(set_a)
-  n_b <- length(set_b)
   n_shared <- length(shared)
   k <- length(intersect(set_a, universe_b))
   N <- length(universe_b)
@@ -303,28 +313,6 @@ extract_program_loadings <- function(clustering_result,
     p_locus = p_locus,
     stringsAsFactors = FALSE
   ))
-}
-
-
-.mutual_best_mask <- function(out, matches, trait_ids_by_program) {
-  n <- nrow(out)
-  shared <- rep(FALSE, n)
-  if (n == 0) {
-    return(shared)
-  }
-  sig <- stats::setNames(matches$significant, as.character(matches$program_id))
-  partner <- stats::setNames(
-    matches$best_partner, as.character(matches$program_id)
-  )
-  for (i in seq_len(n)) {
-    a <- as.character(out$program_id_a[i])
-    b <- as.character(out$program_id_b[i])
-    if (isTRUE(sig[[a]]) && isTRUE(sig[[b]]) &&
-          identical(partner[[a]], b) && identical(partner[[b]], a)) {
-      shared[i] <- TRUE
-    }
-  }
-  return(shared)
 }
 
 
@@ -365,122 +353,334 @@ extract_program_loadings <- function(clustering_result,
 
 
 #' @title Build Multi-Trait Program Families
-#' @description Turn a calibrated program-correspondence result into multi-trait
-#' program families. Programs are nodes and correspondence edges are drawn from
-#' [compare_program_pairs_loadings()].
+#' @description Turn a program-correspondence result into multi-trait program
+#' families. Programs are nodes and the `linked` pairs from
+#' [compare_program_pairs_loadings()] are edges; programs with no link are left
+#' out (their count is returned as `n_unlinked`).
 #'
-#' By default (`rule = "reciprocal_best_match"`) an edge is used only when it is
-#' the mutual best match of two significant programs, i.e. the calibrated
-#' `shared` flag (the primary link tier), so families are one-to-one
-#' correspondences rather than transitive chains. `rule = "components"` instead
-#' uses every pair whose pair-level `q_concordance <= fdr_threshold` (the
-#' candidate tier as well as the primary one), giving the more permissive,
-#' transitive connected-components behaviour. Isolated programs form their own
-#' size-1 family.
-#' @param result Either a result from [compare_program_pairs_loadings()] or its
-#'   `pairs` data.frame.
-#' @param program_info Optional data.frame with `program_id` and `trait_id`
-#'   (one row per program). Defaults to the programs appearing in `result`.
-#' @param fdr_threshold FDR at or below which a `"components"` edge is kept.
-#'   Defaults to `0.05`.
-#' @param rule Edge rule: `"reciprocal_best_match"` (default) or `"components"`.
+#' By default (`rule = "communities"`) families are the communities of the
+#' link graph found by Louvain modularity optimisation
+#' ([igraph::cluster_louvain()]), with each edge weighted by its profile
+#' congruence `|phi_traits|`. Plain connected components (`rule = "components"`)
+#' chain through any shared partner: on real data a few dozen links between
+#' four traits joined most programs into one component, while their
+#' communities were well separated. Louvain is randomised, so `seed` fixes it.
+#'
+#' With `mutual_best = TRUE` a link is kept only when each of its two programs
+#' is the other's closest partner (highest `|phi_traits|`) among the linked
+#' programs of the other's trait, so a program keeps at most one partner per
+#' other trait and a family tends to hold one program per trait.
+#'
+#' When `program_data` is supplied, each family is also described by the loci
+#' its programs claim as high-confidence members, on one locus id space across
+#' traits (an uploaded GWAS trait's own `coloc_group_id`s are translated through
+#' `result$bridges`, see [compare_program_pairs_loadings()]).
+#' @param result A result from [compare_program_pairs_loadings()].
+#' @param program_info Optional data.frame with `program_id`, `trait_id` and
+#'   `trait_name` (one row per program), used to fill in trait names.
+#' @param rule Family rule: `"communities"` (default) or `"components"`.
+#' @param seed RNG seed for the community detection.
+#' @param program_data Optional extraction result(s) from
+#'   [extract_program_loadings()], needed for the family locus sets.
+#' @param mutual_best If `TRUE`, keep only links that are each program's
+#'   highest-`|phi_traits|` link to the other program's trait. Defaults to
+#'   `FALSE`.
 #' @return A list with:
 #'   \itemize{
-#'     \item nodes: one row per program with `program_id`, `trait_id`,
-#'       `trait_name` (when available), and `family`
+#'     \item nodes: one row per linked program with `program_id`, `trait_id`,
+#'       `trait_name` and `family`
 #'     \item families: one row per family with `family`, `n_programs`,
-#'       `n_traits`, `traits`, `n_edges`, `mean_locus_concordance`,
-#'       `median_locus_concordance`, `mean_concordance_z`, `n_concordant`,
-#'       `n_antagonistic`, and `n_shared_loci`
-#'     \item graph: an `igraph` object (or `NULL` when there are no edges)
-#'     \item edges: the pair table used as edges (after the chosen rule)
+#'       `n_traits`, `traits`, `n_edges`, `mean_phi`, `n_tier_high`,
+#'       `n_tier_medium`,
+#'       `n_rg_concordant`, `n_rg_antagonistic`, `n_rg_undetermined` (edges by
+#'       [module_rg()] direction; links with no estimate count in none), and
+#'       `n_core_loci` (claimed by every member) and `n_union_loci` (by any
+#'       member)
+#'     \item family_loci: one row per family x locus with `family`, `locus`,
+#'       `n_programs`, `n_traits`, `programs`, `traits` and `snp_ids`
+#'     \item edges: the linked pairs, with the [module_rg()] columns joined on
+#'     \item graph: an `igraph` object (or `NULL` when there are no links)
+#'     \item modularity: modularity of the family partition
+#'     \item n_unlinked: number of programs with no link
 #'   }
 #' @export
 build_program_families <- function(result,
                                    program_info = NULL,
-                                   fdr_threshold = 0.05,
-                                   rule = c("reciprocal_best_match",
-                                            "components")) {
+                                   rule = c("communities", "components"),
+                                   seed = 1,
+                                   program_data = NULL,
+                                   mutual_best = FALSE) {
   rule <- match.arg(rule)
-  matches <- NULL
-  if (is.list(result) && !is.data.frame(result) && !is.null(result$pairs)) {
-    matches <- result$matches
-    pairs <- result$pairs
-  } else {
-    pairs <- result
-  }
-  if (!is.data.frame(pairs) ||
-        !all(c("jaccard_loci", "concordance_z", "shared") %in% names(pairs))) {
+  if (!is.list(result) || is.data.frame(result) || is.null(result$pairs) ||
+        !"linked" %in% names(result$pairs)) {
     stop("result must come from compare_program_pairs_loadings()")
   }
-
-  if (rule == "reciprocal_best_match") {
-    edges <- pairs[pairs$shared, , drop = FALSE]
-  } else {
-    edges <- pairs[
-      is.finite(pairs$q_concordance) & pairs$q_concordance <= fdr_threshold,
-      ,
-      drop = FALSE
-    ]
+  pairs <- result$pairs
+  edges <- pairs[!is.na(pairs$linked) & pairs$linked, , drop = FALSE]
+  if (isTRUE(mutual_best) && nrow(edges) > 0) {
+    edges <- edges[.mutual_best_links(edges), , drop = FALSE]
+  }
+  if (nrow(edges) > 0 && !is.null(result$module_rg) && nrow(result$module_rg) > 0) {
+    rg_cols <- c(
+      "program_id_a", "program_id_b", "rg", "rg_ci_lower", "rg_ci_upper",
+      "n_loci_rg", "rg_direction"
+    )
+    edges <- dplyr::left_join(
+      edges, result$module_rg[, rg_cols, drop = FALSE],
+      by = c("program_id_a", "program_id_b")
+    )
+  }
+  for (col in c("rg", "rg_ci_lower", "rg_ci_upper")) {
+    if (!col %in% names(edges)) edges[[col]] <- rep(NA_real_, nrow(edges))
+  }
+  if (!"n_loci_rg" %in% names(edges)) edges$n_loci_rg <- rep(NA_integer_, nrow(edges))
+  if (!"rg_direction" %in% names(edges)) {
+    edges$rg_direction <- rep(NA_character_, nrow(edges))
   }
 
-  if (!is.null(matches)) {
-    endpoints <- matches |>
-      dplyr::distinct(program_id, trait_id, trait_name)
+  endpoints <- if (!is.null(result$programs)) {
+    dplyr::distinct(result$programs, program_id, trait_id, trait_name)
   } else {
-    endpoints <- .normalise_program_info(edges, NULL)
+    .normalise_program_info(pairs, NULL)
   }
-  program_info <- .merge_program_info(endpoints, program_info)
+  info <- .merge_program_info(endpoints, program_info)
+  linked_ids <- unique(c(edges$program_id_a, edges$program_id_b))
+  n_unlinked <- sum(!info$program_id %in% linked_ids)
 
-  if (nrow(edges) == 0 || nrow(program_info) == 0) {
-    nodes <- program_info |>
-      dplyr::mutate(family = paste0("family_", dplyr::row_number())) |>
-      dplyr::select(program_id, trait_id, trait_name, family)
+  if (nrow(edges) == 0) {
     return(list(
-      nodes = nodes,
+      nodes = data.frame(
+        program_id = character(0), trait_id = character(0),
+        trait_name = character(0), family = character(0),
+        stringsAsFactors = FALSE
+      ),
       families = .empty_families(),
+      family_loci = .empty_family_loci(),
+      edges = edges,
       graph = NULL,
-      edges = edges
+      modularity = NA_real_,
+      n_unlinked = n_unlinked
     ))
   }
 
   graph <- igraph::graph_from_data_frame(
     edges[, c("program_id_a", "program_id_b"), drop = FALSE],
     directed = FALSE,
-    vertices = data.frame(
-      name = program_info$program_id,
-      stringsAsFactors = FALSE
-    )
+    vertices = data.frame(name = linked_ids, stringsAsFactors = FALSE)
   )
-  graph <- igraph::set_edge_attr(
-    graph, "locus_concordance", value = edges$locus_concordance
+  for (col in c("phi_traits", "alignment", "tier", "profile_strength",
+                "locus_status", "direction_profile",
+                "concordance_z", "rg", "rg_ci_lower", "rg_ci_upper", "rg_direction")) {
+    graph <- igraph::set_edge_attr(graph, col, value = edges[[col]])
+  }
+  graph <- igraph::set_edge_attr(graph, "weight", value = abs(edges$phi_traits))
+
+  membership <- if (rule == "communities") {
+    set.seed(seed)
+    igraph::membership(igraph::cluster_louvain(graph))
+  } else {
+    igraph::components(graph, mode = "weak")$membership
+  }
+  membership <- as.integer(membership)
+  # Number families largest first, so family_1 is the biggest.
+  sizes <- table(membership)
+  rank <- stats::setNames(
+    seq_along(sizes),
+    names(sizes)[order(-as.integer(sizes), as.integer(names(sizes)))]
   )
-  graph <- igraph::set_edge_attr(
-    graph, "concordance_z", value = edges$concordance_z
-  )
-  graph <- igraph::set_edge_attr(
-    graph, "weight", value = abs(edges$concordance_z)
-  )
-  components <- igraph::components(graph, mode = "weak")
+  family <- paste0("family_", rank[as.character(membership)])
+  modularity <- igraph::modularity(graph, membership)
 
   nodes <- data.frame(
     program_id = igraph::V(graph)$name,
-    family = paste0("family_", components$membership),
+    family = family,
     stringsAsFactors = FALSE
   ) |>
     dplyr::left_join(
-      program_info |> dplyr::select(program_id, trait_id, trait_name),
+      info |> dplyr::select(program_id, trait_id, trait_name),
       by = "program_id"
     ) |>
     dplyr::select(program_id, trait_id, trait_name, family)
+  graph <- igraph::set_vertex_attr(graph, "family", value = nodes$family)
+  graph <- igraph::set_vertex_attr(graph, "trait_id", value = nodes$trait_id)
 
-  families <- .family_metrics(nodes, edges)
+  family_loci <- .empty_family_loci()
+  if (!is.null(program_data)) {
+    loadings <- .normalise_program_data(program_data)$loadings
+    family_loci <- .family_loci(nodes, loadings, result$bridges)
+  }
+  families <- .family_metrics(nodes, edges, family_loci)
   return(list(
-    nodes = nodes,
+    nodes = nodes[order(nodes$family, nodes$trait_id, nodes$program_id), , drop = FALSE],
     families = families,
+    family_loci = family_loci,
+    edges = edges,
     graph = graph,
-    edges = edges
+    modularity = modularity,
+    n_unlinked = n_unlinked
   ))
+}
+
+
+#' @title Pooled Effect Correlation Per Family
+#' @description [module_rg()] for whole program families: for every family
+#' from [build_program_families()] and every pair of traits it spans, the two
+#' traits' own effects are correlated across the union of the loci that the
+#' family's programs in those two traits claim (on the loci both traits
+#' carry). Each trait's loading at a locus is taken from whichever of its
+#' family programs loads there most. Pooling gives a direction to trait pairs
+#' whose individual links rest on too few loci for [module_rg()].
+#' @param families A [build_program_families()] result.
+#' @param program_data Extraction result(s) from [extract_program_loadings()].
+#' @param coloc_groups Named list of coloc-group data.frames keyed by trait id,
+#'   as for [module_rg()].
+#' @param bridges Locus bridges, normally `compare_program_pairs_loadings()$bridges`.
+#'   Any missing bridge is built.
+#' @param n_boot,min_loci_rg,seed As in [module_rg()].
+#' @return A data.frame with one row per family x trait pair: `family`,
+#'   `trait_id_a`, `trait_id_b`, `n_programs_a`, `n_programs_b`, `rg`,
+#'   `rg_ci_lower`, `rg_ci_upper`, `n_loci_rg`, `n_allele_mismatch` and
+#'   `rg_direction`.
+#' @export
+family_module_rg <- function(families,
+                             program_data,
+                             coloc_groups,
+                             bridges = NULL,
+                             n_boot = 1000L,
+                             min_loci_rg = 10L,
+                             seed = 1,
+                             ld_proxies_fn = ld_proxies) {
+  nodes <- families$nodes
+  if (is.null(nodes) || nrow(nodes) == 0) {
+    return(.empty_family_rg())
+  }
+  loadings <- .normalise_program_data(program_data)$loadings
+  combos <- dplyr::bind_rows(lapply(split(nodes, nodes$family), function(fam) {
+    traits <- sort(unique(as.character(fam$trait_id)))
+    if (length(traits) < 2) {
+      return(NULL)
+    }
+    tp <- utils::combn(traits, 2)
+    return(data.frame(
+      family = fam$family[1], trait_id_a = tp[1, ], trait_id_b = tp[2, ],
+      stringsAsFactors = FALSE
+    ))
+  }))
+  if (nrow(combos) == 0) {
+    return(.empty_family_rg())
+  }
+  bridges <- .complete_bridges(
+    unique(combos[, c("trait_id_a", "trait_id_b")]), coloc_groups, bridges,
+    ld_proxies_fn = ld_proxies_fn
+  )
+  effects <- .effects_cache(coloc_groups)
+
+  set.seed(seed)
+  rows <- lapply(seq_len(nrow(combos)), function(i) {
+    fam <- nodes[nodes$family == combos$family[i], , drop = FALSE]
+    ta <- combos$trait_id_a[i]
+    tb <- combos$trait_id_b[i]
+    pa <- fam$program_id[fam$trait_id == ta]
+    pb <- fam$program_id[fam$trait_id == tb]
+    est <- .rg_for_programs(
+      loadings, pa, pb, ta, tb, effects, bridges,
+      n_boot = n_boot, min_loci_rg = min_loci_rg
+    )
+    return(data.frame(
+      combos[i, , drop = FALSE],
+      n_programs_a = length(pa), n_programs_b = length(pb),
+      est, stringsAsFactors = FALSE
+    ))
+  })
+  out <- dplyr::bind_rows(rows)
+  rownames(out) <- NULL
+  return(out)
+}
+
+
+# Links that are the closest (highest |phi_traits|) link of both of their
+# programs to the other program's trait.
+.mutual_best_links <- function(edges) {
+  r2 <- abs(edges$phi_traits)
+  r2[!is.finite(r2)] <- -Inf
+  is_best <- function(program, partner_trait) {
+    key <- paste(program, partner_trait)
+    best <- tapply(r2, key, max)
+    return(r2 == best[key])
+  }
+  return(
+    is_best(edges$program_id_a, edges$trait_id_b) &
+      is_best(edges$program_id_b, edges$trait_id_a)
+  )
+}
+
+
+# A locus id that is comparable across traits: GPMap's shared coloc_group_id.
+# An uploaded GWAS trait's own ids are translated through any bridge to an
+# existing trait; an upload locus no bridge covers keeps a trait-prefixed id,
+# so it counts towards a union but never matches another trait's locus.
+.canonical_locus_ids <- function(ids, trait_id, bridges = NULL) {
+  ids <- as.character(ids)
+  trait_id <- as.character(trait_id)
+  if (!is_guid(trait_id)) {
+    return(ids)
+  }
+  out <- rep(NA_character_, length(ids))
+  for (bridge in bridges) {
+    if (is.null(bridge) || nrow(bridge) == 0) next
+    partners <- setdiff(c(bridge$trait_a[1], bridge$trait_b[1]), trait_id)
+    if (!trait_id %in% c(bridge$trait_a[1], bridge$trait_b[1]) ||
+          length(partners) != 1 || is_guid(partners)) {
+      next
+    }
+    todo <- is.na(out)
+    out[todo] <- .translate_locus_ids_positional(ids[todo], trait_id, partners, bridges)
+  }
+  out[is.na(out)] <- paste0(trait_id, ":", ids[is.na(out)])
+  return(out)
+}
+
+
+# Every family's claimed loci on the canonical locus id space.
+.family_loci <- function(nodes, loadings, bridges = NULL) {
+  rows <- lapply(seq_len(nrow(nodes)), function(i) {
+    pid <- nodes$program_id[i]
+    tid <- as.character(nodes$trait_id[i])
+    loci <- .program_claimed_loci(loadings, pid)
+    if (length(loci) == 0) {
+      return(NULL)
+    }
+    s <- loadings[
+      as.character(loadings$program_id) == pid &
+        as.character(loadings$coloc_group_id) %in% loci,
+      ,
+      drop = FALSE
+    ]
+    return(data.frame(
+      family = nodes$family[i],
+      program_id = pid,
+      trait_id = tid,
+      locus = .canonical_locus_ids(s$coloc_group_id, tid, bridges),
+      snp_id = as.character(s$snp_id),
+      stringsAsFactors = FALSE
+    ))
+  })
+  claims <- dplyr::bind_rows(rows)
+  if (nrow(claims) == 0) {
+    return(.empty_family_loci())
+  }
+  out <- claims |>
+    dplyr::group_by(family, locus) |>
+    dplyr::summarise(
+      n_programs = dplyr::n_distinct(program_id),
+      n_traits = dplyr::n_distinct(trait_id),
+      programs = paste(sort(unique(program_id)), collapse = ", "),
+      traits = paste(sort(unique(trait_id)), collapse = ", "),
+      snp_ids = paste(sort(unique(snp_id)), collapse = ", "),
+      .groups = "drop"
+    ) |>
+    dplyr::arrange(family, dplyr::desc(n_programs), locus)
+  return(as.data.frame(out, stringsAsFactors = FALSE))
 }
 
 
@@ -687,71 +887,86 @@ build_program_families <- function(result,
 }
 
 
-# Clamp (1 - lFSR) into [0, 1]; missing lFSR is treated as full confidence.
+# Confidence weight of a loading from its lFSR, in [0, 1]. The default,
+# "two_sided", is (1 - 2 lfsr)_+: 0 for a coin-flip sign (lfsr = 0.5), 1 for a
+# certain one. "one_sided" is 1 - lfsr, which still gives a coin flip half
+# weight. Set with options(gpmapr.lfsr_weight = ...). Missing lFSR is treated
+# as full confidence.
 .confidence_factor <- function(lfsr) {
-  conf <- 1 - lfsr
+  conf <- if (identical(.lfsr_weight_method(), "one_sided")) {
+    1 - lfsr
+  } else {
+    1 - 2 * lfsr
+  }
   conf[is.na(conf)] <- 1
   return(pmin(pmax(conf, 0), 1))
 }
 
 
-# Weighted Pearson correlation with per-observation weights w. Returns NA when
-# the weighted variance is degenerate (e.g. all weight on one program's SNPs).
-.weighted_pearson <- function(x, y, w) {
-  ok <- is.finite(x) & is.finite(y) & is.finite(w)
-  if (!all(ok)) {
-    x <- x[ok]
-    y <- y[ok]
-    w <- w[ok]
+.lfsr_weight_method <- function() {
+  method <- getOption("gpmapr.lfsr_weight", "two_sided")
+  if (!method %in% c("two_sided", "one_sided")) {
+    stop("options(gpmapr.lfsr_weight) must be \"two_sided\" or \"one_sided\"")
   }
-  sw <- sum(w)
-  if (!is.finite(sw) || sw <= 0) {
-    return(NA_real_)
-  }
-  xbar <- sum(w * x) / sw
-  ybar <- sum(w * y) / sw
-  dx <- x - xbar
-  dy <- y - ybar
-  vx <- sum(w * dx * dx)
-  vy <- sum(w * dy * dy)
-  if (!is.finite(vx) || !is.finite(vy) || vx <= 0 || vy <= 0) {
-    return(NA_real_)
-  }
-  return(sum(w * dx * dy) / sqrt(vx * vy))
+  return(method)
 }
 
 
-.family_metrics <- function(nodes, shared) {
+# Weighted correlation through the origin, sum(w x y) / sqrt(sum(w x^2)
+# sum(w y^2)): unlike a mean-centred Pearson correlation it does not change
+# when the coding allele of any one observation is flipped (x and y both
+# negated). NA when either weighted sum of squares is degenerate.
+.weighted_uncentred_cor <- function(x, y, w) {
+  ok <- is.finite(x) & is.finite(y) & is.finite(w)
+  x <- x[ok]
+  y <- y[ok]
+  w <- w[ok]
+  vx <- sum(w * x * x)
+  vy <- sum(w * y * y)
+  if (length(x) == 0 || !is.finite(vx) || !is.finite(vy) || vx <= 0 || vy <= 0) {
+    return(NA_real_)
+  }
+  return(sum(w * x * y) / sqrt(vx * vy))
+}
+
+
+.family_metrics <- function(nodes, edges, family_loci = .empty_family_loci()) {
   families <- sort(unique(nodes$family))
   rows <- lapply(families, function(fam) {
-    pids <- nodes$program_id[nodes$family == fam]
-    edges <- shared[
-      shared$program_id_a %in% pids & shared$program_id_b %in% pids,
+    members <- nodes[nodes$family == fam, , drop = FALSE]
+    pids <- members$program_id
+    fam_edges <- edges[
+      edges$program_id_a %in% pids & edges$program_id_b %in% pids,
       ,
       drop = FALSE
     ]
-    concordance_z <- edges$concordance_z
-    traits <- sort(unique(nodes$trait_id[nodes$family == fam]))
+    loci <- family_loci[family_loci$family == fam, , drop = FALSE]
+    has_loci <- nrow(family_loci) > 0
+    trait_names <- if ("trait_name" %in% names(members)) {
+      dplyr::coalesce(members$trait_name, members$trait_id)
+    } else {
+      members$trait_id
+    }
     return(data.frame(
       family = fam,
       n_programs = length(pids),
-      n_traits = length(traits),
-      traits = paste(traits, collapse = ", "),
-      n_edges = nrow(edges),
-      mean_locus_concordance = .safe_stat(edges$locus_concordance, mean),
-      median_locus_concordance = .safe_stat(edges$locus_concordance, stats::median),
-      mean_concordance_z = .safe_stat(concordance_z, mean),
-      n_concordant = sum(concordance_z > 0, na.rm = TRUE),
-      n_antagonistic = sum(concordance_z < 0, na.rm = TRUE),
-      n_shared_loci = sum(edges$n_loci_shared, na.rm = TRUE),
+      n_traits = dplyr::n_distinct(members$trait_id),
+      traits = paste(sort(unique(trait_names)), collapse = ", "),
+      n_edges = nrow(fam_edges),
+      mean_phi = .safe_stat(fam_edges$phi_traits, mean),
+      n_tier_high = sum(fam_edges$tier == "high", na.rm = TRUE),
+      n_tier_medium = sum(fam_edges$tier == "medium", na.rm = TRUE),
+      n_rg_concordant = sum(fam_edges$rg_direction == "concordant", na.rm = TRUE),
+      n_rg_antagonistic = sum(fam_edges$rg_direction == "antagonistic", na.rm = TRUE),
+      n_rg_undetermined = sum(fam_edges$rg_direction == "undetermined", na.rm = TRUE),
+      n_core_loci = if (has_loci) sum(loci$n_programs == length(pids)) else NA_integer_,
+      n_union_loci = if (has_loci) nrow(loci) else NA_integer_,
       stringsAsFactors = FALSE
     ))
   })
   out <- dplyr::bind_rows(rows)
-  out <- dplyr::arrange(
-    out,
-    dplyr::desc(n_programs), dplyr::desc(n_edges), family
-  )
+  out <- out[order(as.integer(sub("^family_", "", out$family))), , drop = FALSE]
+  rownames(out) <- NULL
   return(out)
 }
 
@@ -841,27 +1056,7 @@ build_program_families <- function(result,
     n_loci_union = integer(0),
     jaccard_loci = numeric(0),
     p_locus = numeric(0),
-    candidate = logical(0),
-    direction = character(0),
-    shared = logical(0),
-    stringsAsFactors = FALSE
-  ))
-}
-
-
-.empty_matches <- function() {
-  return(data.frame(
-    program_id = character(0),
-    trait_id = character(0),
-    trait_name = character(0),
-    program = integer(0),
-    best_partner = character(0),
-    best_concordance_z = numeric(0),
-    best_locus_jaccard = numeric(0),
-    best_n_loci_shared = integer(0),
-    emp_p = numeric(0),
-    q = numeric(0),
-    significant = logical(0),
+    eligible = logical(0),
     stringsAsFactors = FALSE
   ))
 }
@@ -874,12 +1069,46 @@ build_program_families <- function(result,
     n_traits = integer(0),
     traits = character(0),
     n_edges = integer(0),
-    mean_locus_concordance = numeric(0),
-    median_locus_concordance = numeric(0),
-    mean_concordance_z = numeric(0),
-    n_concordant = integer(0),
-    n_antagonistic = integer(0),
-    n_shared_loci = integer(0),
+    mean_phi = numeric(0),
+    n_tier_high = integer(0),
+    n_tier_medium = integer(0),
+    n_rg_concordant = integer(0),
+    n_rg_antagonistic = integer(0),
+    n_rg_undetermined = integer(0),
+    n_core_loci = integer(0),
+    n_union_loci = integer(0),
+    stringsAsFactors = FALSE
+  ))
+}
+
+
+.empty_family_loci <- function() {
+  return(data.frame(
+    family = character(0),
+    locus = character(0),
+    n_programs = integer(0),
+    n_traits = integer(0),
+    programs = character(0),
+    traits = character(0),
+    snp_ids = character(0),
+    stringsAsFactors = FALSE
+  ))
+}
+
+
+.empty_family_rg <- function() {
+  return(data.frame(
+    family = character(0),
+    trait_id_a = character(0),
+    trait_id_b = character(0),
+    n_programs_a = integer(0),
+    n_programs_b = integer(0),
+    rg = numeric(0),
+    rg_ci_lower = numeric(0),
+    rg_ci_upper = numeric(0),
+    n_loci_rg = integer(0),
+    n_allele_mismatch = integer(0),
+    rg_direction = character(0),
     stringsAsFactors = FALSE
   ))
 }

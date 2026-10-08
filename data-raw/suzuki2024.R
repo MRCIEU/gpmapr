@@ -198,6 +198,80 @@ stopifnot(
 cluster_counts <- table(factor(st6$cluster, levels = cluster_levels))
 stopifnot(all(as.integer(cluster_counts) == clusters$n_signals))
 
+# --- GRCh38 positions of the index SNVs --------------------------------------
+# GPMap is on GRCh38 and Supplementary Table 6 gives GRCh37 positions. Each
+# rsid is looked up in Ensembl (dbSNP mappings, no coordinate liftover) on both
+# builds; the GRCh37 lookup must reproduce pos_b37, so a wrong or re-used rsid
+# fails here. Retired rsids that dbSNP has merged into another are returned
+# under the current rsid, which is kept in rsid_current.
+ensembl_positions <- function(rsids, host) {
+  post_batch <- function(ids) {
+    resp <- httr::RETRY(
+      "POST",
+      paste0(host, "/variation/homo_sapiens"),
+      httr::add_headers("Content-Type" = "application/json", Accept = "application/json"),
+      body = jsonlite::toJSON(list(ids = ids)),
+      encode = "raw",
+      httr::timeout(120),
+      times = 8,
+      pause_cap = 120,
+      quiet = TRUE
+    )
+    httr::stop_for_status(resp)
+    return(jsonlite::fromJSON(httr::content(resp, "text", encoding = "UTF-8"), simplifyVector = FALSE))
+  }
+  get_one <- function(id) {
+    resp <- httr::RETRY(
+      "GET",
+      paste0(host, "/variation/human/", id),
+      httr::add_headers(Accept = "application/json"),
+      httr::timeout(120),
+      times = 8,
+      pause_cap = 120,
+      quiet = TRUE
+    )
+    httr::stop_for_status(resp)
+    return(jsonlite::fromJSON(httr::content(resp, "text", encoding = "UTF-8"), simplifyVector = FALSE))
+  }
+  to_row <- function(query, record) {
+    mappings <- Filter(function(m) m$seq_region_name %in% c(1:22, "X"), record$mappings)
+    stopifnot(length(mappings) == 1)
+    return(data.frame(
+      rsid = query,
+      rsid_current = record$name,
+      chr = as.integer(mappings[[1]]$seq_region_name),
+      pos = as.integer(mappings[[1]]$start),
+      stringsAsFactors = FALSE
+    ))
+  }
+  batches <- lapply(split(rsids, ceiling(seq_along(rsids) / 200)), post_batch)
+  records <- do.call(c, batches)
+  found <- intersect(rsids, names(records))
+  out <- do.call(rbind, lapply(found, function(id) return(to_row(id, records[[id]]))))
+  # Merged rsids come back keyed by their current rsid; look them up one by one.
+  merged <- setdiff(rsids, found)
+  if (length(merged) > 0) {
+    out <- rbind(out, do.call(rbind, lapply(merged, function(id) return(to_row(id, get_one(id))))))
+  }
+  return(out[match(rsids, out$rsid), ])
+}
+b37 <- ensembl_positions(st6$rsid, "https://grch37.rest.ensembl.org")
+b38 <- ensembl_positions(st6$rsid, "https://rest.ensembl.org")
+stopifnot(
+  identical(b37$rsid, st6$rsid),
+  identical(b38$rsid, st6$rsid),
+  all(b37$chr == st6$chr),
+  all(b37$pos == st6$pos_b37),
+  all(b38$chr == st6$chr),
+  identical(b37$rsid_current, b38$rsid_current)
+)
+st6$pos_b38 <- b38$pos
+st6$rsid_current <- b38$rsid_current
+st6 <- st6[, c(
+  "locus", "chr", "rsid", "rsid_current", "pos_b37", "pos_b38", "cluster",
+  "distance_to_centroid"
+)]
+
 utils::write.csv(clusters, file.path(out_dir, "clusters.csv"), row.names = FALSE)
 utils::write.csv(trait_map, file.path(out_dir, "trait_map.csv"), row.names = FALSE)
 utils::write.csv(

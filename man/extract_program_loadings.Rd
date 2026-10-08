@@ -14,12 +14,12 @@ extract_program_loadings(
 \item{clustering_result}{Result of \code{\link[=run_univariate_clustering]{run_univariate_clustering()}} (EBMF).}
 
 \item{program_summary}{Optional result of \code{\link[=summarise_ebmf_programs]{summarise_ebmf_programs()}}, used
-only to restrict to programs with \code{status == "valid"} when
+only to restrict to programs of high or medium confidence when
 \code{valid_only = TRUE}.}
 
 \item{valid_only}{If \code{TRUE} (default) and \code{program_summary} is supplied, keep
-only programs whose \code{status == "valid"}. Otherwise all fitted programs are
-returned.}
+only programs of high or medium confidence (not \code{"low"} or
+\code{"single_trait"}). Otherwise all fitted programs are returned.}
 }
 \value{
 A list with:
@@ -55,8 +55,11 @@ factor sign in EBMF is not identifiable, so both \code{F_pm} and \code{L_pm} are
 reflected by the sign of the target trait's \code{L_pm} loading (making that
 loading positive) while preserving the rank-1 product. When the target trait
 does not load on a program (or \code{L_pm} is unavailable), the program is
-alternatively anchored on the sign of its largest-|loading| SNP. This makes a
-positive cross-trait comparison interpretable as a concordant
-(target-aligned) architecture. High-confidence membership follows the same
-lFSR / magnitude gate used elsewhere in the pipeline.
+alternatively anchored on the sign of its largest-|loading| SNP. Because each
+trait's matrix is also oriented to its own risk allele, two programs that
+share a module have positive SNP loadings at its loci whether the two traits
+move together or apart, so the sign of a cross-trait SNP-loading comparison
+is not a direction (see \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}} and
+\code{\link[=module_rg]{module_rg()}}). High-confidence membership follows the same lFSR / magnitude
+gate used elsewhere in the pipeline.
 }

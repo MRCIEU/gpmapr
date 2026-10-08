@@ -94,10 +94,8 @@ ebmf_posterior_table <- function(clustering_result) {
 #'       raw_factor_signal, factor_strength)
 #'     \item memberships: dataframe (snp_id, program, loading, abs_loading,
 #'       lfsr, emp_p, q, core, tier)
-#'     \item null_summary: list with per-replicate max masses, pooled loading
-#'       quantiles, and `factor_pve` (the proportion of variance explained by
-#'       every factor of every null fit, pooled; used by
-#'       `summarise_ebmf_programs()` to calibrate program strength)
+#'     \item null_summary: list with per-replicate max masses and pooled loading
+#'       quantiles
 #'     \item settings: calibration settings used
 #'   }
 #' @export
@@ -148,7 +146,6 @@ calibrate_ebmf_programs <- function(clustering_result,
 
   null_max_mass <- numeric(n_null)
   null_cells <- vector("list", n_null)
-  null_pve <- vector("list", n_null)
   for (i in seq_len(n_null)) {
     if (verbose) {
       message("Null replicate ", i, "/", n_null)
@@ -158,13 +155,10 @@ calibrate_ebmf_programs <- function(clustering_result,
     null_max_mass[i] <- if (length(masses)) max(masses) else 0
     if (!is.null(fit) && fit$n_factors > 0) {
       null_cells[[i]] <- as.numeric(abs(fit$F_pm))
-      null_pve[[i]] <- as.numeric(fit$pve)
     }
   }
   null_cells <- unlist(null_cells)
   null_cells <- null_cells[is.finite(null_cells)]
-  null_pve <- unlist(null_pve)
-  null_pve <- null_pve[is.finite(null_pve)]
 
   obs_fit <- clustering_result$cluster_details$flash_fit
   obs_signal <- .ebmf_factor_signal(obs_fit)
@@ -191,8 +185,7 @@ calibrate_ebmf_programs <- function(clustering_result,
       null_summary = list(
         max_masses = null_max_mass,
         loading_quantiles = stats::quantile(null_cells,
-                                            c(.5, .9, .95, .99)),
-        factor_pve = null_pve
+                                            c(.5, .9, .95, .99))
       ),
       settings = list(n_null = n_null, alpha_membership = alpha_membership,
                       seed = seed,
@@ -253,8 +246,7 @@ calibrate_ebmf_programs <- function(clustering_result,
     null_summary = list(
       max_masses = null_max_mass,
       loading_quantiles = stats::quantile(null_cells, c(.5, .9, .95, .99)),
-      n_pooled_cells = length(null_cells),
-      factor_pve = null_pve
+      n_pooled_cells = length(null_cells)
     ),
     settings = list(n_null = n_null, alpha_membership = alpha_membership,
                     seed = seed, min_core_members = min_core,

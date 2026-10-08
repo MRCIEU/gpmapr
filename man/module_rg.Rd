@@ -8,10 +8,13 @@ module_rg(
   result,
   program_data,
   coloc_groups,
-  tiers = c("primary", "candidate"),
+  linked_only = TRUE,
   n_boot = 1000L,
   min_loci_rg = 10L,
-  seed = 1
+  seed = 1,
+  bridges = NULL,
+  min_ld_r = 0.5,
+  ld_proxies_fn = ld_proxies
 )
 }
 \arguments{
@@ -23,47 +26,64 @@ a list of them — needed for the per-locus loading weights.}
 
 \item{coloc_groups}{Named list of coloc-group data.frames keyed by trait id.
 Each trait's own effect is taken from its rows where \code{trait_id} equals that
-trait.}
+trait (from the upload's table for a pair involving an uploaded GWAS).}
 
-\item{tiers}{Which link tiers to estimate for: any of \code{"primary"} and
-\code{"candidate"}. Defaults to both. Pass \code{NULL} to estimate every pair.}
+\item{linked_only}{If \code{TRUE} (default), estimate only for pairs with
+\code{linked = TRUE}; \code{FALSE} estimates every pair supplied.}
 
 \item{n_boot}{Percentile-bootstrap replicates over loci. Defaults to \code{1000}.}
+
+\item{min_loci_rg}{Minimum usable loci for an estimate. Defaults to \code{10}.}
 
 \item{seed}{RNG seed for the bootstrap.}
 }
 \value{
 A data.frame with one row per pair: \code{program_id_a}, \code{program_id_b},
-\code{trait_id_a}, \code{trait_id_b}, \code{link_tier}, \code{rg}, \code{rg_ci_lower},
-\code{rg_ci_upper}, \code{n_loci_rg}, \code{n_allele_mismatch}, and \code{rg_direction}.
+\code{trait_id_a}, \code{trait_id_b}, \code{rg}, \code{rg_ci_lower}, \code{rg_ci_upper},
+\code{n_loci_rg}, \code{n_allele_mismatch}, and \code{rg_direction}. When the pairs
+carry \code{direction_profile} (as \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}}'s do),
+also \code{direction_check}: \code{"agree"} or \code{"conflict"} when \code{rg} calls a
+direction and it matches or contradicts the sign of \code{phi_traits}, and
+\code{"no call"} otherwise. \code{rg} is a check on a link's direction; it never
+changes a pair's tier.
 }
 \description{
 For linked cross-trait program pairs, correlate the two target
 traits' own SNP effects across the module's loci — a module-level analogue of
 a local genetic correlation, where the stratification unit is a data-driven
-program rather than a genomic window.
+program rather than a genomic window. This is the direction of a link: the
+sign of \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}}'s \code{concordance_z} is not (see its
+documentation).
 
-Loci are the pair's shared \code{coloc_group_id} axis; each locus is weighted by
-how strongly the module loads on it in both programs and by the precision of
-the two effect estimates:
-\deqn{w_l = (1 - \mathrm{lfsr}_a)(1 - \mathrm{lfsr}_b)
+Loci are the shared loci either program claims as a high-confidence member;
+each locus is weighted by how strongly the module loads on it in both
+programs and by the precision of the two effect estimates:
+\deqn{w_l = w(\mathrm{lfsr}_a)\, w(\mathrm{lfsr}_b)
 |f_a(l) f_b(l)| / (se_a^2 + se_b^2)}
-so loci the module does not load on drop out continuously rather than by a
-threshold. A positive \code{rg} means the alleles that raise trait A also raise
-trait B across this module.
+with the confidence weight \eqn{w} of \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}}
+so loci the module loads on only weakly contribute little. \code{rg} is the
+weighted correlation of the two traits' effects \strong{through the origin},
+\eqn{\sum_l w_l \beta_A \beta_B / \sqrt{\sum_l w_l \beta_A^2 \sum_l w_l \beta_B^2}},
+rather than a mean-centred Pearson correlation: each locus's effect allele is
+arbitrary, and the uncentred form gives the same answer whichever allele a
+locus is coded on. A positive \code{rg} means the alleles that raise trait A also
+raise trait B across this module. Its confidence interval is a percentile
+bootstrap over loci, and \code{rg_direction} is \code{"concordant"} or
+\code{"antagonistic"} only when that interval excludes zero (\code{"undetermined"}
+otherwise).
 
-Effect alleles are checked by requiring the two traits' \code{variant_id} to match
-at a locus; mismatches are dropped and counted in \code{n_allele_mismatch}.
-
-\code{rg_direction} and the \code{direction} reported by
-\code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}} answer different questions and need not
-agree. \code{direction} is a statement about \emph{latent factor structure} — whether
-the two programs' loading patterns align once each has been sign-anchored to
-its own target trait. \code{rg_direction} is a statement about \emph{observed effects} —
-whether the alleles that raise one trait raise or lower the other across the
-module's loci. When the two disagree, \code{rg_direction} is the more directly
-interpretable claim; read it together with the CI, which shows how well
-determined it is.
+Effect alleles must be the same in both traits for the product to mean
+anything. Between two existing GPMap traits this is checked by requiring the
+two traits' \code{variant_id} to match at a locus; mismatches are dropped and
+counted in \code{n_allele_mismatch}. For a pair involving an uploaded GWAS, both
+effects are read from the \strong{upload's own coloc table} -- the upload's row
+and the partner trait's row in the same upload coloc group, which sit at the
+same variant and on the same allele. The partner trait's own table cannot be
+used for this: GPMap reports an upload's associations and an existing
+trait's associations on opposite alleles at about half of all variants (on
+a T2D upload against GPMap's own T2D trait, every disagreement in sign was
+matched by an effect-allele frequency of \code{1 - eaf}). Loci with no partner
+row in the upload's table are dropped and counted in \code{n_allele_mismatch}.
 
 IMPORTANT: shared loci entered each trait's universe by clearing that trait's
 own significance and fine-mapping bar, so the estimate is conditional on that

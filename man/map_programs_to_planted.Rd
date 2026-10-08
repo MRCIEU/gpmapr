@@ -44,7 +44,6 @@ trait that it best overlaps. Used to translate EBMF's arbitrary program
 numbering into the planted labels before cross-trait links can be scored.
 
 Mapping is done on SNP membership by default. Set \code{by = "drivers"} to map on
-the program's loading over background studies instead, which is the right
-choice when scoring the profile axis at low locus overlap: a program whose
-loci were planted privately still has the planted driver studies loading on it.
+the program's loading over background studies instead: a program whose loci
+were planted privately still has the planted driver studies loading on it.
 }

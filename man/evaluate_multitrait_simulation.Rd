@@ -4,18 +4,16 @@
 \alias{evaluate_multitrait_simulation}
 \title{Score Cross-Trait Links Against The Planted Correspondence}
 \usage{
-evaluate_multitrait_simulation(pairs, mapping, ground_truth, tiers = "primary")
+evaluate_multitrait_simulation(pairs, mapping, ground_truth)
 }
 \arguments{
-\item{pairs}{The \code{pairs} table from \code{compare_program_pairs_profiles()} or
-\code{compare_program_pairs_loadings()}.}
+\item{pairs}{The \code{pairs} table from \code{compare_program_pairs_loadings()}. When
+it has a \code{linked} column only the linked pairs are scored; otherwise every
+row is treated as a link.}
 
 \item{mapping}{Result of \code{map_programs_to_planted()}.}
 
 \item{ground_truth}{The \code{ground_truth} component of \code{simulate_trait_pair()}.}
-
-\item{tiers}{Link tiers to score. Defaults to \code{"primary"} only, which is the
-calibrated one-to-one claim.}
 }
 \value{
 A one-row dataframe: \code{n_links}, \code{n_true_positive},
@@ -42,5 +40,6 @@ antagonistic planted programs, because a direction call that says
 programs are concordant -- the split is what shows it cannot see antagonism
 at all. The \code{direction} column scored is whichever the caller supplies, so
 the same function scores the concordance sign or \code{\link[=module_rg]{module_rg()}}'s
-\code{rg_direction}.
+\code{rg_direction}. A link with no direction call (\code{NA} or \code{"undetermined"}) is
+left out of the sign accuracy rather than counted as wrong.
 }

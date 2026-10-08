@@ -9,8 +9,7 @@
 # Investigation V: program validation parameters
 #   similarity_threshold: 0.2 vs 0.5
 #   min_module_size: 2 vs 5
-#   min_connectedness: 0.25 vs 0.5
-#   stability_threshold: 0.3 vs 0.7
+#   similarity_q: 0.01 vs 0.10 (the medium-confidence cut)
 #
 # Each parameter is varied independently while the others remain at their
 # values in the Rmd. The vignette itself retains its generative input-version
@@ -57,19 +56,18 @@ magnitude_thresholds=(0.25 0.5 0.75)
 # Investigation V: program validation parameters
 #
 # Rmd baselines for reference: similarity_threshold = 0.2,
-# min_module_size = 3, min_connectedness = 0.25, stability_threshold = 0.5.
+# min_module_size = 3, similarity_q = 0.05.
 # ---------------------------------------------------------------------------
 
 similarity_thresholds=(0.2 0.5)
 
 module_size_thresholds=(2 3 5)
 
-# The similarity gate (size-matched null) replaces min_mean_internal /
+# The similarity check (size-matched null) replaces min_mean_internal /
 # min_connectedness, which were absolute thresholds sitting below the real
-# similarity graph's own baseline. What needs calibrating now is its BH level.
+# similarity graph's own baseline. What needs calibrating now is the BH level
+# of the medium-confidence cut.
 similarity_q_thresholds=(0.01 0.05 0.10)
-
-stability_thresholds=(0.3 0.5 0.7)
 
 # greedy_Kmax was binding at 50 (null fits returned 49-50 factors, real BMI
 # returned exactly 50). Confirm where it stops binding.
@@ -219,14 +217,6 @@ for value in "${similarity_q_thresholds[@]}"; do
   render_one \
     "V_similarityq_${value}" \
     "similarity_q=${value}"
-
-done
-
-for value in "${stability_thresholds[@]}"; do
-
-  render_one \
-    "V_stability_${value}" \
-    "stability_threshold=${value}"
 
 done
 

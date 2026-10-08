@@ -2,30 +2,27 @@
 % Please edit documentation in R/ebmf_program_validation.R
 \name{summarise_ebmf_programs}
 \alias{summarise_ebmf_programs}
-\title{Validate EBMF Programs Against Filtering and Evidence Metrics}
+\title{Summarise EBMF Programs with a Confidence Tier}
 \usage{
 summarise_ebmf_programs(
   clustering_result,
   s_matrix = NULL,
   edge_threshold = 0.2,
   min_module_size = 5L,
-  min_mean_internal = 0.3,
-  min_connectedness = 0.5,
-  similarity_n_perm = 1000L,
+  similarity_n_perm = 10000L,
   similarity_q_threshold = 0.05,
-  strength_q_threshold = 0.05,
+  high_similarity_q = 0.01,
+  high_min_connectedness = 0.4,
+  min_effective_traits = 1.5,
   n_null = 10,
   alpha_membership = 0.05,
   n_candidate_tier = 25L,
   n_rep = 10,
   frac_traits = 0.8,
   top_n = 25L,
-  stability_threshold = 0.7,
-  stability_all_programs = FALSE,
   posterior_stat = c("median", "mean"),
   posterior_evidence_cap = 50,
   redundancy_threshold = 0.9,
-  snp_redundancy_threshold = Inf,
   seed = 1,
   cores = 1,
   verbose = TRUE
@@ -37,29 +34,32 @@ summarise_ebmf_programs(
 \item{s_matrix}{SNP-by-SNP similarity matrix used for the similarity metrics.
 Defaults to \code{clustering_result$s_matrix}, which excludes the target row.}
 
-\item{edge_threshold}{Absolute similarity used for connectedness. Defaults to
-\code{0.2}.}
+\item{edge_threshold}{Similarity at or above which a member pair counts as
+connected. Defaults to \code{0.2}.}
 
-\item{min_module_size}{Minimum assigned SNPs for \code{size_pass}. Defaults to
-\code{5}.}
-
-\item{min_mean_internal}{Fixed mean internal similarity reported as
-\code{internal_similarity_pass}; does not gate \code{status}. Defaults to \code{0.3}.}
-
-\item{min_connectedness}{Fixed connectedness reported as
-\code{connectedness_pass}; does not gate \code{status}. Defaults to \code{0.5}.}
+\item{min_module_size}{Programs with fewer member SNPs are dropped before any
+other check. Defaults to \code{5}.}
 
 \item{similarity_n_perm}{Random same-size SNP sets drawn for the similarity
-null. Defaults to \code{1000}.}
+test. Defaults to \code{10000}, so that the BH-adjusted q can fall below
+\code{high_similarity_q} even when only a few programs sit at the permutation
+floor.}
 
-\item{similarity_q_threshold}{BH-adjusted q below which \code{similarity_pass} is
-TRUE. Defaults to \code{0.05}.}
+\item{similarity_q_threshold}{BH-adjusted q below which a program is at
+least medium confidence. Defaults to \code{0.05}.}
 
-\item{strength_q_threshold}{BH-adjusted q below which the reported
-\code{strength_pass} flag is TRUE (not a gate). Defaults to \code{0.05}.}
+\item{high_similarity_q}{BH-adjusted q below which (with enough
+connectedness) a program is high confidence. Defaults to \code{0.01}.}
 
-\item{n_null}{Number of row-permuted null fits, used for membership
-calibration and the strength null.}
+\item{high_min_connectedness}{Minimum connectedness for high confidence.
+Defaults to \code{0.4}.}
+
+\item{min_effective_traits}{Programs that pass the similarity test but
+whose \code{effective_n_traits} is below this are \code{"single_trait"}. Defaults
+to \code{1.5}.}
+
+\item{n_null}{Number of row-permuted null fits used for membership
+calibration.}
 
 \item{alpha_membership}{Membership FDR level passed to
 \code{calibrate_ebmf_programs()} for \code{core} cell labelling.}
@@ -67,21 +67,14 @@ calibration and the strength null.}
 \item{n_candidate_tier}{Per program, how many non-core cells to label as the
 uncertified "candidate" tier.}
 
-\item{n_rep}{Number of trait-subsample replicates for stability. Set to \code{0}
-to disable the stability check entirely.}
+\item{n_rep}{Number of trait-subsample refits for \code{replication}. Set to \code{0}
+to skip it.}
 
-\item{frac_traits}{Fraction of trait rows sampled per stability replicate.
+\item{frac_traits}{Fraction of trait rows sampled per replication refit.
 Defaults to \code{0.8} (hold out 20\% of traits).}
 
-\item{top_n}{Size of each program's top-loading SNP set used for stability
-matching.}
-
-\item{stability_threshold}{Minimum replication for \code{stability_pass}.}
-
-\item{stability_all_programs}{If \code{TRUE}, report \code{replication} (and gate
-\code{stability_pass}) for every program, not only those passing size and
-similarity. The refits are the same either way, so this costs nothing
-extra. Defaults to \code{FALSE}.}
+\item{top_n}{Size of each program's top-loading SNP set used for
+replication matching.}
 
 \item{posterior_stat}{Aggregate statistic for the posterior evidence score:
 \code{"median"} or \code{"mean"} of \code{-log10(lfsr)}.}
@@ -95,10 +88,6 @@ preserving the ordering. Defaults to \code{50}.}
 \item{redundancy_threshold}{Maximum absolute factor-loading correlation with
 another program before \code{redundant} is flagged.}
 
-\item{snp_redundancy_threshold}{Maximum reciprocal SNP-containment
-(\code{max_pair_redundancy}) before \code{redundancy_pass} fails. Defaults to \code{Inf},
-which turns the gate off.}
-
 \item{seed}{RNG seed.}
 
 \item{cores}{Number of cores for the parallel trait-subsample refits (passed
@@ -109,61 +98,83 @@ to \code{stability_ebmf_programs()}). Defaults to \code{1} (serial).}
 \value{
 A list with:
 \itemize{
-\item programs: the per-program table (metrics, pass/fail flags,
-\code{fail_reason} and \code{status})
+\item programs: the per-program table (metrics, \code{effective_n_traits} and
+\code{confidence_tier}), ordered by \code{order_programs_by_confidence()}
+\item dropped_programs: programs below \code{min_module_size} (\code{program},
+\code{n_snps_filtered}), removed before any check
+\item background: the trait's background similarity over all SNP pairs
+(\code{mean_similarity}, \code{frac_pairs_edge} = share with \code{S >= edge_threshold}, \code{frac_pairs_abs_edge} = share with \verb{|S| >= edge_threshold}, \code{median_shared_traits} per pair)
 \item memberships: calibrated SNP x program posterior from
 \code{calibrate_ebmf_programs()}
-\item assigned: gated assigned memberships per program
+\item assigned: gated assigned memberships of the kept programs
 \item factor_correlation: K x K correlation matrix of SNP loading vectors
 \item null_summary: permutation-null summary
 \item settings: settings used
 }
 }
 \description{
-One-stop summary of EBMF programs for filtering and reporting.
-Every check is calibrated against the observed matrix itself, so the same
-thresholds transfer between datasets whose size, density and similarity
-baseline differ.
+One-stop summary of EBMF programs for reporting. Programs with
+fewer than \code{min_module_size} member SNPs are dropped first (and listed in
+\code{dropped_programs}). Each remaining program gets a \code{confidence_tier} of
+\code{"high"}, \code{"medium"} or \code{"low"} from a size-matched similarity test and
+connectedness, or \code{"single_trait"} when it passes the similarity test but
+its trait loadings rest on essentially one trait.
 
-Filters applied (a program must pass all of them to get \code{status == "valid"}):
+Member SNPs are those passing the lFSR/magnitude filter. Similarities are
+plain signed \code{S} (not flipped by loading sign and not absolute): on the Suzuki
+T2D benchmark, flipping by loading sign rewarded noise programs whose few
+opposite-sign members happened to be anti-similar, and weak members' loading
+signs are not reliable enough to flip on.
+
+Confidence tier, checked in this order:
 \itemize{
-\item \strong{Size} — at least \code{min_module_size} SNPs passing the
-lFSR/magnitude filter (\code{n_snps_filtered}). An interpretability floor, not
-a discriminating gate.
-\item \strong{Similarity} — the program's member SNPs must be more similar to
-each other than random SNP sets of the same size drawn from the same
-matrix. The statistic is the mean pairwise similarity \code{S} among the
-assigned SNPs (\code{mean_internal_similarity}); its null comes from
-\code{similarity_n_perm} random same-size sets, giving \code{similarity_emp_p} and
-a BH-adjusted \code{similarity_q}. Because the null is size-matched, a tight
-five-SNP program is not penalised for being small.
-\item \strong{Trait-subsampling stability} — the top-loading SNPs must be
-recovered with replication \verb{>= stability_threshold} (mean best Jaccard
-overlap) when \code{1 - frac_traits} of the traits are held out and flashier is
-refit. Only run for programs passing size and similarity unless
-\code{stability_all_programs = TRUE}.
-\item \strong{SNP redundancy} — off by default (\code{snp_redundancy_threshold = Inf}); see \code{max_pair_redundancy} below.
+\item \strong{low} — \code{similarity_q >= similarity_q_threshold} (or missing):
+the member SNPs are no more alike than random SNP groups of the same
+size. A program that fails this is low whatever its number of traits, so
+it can be set aside.
+\item \strong{single_trait} — passes the similarity test, but
+\code{effective_n_traits < min_effective_traits}. A program is defined as
+multi-trait; a factor carried by one trait is just that trait's hits,
+which noise produces too, and a set of SNPs sharing one trait looks
+coherent to the similarity checks whether or not it is real. It needs a
+closer look rather than being discarded, so it sorts above low.
+\item \strong{high} — \code{similarity_q < high_similarity_q} and
+\code{connectedness >= high_min_connectedness}.
+\item \strong{medium} — \code{similarity_q < similarity_q_threshold}, but not high.
 }
-Reported, not gated:
+\code{effective_n_traits} is \code{1 / sum(p^2)}, where \code{p} are the program's squared
+trait loadings (\code{L_pm}, target row excluded) as shares of their total: 1 for
+a program on one trait, \code{n} for \code{n} equally loaded traits. Near-duplicate
+traits each count, so remove them from the matrix beforehand.
+The checks behind the tier:
 \itemize{
-\item \strong{Strength} — whether the factor explains more of the matrix than
-factors fitted to structureless data do. \code{factor_pve} is the proportion
-of variance explained by the factor (flashier's \code{pve}); its null is the
-pooled \code{pve} of every factor from the row-permuted null fits in
-\code{calibrate_ebmf_programs()}, giving \code{strength_emp_p}, a BH-adjusted
-\code{strength_q} and the \code{strength_pass} flag. If the null fits produce no
-factors at all, noise cannot match any program and \code{strength_pass} is
-TRUE. Not a gate: on the Suzuki T2D benchmark it removed clearly real
-small programs, because a factor's variance explained scales with how
-many SNPs and traits it spans.
-\item \code{mean_internal_similarity} and \code{connectedness} (share of member
-pairs with \verb{|S| >= edge_threshold}), with \code{internal_similarity_pass} and
-\code{connectedness_pass} against the fixed \code{min_mean_internal} /
-\code{min_connectedness} for comparison with earlier runs.
-\item \code{parent_program} / \code{parent_containment} — when at least 60\% of a
+\item \strong{Similarity} — \code{mean_internal_similarity}, the mean \code{S} over
+member pairs, is compared with \code{similarity_n_perm} random SNP sets of the
+same size from the same trait. \code{similarity_emp_p} is the share of random
+sets at least as similar and \code{similarity_q} its BH adjustment across the
+kept programs. This is a significance test, so it favours larger programs;
+the trait's background similarity (see \code{background}) sets how hard it is
+to pass.
+\item \strong{Connectedness} — share of member pairs with
+\code{S >= edge_threshold}.
+}
+Reported, not used for the tier:
+\itemize{
+\item \code{excess_similarity} / \code{excess_connectedness} — the member mean
+similarity and connectedness minus their means in the random sets: effect
+sizes that do not grow with program size. \code{similarity_lift} (observed /
+random mean; NA when the random mean is at most 0.01) and \code{similarity_z}
+come from the same random sets.
+\item \code{factor_pve} — the proportion of variance explained by the factor
+(flashier's \code{pve}).
+\item \code{replication} / \code{sd_replication} — mean best Jaccard overlap of the
+program's top-loading SNPs with a factor refit after holding out
+\code{1 - frac_traits} of the traits, over \code{n_rep} refits.
+\item \code{parent_program} / \code{parent_containment} — when at least 90\% of a
 program's SNPs lie within 500 kb of the SNPs of a larger program, that
 program is reported as its parent. Nested sub-programs are kept; the
-parent link says where they sit.
+parent link says where they sit, and \code{order_programs_by_confidence()}
+lists them under it.
 \item \code{posterior_evidence} — aggregate (\code{median} or \code{mean}) of
 \code{-log10(lfsr)} across a program's assigned SNPs.
 \item \code{max_abs_factor_corr} / \code{redundant} — the maximum absolute
@@ -172,7 +183,6 @@ program; \code{redundant} flags programs whose maximum correlation exceeds
 \code{redundancy_threshold}.
 \item \code{max_pair_redundancy} / \code{most_redundant_program} — the reciprocal
 SNP-containment score \code{min(shared / n_snps_A, shared / n_snps_B)} and its
-partner program. It gates \code{redundancy_pass} only when
-\code{snp_redundancy_threshold} is finite.
+partner program.
 }
 }

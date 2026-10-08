@@ -8,7 +8,7 @@ enrich_program_loadings_tissues(
   clustering_result,
   coloc_groups,
   snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-  min_category_size = 5L,
+  min_category_size = 2L,
   min_loading_magnitude = 0
 )
 }

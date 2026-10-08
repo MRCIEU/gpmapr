@@ -26,22 +26,24 @@ params:
   min_snp_signals: 2
   compress_method: asinh
   compress_scale: 5
-  similarity_threshold: 0.2
-  ebmf_lfsr_threshold: 0.05
-  ebmf_magnitude_threshold: 0.3
+  similarity_threshold: 0.5
+  ebmf_lfsr_threshold: 0.02
+  ebmf_magnitude_threshold: 0.75
   ebmf_drop_global: true
-  ebmf_prior: point_normal
+  ebmf_prior: point_laplace
   ebmf_backfit: true
 
   # Program validation parameters (inputs to summarise_ebmf_programs)
   min_module_size: 3
   min_mean_internal: 0.3
   min_connectedness: 0.25
-  # Size-matched similarity gate; variance-explained strength (reported only)
-  # (min_mean_internal / min_connectedness are reported only).
-  similarity_n_perm: 1000
+  # Confidence tiers from similarity_q and connectedness (min_mean_internal /
+  # min_connectedness above are only recorded by run_univariate_clustering()).
+  similarity_n_perm: 10000
   similarity_q: 0.05
-  strength_q: 0.05
+  high_similarity_q: 0.01
+  high_connectedness: 0.4
+  min_effective_traits: 1.5
   ebmf_greedy_Kmax: 100
   n_null: 5
   alpha_membership: 0.05
@@ -49,7 +51,6 @@ params:
   n_stability_rep: 5
   frac_traits: 0.8
   stability_top_n: 20
-  stability_threshold: 0.5
   posterior_stat: median
   posterior_evidence_cap: 50
   redundancy_threshold: 0.9
@@ -58,7 +59,7 @@ params:
   # Replication settings. n_sim is the Monte Carlo sample size (ADEMP);
   # override it at render time for fast test runs, e.g.
   #   rmarkdown::render(..., params = list(n_sim = 10))
-  n_sim: 200
+  n_sim: 3
   master_seed: 1
   # Persist the ADEMP estimates/performance datasets when TRUE; output_dir
   # defaults to tempdir() when empty.
@@ -130,18 +131,17 @@ clustering_settings <- list(
 validation_settings <- list(
   edge_threshold = params$similarity_threshold,
   min_module_size = params$min_module_size,
-  min_mean_internal = params$min_mean_internal,
-  min_connectedness = params$min_connectedness,
   similarity_n_perm = params$similarity_n_perm,
   similarity_q_threshold = params$similarity_q,
-  strength_q_threshold = params$strength_q,
+  high_similarity_q = params$high_similarity_q,
+  high_min_connectedness = params$high_connectedness,
+  min_effective_traits = params$min_effective_traits,
   n_null = n_null,
   alpha_membership = params$alpha_membership,
   n_candidate_tier = params$n_candidate_tier,
   n_rep = n_stability_rep,
   frac_traits = params$frac_traits,
   top_n = params$stability_top_n,
-  stability_threshold = params$stability_threshold,
   posterior_stat = params$posterior_stat,
   posterior_evidence_cap = params$posterior_evidence_cap,
   redundancy_threshold = params$redundancy_threshold,
@@ -161,23 +161,39 @@ module simulations
 identical. The only difference is that EBMF is now trying to discover programs
 in data where the only structure is randomness.
 
-The four validation checks are exactly the same gates used on the real pipeline:
+The checks are exactly the same as on the real pipeline:
 
-- `size` — at least `min_module_size` filtered SNPs (`n_snps_filtered`).
-- `similarity` — the member SNPs' mean pairwise similarity beats random SNP
-  sets of the same size (`similarity_q < similarity_q` threshold).
-- `strength` (reported, not a gate) — the factor explains more variance than
-  factors fitted to row-permuted copies of the matrix
-  (`strength_q < strength_q` threshold).
-- `stability` — top-loading SNPs recovered (mean Jaccard overlap)
-  `>= stability_threshold` under trait subsampling.
+- Programs with fewer than `min_module_size` filtered SNPs are dropped before
+  any check.
+- **confidence tier**, checked in this order:
+  - `low` when `similarity_q >= similarity_q`: the member SNPs are no more
+    alike than random SNP groups of the same size. This applies whatever the
+    number of traits, so a low program can simply be set aside.
+  - `single_trait` when the program passes the similarity test but its trait
+    loadings rest on fewer than `min_effective_traits` effective traits. It is
+    one trait's hits, which noise produces too, so it needs a closer look
+    rather than being discarded or accepted.
+  - `high` when `similarity_q < high_similarity_q` and `connectedness >=
+    high_connectedness`; `medium` otherwise.
 
-A program is `valid` only when every check passes. Under a true null, **any**
-program that passes all four checks is a false discovery, so the per-check pass
-rates below are false-discovery rates: they show how often each gate (and the
-pipeline as a whole) is fooled by random background. `background_absorbed` is
+  A program counts as `valid` when its tier is high or medium.
+- `excess_similarity` / `excess_connectedness` (effect sizes against the random
+  groups), `factor_pve` and `replication` (trait-subsampling Jaccard overlap)
+  are reported alongside, not used for the tier.
+
+Under a true null, **any** program of high or medium confidence is a false
+discovery, so the tier shares below are false-discovery rates: they show how
+often each tier (and the pipeline as a whole) is fooled by random
+background. `background_absorbed` is
 the SNP-level analogue — the fraction of background SNPs pulled into valid
 programs.
+
+The `single_trait` share has its own reading. Null programs almost always rest
+on one trait, so when the trait count was checked first they were all
+labelled `single_trait`. Now a null program is `single_trait` only if its SNPs
+also pass the similarity test. The `single_trait` share is therefore how often
+noise produces a program that lands in the "needs a closer look" tier rather
+than in `low`, where it can be discarded.
 
 Because `K = 0`, the module-only generative parameters (`module_sizes`,
 `overlap`, `n_traits_per_module`, `trait_overlap`, `driver_sharing`,
@@ -284,16 +300,18 @@ under it, any program passing all four gates is a false discovery, so the
 `valid` rate is the pipeline-level false-discovery rate.
 
 **Methods.** Byte-for-byte the same pipeline and thresholds as the module
-study: `run_univariate_clustering()` then `summarise_ebmf_programs()` with the
-three gates (size, similarity, stability), with strength reported.
+study: `run_univariate_clustering()` then `summarise_ebmf_programs()`, which
+drops programs below `min_module_size` and gives the rest a confidence tier
+(similarity test, then effective number of traits, then connectedness), with
+factor strength and replication reported.
 
 **Performance measures.**
 
 - `n programs`: EBMF programs surviving the lFSR/magnitude membership gate.
-- `valid programs`: programs passing all four gates.
+- `valid programs`: programs of high or medium confidence.
 - `valid rate = valid programs / n programs` (program-level false-discovery rate).
 - `background_absorbed = |{background SNPs in valid programs}| / n_background` (SNP-level false-discovery rate).
-- Per-gate pass rates: `size`, `internal_sim`, `connectedness`, `stability`.
+- Tier rates: the share of programs in each confidence tier (`high`, `medium`, `single_trait`, `low`). `single_trait` counts programs that pass the similarity test but rest on one trait: noise that needs a closer look rather than being discarded.
 
 **Monte Carlo uncertainty.** Each rate is the mean over `n_sim` replicates
 (default `r n_sim`; override with `params = list(n_sim = ...)` for fast test
@@ -311,7 +329,7 @@ settings_to_show <- c(
   "ebmf_backfit",
   "min_mean_internal", "min_connectedness",
   "n_null", "alpha_membership", "n_candidate_tier", "n_stability_rep",
-  "frac_traits", "stability_top_n", "stability_threshold",
+  "frac_traits", "stability_top_n",
   "posterior_stat", "posterior_evidence_cap", "redundancy_threshold", "cores",
   "n_sim"
 )
@@ -373,7 +391,9 @@ run_tier_one <- function(spec, rep) {
     summarise_ebmf_programs,
     c(list(clustering_result = res, s_matrix = res$s_matrix), vs)
   )
-  valid_ids <- smry$programs$program[smry$programs$status == "valid"]
+  valid_ids <- smry$programs$program[
+    as.character(smry$programs$confidence_tier) %in% c("high", "medium")
+  ]
   valid_assigned <- smry$assigned |>
     dplyr::filter(program %in% valid_ids)
   ev <- evaluate_univariate_simulation(
@@ -513,15 +533,11 @@ rep_check_rates <- program_checks |>
   dplyr::group_by(tier, rep) |>
   dplyr::summarise(
     n_programs = dplyr::n(),
-    rate_size = mean(size_pass),
-    rate_similarity = mean(similarity_pass),
-    rate_strength = mean(strength_pass),
-    rate_stability = if (any(stability_checked)) {
-      mean(stability_pass[stability_checked])
-    } else {
-      NA_real_
-    },
-    rate_valid = mean(status == "valid"),
+    rate_high = mean(confidence_tier == "high"),
+    rate_medium = mean(confidence_tier == "medium"),
+    rate_single_trait = mean(confidence_tier == "single_trait"),
+    rate_low = mean(confidence_tier == "low"),
+    rate_valid = mean(confidence_tier %in% c("high", "medium")),
     .groups = "drop"
   )
 
@@ -538,8 +554,7 @@ count_mc$measure <- factor(
 )
 
 check_cols <- c(
-  "rate_size", "rate_similarity", "rate_strength",
-  "rate_stability", "rate_valid"
+  "rate_high", "rate_medium", "rate_single_trait", "rate_low", "rate_valid"
 )
 check_mc <- do.call(rbind, lapply(check_cols, function(cl) {
   out <- ademp_summarise(
@@ -551,7 +566,7 @@ check_mc <- do.call(rbind, lapply(check_cols, function(cl) {
 check_mc$measure <- factor(
   check_mc$measure,
   levels = check_cols,
-  labels = c("size", "similarity", "strength", "stability", "valid")
+  labels = c("high", "medium", "single trait", "low", "valid")
 )
 
 format_est_mcse <- function(estimate, mcse, scale = 1, digits = 2) {
@@ -595,14 +610,16 @@ knitr::kable(
   caption = paste0(
     "Per-gate pass rates by null version (percent; per-replicate rate averaged ",
     "across ", n_sim, " replicates, Monte Carlo SE in parentheses). The ",
-    "stability rate is over programs re-checked after the size and ",
-    "similarity gates."
+    "high / medium / single trait / low are the confidence-tier shares; valid = high or ",
+    "medium."
   )
 )
 ```
 
-The `stability` pass rate is computed only over programs that were actually
-re-checked (those passing the size and similarity checks).
+`high`, `medium`, `single trait` and `low` are the shares of programs in
+each confidence tier; `valid` is high plus medium. Under the null, `single
+trait` is the share of noise programs that pass the similarity test on one
+trait's hits; the rest that fail the test are `low`.
 
 ```{r pass-rate-plot, fig.height=8, fig.width=9}
 gate_plot_data <- check_mc |>
@@ -625,11 +642,9 @@ ggplot2::ggplot(
 
 ## Program-level validation checks
 
-For each version, every program found across the replicates is shown with the
-four validation checks as separate columns. A check is marked `FAIL` when the
-program does not meet that criterion; `n/a` under `stability` means the
-program already failed the size or similarity check, so stability was not
-re-tested.
+For each version, every program found across the replicates is listed by
+replicate and then by confidence tier (green high, orange medium, grey single
+trait, red low).
 
 ```{r check-helper, include=FALSE}
 check_table <- function(which_tier) {
@@ -638,34 +653,41 @@ check_table <- function(which_tier) {
   if (nrow(df) == 0) {
     return(NULL)
   }
+  # Parent/child labels are not shown here: simulated SNPs share one
+  # chromosome window, so parent links carry no meaning in simulations.
+  tier_rank <- match(
+    as.character(df$confidence_tier),
+    c("high", "medium", "single_trait", "low")
+  )
+  sim_z <- df$similarity_z
+  sim_z[!is.finite(sim_z)] <- -Inf
+  df <- df[order(df$rep, tier_rank, -sim_z), , drop = FALSE]
   df |>
     dplyr::mutate(
-      check_size = ifelse(size_pass, "pass", "FAIL"),
-      check_similarity = ifelse(similarity_pass, "pass", "FAIL"),
-      check_strength = ifelse(strength_pass, "pass", "FAIL"),
-      check_stability = dplyr::case_when(
-        !stability_checked ~ "n/a",
-        stability_pass ~ "pass",
-        TRUE ~ "FAIL"
-      ),
+      program = as.character(program),
+      confidence_tier = as.character(confidence_tier),
+      effective_n_traits = round(effective_n_traits, 2),
       mean_internal_similarity = round(mean_internal_similarity, 3),
-      similarity_lift = round(similarity_lift, 2),
+      excess_similarity = round(excess_similarity, 3),
+      similarity_q = signif(similarity_q, 2),
+      connectedness = round(connectedness, 3),
+      excess_connectedness = round(excess_connectedness, 3),
       factor_pve_pct = round(100 * factor_pve, 2),
       replication = round(replication, 3)
     ) |>
     dplyr::select(
-      rep, program, n_snps, n_snps_filtered, mean_internal_similarity,
-      similarity_lift, factor_pve_pct, replication,
-      check_size, check_similarity, check_strength,
-      check_stability, status
+      rep, program, confidence_tier, n_snps, n_snps_filtered,
+      effective_n_traits, mean_internal_similarity, excess_similarity,
+      similarity_q, connectedness,
+      excess_connectedness,
+      factor_pve_pct, replication
     ) |>
-    dplyr::arrange(rep, program) |>
-    knitr::kable(
-      row.names = FALSE,
+    kable_confidence(
       col.names = c(
-        "rep", "program", "n_snps", "n_snps filtered",
-        "mean internal similarity", "similarity lift", "factor PVE %",
-        "replication", "size", "similarity", "strength", "stability", "status"
+        "rep", "program", "confidence", "n_snps", "n_snps filtered",
+        "effective traits", "mean internal similarity", "excess similarity",
+        "similarity q",
+        "connectedness", "excess connectedness", "factor PVE %", "replication"
       )
     )
 }
@@ -698,12 +720,12 @@ for (nm in names(tier_specs)) {
     (still slow, because of the 600 traits).
   Lowering `n_null`, `n_stability_rep` and `n_traits` gives the largest
   speed-up.
-- Under a true null (`K = 0`) any program passing all four
-  validation checks is a **false discovery**; the `valid` column is the
-  pipeline-level false-positive rate.
+- Under a true null (`K = 0`) any program of high or medium confidence is a
+  **false discovery**; the `valid` column is the pipeline-level false-positive
+  rate.
 - `n programs` is the number of EBMF programs surviving the lFSR/magnitude
   membership gate, before any validation check is applied. `valid programs` is
-  how many of those pass every check.
+  how many of those are of high or medium confidence.
 - `background_absorbed` is the fraction of background SNPs placed into valid
   programs. Because there is no planted structure, every background SNP is
   genuinely background, so this is the SNP-level false-discovery rate.

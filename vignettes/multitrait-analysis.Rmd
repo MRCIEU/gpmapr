@@ -1,0 +1,1052 @@
+---
+title: "Investigation of multi-trait EBMF program correspondence"
+output:
+  rmarkdown::html_vignette:
+    includes:
+      in_header: investigation-wide.html
+vignette: >
+  %\VignetteIndexEntry{Investigation of multi-trait EBMF program correspondence}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+params:
+  api: "production"
+  include_trans: true
+  trait_ids: ["c6d2e20f-6ece-d093-78ee-37534547c466", "1631", "1630", "1640"]
+  trait_subset: "phenotypic"
+  min_snp_signals: 2
+  min_module_size: 3
+  compress_method: "asinh"
+  compress_scale: 5
+  similarity_threshold: 0.2
+  ebmf_magnitude_threshold: 0.5
+  ebmf_lfsr_threshold: 0.02
+  ebmf_prior: "point_laplace"
+  ebmf_backfit: true
+  min_mean_internal: 0.3
+  min_connectedness: 0.5
+  n_null: 5
+  alpha_membership: 0.05
+  n_candidate_tier: 25
+  n_rep: 2
+  frac_traits: 0.8
+  stability_top_n: 20
+  posterior_stat: "median"
+  posterior_evidence_cap: 50
+  redundancy_threshold: 0.9
+  cores: 5
+  n_perm: 3000
+  fdr_threshold: 0.05
+  phi_high: 0.85
+  phi_low: 0.70
+  min_alignment: 0.5
+  min_eff_loci: 5
+  min_shared_loci: 3
+  mutual_best: false
+  associations: "coloc"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  eval = TRUE,
+  out.width = "100%",
+  fig.align = "center"
+)
+```
+
+```{r libraries}
+pkg_root <- if (file.exists("../DESCRIPTION")) ".." else "."
+if (requireNamespace("devtools", quietly = TRUE)) {
+  devtools::load_all(pkg_root, quiet = TRUE)
+} else {
+  library(gpmapr)
+}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r trait-metadata, include=FALSE}
+trait_ids <- as.character(params$trait_ids)
+if (length(trait_ids) < 2) {
+  stop("At least two trait_ids are required for a multi-trait comparison")
+}
+select_api(params$api)
+# One call per trait, not the plural traits(): a GWAS upload's own numeric
+# database id (trait()$trait$id) is not its GUID, so a lookup keyed by `id`
+# silently drops upload rows. `trait_name` is set for both a public trait and
+# an upload (see .decorate_gwas_upload()), so it is read directly against the
+# id each trait is actually looked up by everywhere else in this vignette.
+trait_name_map <- stats::setNames(
+  vapply(trait_ids, function(tid) {
+    nm <- trait(tid)$trait$trait_name
+    return(if (is.null(nm) || is.na(nm) || !nzchar(nm)) tid else nm)
+  }, character(1)),
+  trait_ids
+)
+```
+
+This vignette extends the single-trait investigation
+(`investigation-univariate-analysis.html`) to **multiple traits**, and asks one
+question: **which programs are shared between traits, which SNPs carry them,
+and do those SNPs push the traits the same way or opposite ways?**
+
+The default set runs this on real data with a strong, independently
+published prior to check against: the T2D GWAS upload from
+[Suzuki T2D](investigation-suzuki-t2d.html) (GUID
+`c6d2e20f-6ece-d093-78ee-37534547c466`), whose high/medium programs turned out
+unusually clean, alongside three more specific metabolic traits rather than
+BMI -- whose own background is dominated by dozens of body-size traits that
+move with it almost everywhere (see
+[Investigation of univariate analysis](investigation-univariate-analysis.html))
+and so needs more care than a first cross-trait check calls for. Every
+cross-trait pair of programs is scored, from however many traits are
+supplied: triglyceride levels (1631), HDL cholesterol (1630) and HbA1c (1640),
+each paired with T2D and with each other. Suzuki et al.'s own cluster profiles
+give concrete expectations to check the links against
+([Suzuki T2D, Part 5](investigation-suzuki-t2d.html)):
+
+- **Triglycerides** should link to T2D's Lipodystrophy and Metabolic syndrome
+  programs (P2, P6, P10, P24, P31, P35, P47 in the T2D-only fit) and be mostly
+  **concordant**, but with a possible **antagonistic** TM6SF2-type liver
+  locus -- the one place a single partner trait is expected to show both
+  directions at once.
+- **HDL cholesterol** should link to the same Lipodystrophy/Metabolic
+  syndrome programs, **antagonistically** (the T2D risk allele lowers HDL).
+- **HbA1c** should link to T2D's beta-cell and Residual glycaemic signal
+  instead -- a different part of the partition from the lipid traits, and the
+  only one of the three expected to touch T2D's glycaemic core directly.
+
+EBMF programs are discovered independently for each target trait, so each
+trait's architecture is described in its own terms first. Every cross-trait
+pair of programs is then asked two questions. **Same biology?** -- are the two
+programs driven by the same background traits in the same proportions
+(profile congruence of their trait loadings, `L_pm`)? **Same SNPs?** -- where
+the two traits carry the same fine-mapped loci, do the programs load on them
+alike (alignment of their SNP loadings, `F_pm`)? The answers are combined into
+high / medium / low tiers; high- and medium-tier pairs are **links**, and links
+are grouped into **multi-trait families**, each with the set of loci its
+programs claim. The **direction** of a link -- whether the alleles involved
+raise both traits or raise one and lower the other -- comes from the sign of
+the profile congruence and, where enough loci are shared, from `module_rg()`,
+the correlation of the traits' own allele effects.
+
+Traits are supplied as an array in `params$trait_ids`. We use
+`r paste0("**", unname(trait_name_map[trait_ids]), "** (trait id ", trait_ids, ")", collapse = ", ")`.
+
+```{r params}
+api <- params$api
+# Resolved from vignettes/_ebmf_settings.yml, the same file the univariate
+# study reads. Previously this vignette carried its own ebmf_magnitude_threshold
+# (0.5 vs 0.75) and include_trans (FALSE vs TRUE), so it factorised a different
+# matrix and its "programs" were not the univariate programs at all -- which is
+# why the two studies did not line up.
+ebmf_settings <- resolve_ebmf_settings(params)
+settings_signature <- ebmf_settings_signature(ebmf_settings)
+
+trait_subset <- ebmf_settings$trait_subset
+min_module_size <- as.integer(ebmf_settings$min_module_size)
+min_snp_signals <- as.integer(ebmf_settings$min_snp_signals)
+compress_method <- ebmf_settings$compress_method
+compress_scale <- as.numeric(ebmf_settings$compress_scale)
+include_trans <- isTRUE(ebmf_settings$include_trans)
+similarity_threshold <- as.numeric(ebmf_settings$similarity_threshold)
+ebmf_lfsr_threshold <- as.numeric(ebmf_settings$ebmf_lfsr_threshold)
+ebmf_prior <- ebmf_settings$ebmf_prior
+ebmf_backfit <- isTRUE(ebmf_settings$ebmf_backfit)
+ebmf_magnitude_threshold <- as.numeric(ebmf_settings$ebmf_magnitude_threshold)
+ebmf_greedy_Kmax <- as.integer(ebmf_settings$ebmf_greedy_Kmax)
+similarity_n_perm <- as.integer(ebmf_settings$similarity_n_perm)
+similarity_q_threshold <- as.numeric(ebmf_settings$similarity_q)
+high_similarity_q <- as.numeric(ebmf_settings$high_similarity_q)
+high_connectedness <- as.numeric(ebmf_settings$high_connectedness)
+min_effective_traits <- as.numeric(ebmf_settings$min_effective_traits)
+associations <- params$associations
+min_mean_internal <- as.numeric(params$min_mean_internal)
+min_connectedness <- as.numeric(params$min_connectedness)
+n_null <- as.integer(params$n_null)
+alpha_membership <- as.numeric(params$alpha_membership)
+n_candidate_tier <- as.integer(params$n_candidate_tier)
+n_rep <- as.integer(params$n_rep)
+frac_traits <- as.numeric(params$frac_traits)
+stability_top_n <- as.integer(params$stability_top_n)
+posterior_stat <- params$posterior_stat
+posterior_evidence_cap <- as.numeric(params$posterior_evidence_cap)
+redundancy_threshold <- as.numeric(params$redundancy_threshold)
+cores <- as.integer(params$cores)
+n_perm <- as.integer(params$n_perm)
+fdr_threshold <- as.numeric(params$fdr_threshold)
+phi_high <- as.numeric(params$phi_high)
+phi_low <- as.numeric(params$phi_low)
+min_alignment <- as.numeric(params$min_alignment)
+min_eff_loci <- as.numeric(params$min_eff_loci)
+min_shared_loci_link <- as.integer(params$min_shared_loci)
+mutual_best <- isTRUE(params$mutual_best)
+
+knitr::kable(
+  data.frame(
+    api = api,
+    trait_ids = paste(trait_ids, collapse = ", "),
+    trait_subset = trait_subset,
+    min_snp_signals = min_snp_signals,
+    min_module_size = min_module_size,
+    compress_method = compress_method,
+    compress_scale = compress_scale,
+    include_trans = include_trans,
+    similarity_threshold = similarity_threshold,
+    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
+    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
+    ebmf_prior = ebmf_prior,
+    ebmf_backfit = ebmf_backfit,
+    min_mean_internal = min_mean_internal,
+    min_connectedness = min_connectedness,
+    n_null = n_null,
+    n_rep = n_rep,
+    n_perm = n_perm,
+    fdr_threshold = fdr_threshold,
+    phi_high = phi_high,
+    phi_low = phi_low,
+    min_alignment = min_alignment,
+    min_eff_loci = min_eff_loci,
+    min_shared_loci = min_shared_loci_link,
+    mutual_best = mutual_best,
+    associations = associations,
+    stringsAsFactors = FALSE
+  ),
+  caption = "Active run parameters",
+  row.names = FALSE
+)
+
+knitr::kable(
+  data.frame(
+    trait_id = trait_ids,
+    trait_name = unname(trait_name_map[trait_ids]),
+    stringsAsFactors = FALSE
+  ),
+  caption = "Target traits compared",
+  row.names = FALSE
+)
+```
+
+## Step 1: Univariate EBMF per trait
+
+The existing single-trait pipeline is run independently for each target trait:
+`run_univariate_clustering()` (EBMF) followed by `summarise_ebmf_programs()`.
+Programs of high or medium confidence are kept (not low or single_trait).
+Each program's posterior-mean SNP loadings (`F_pm`), lFSR, and high-confidence
+SNP membership are then extracted, with loadings sign-oriented to the target
+trait (see `extract_program_loadings()`).
+
+Each anchor trait has its own list of **duplicate traits**, removed before
+fitting: other GWAS of the same measurement (and, for T2D, diagnosis,
+treatment, family-history and complication traits that repeat the T2D row
+at every SNP, the same list as in
+[Suzuki T2D](univariate-analysis-suzuki-t2d.html)). A duplicate of the anchor
+is positive at almost every one of its SNPs after orientation, so it adds the
+same component to every SNP's profile and hides the programs that actually
+differ between SNPs (see [BMI](univariate-analysis-bmi.html) for what that
+costs).
+
+The same lists are passed to the cross-trait comparison as
+`exclude_features`: a trait listed for either anchor is left out of every
+profile comparison involving that anchor, including the partner's fit, where
+it is an ordinary background trait. Without that, a TG duplicate sitting in
+the HDL fit could carry a TG ~ HDL profile match almost on its own.
+
+Only measurements of the anchor itself are listed. Related but different
+measurements are kept on purpose: NMR lipoprotein-subclass traits, apolipoprotein
+A1, glucose traits, and haemoglobin / red-cell traits (which run opposite to
+HbA1c and are what separates a red-cell route to HbA1c from a glycaemic one).
+The table after the fit shows, for each listed trait, how closely it tracks
+its anchor at the anchor's own loci.
+
+```{r proxy-traits}
+# Duplicate traits per anchor, keyed by the trait_id used below. The T2D list
+# is the same as univariate-analysis-suzuki-t2d.Rmd's; the TG, HDL and HbA1c
+# lists are other GWAS of the same measurement (see the evidence table after
+# Step 1's fit).
+t2d_id <- "c6d2e20f-6ece-d093-78ee-37534547c466"
+duplicate_traits <- data.frame(
+  anchor_id = c(rep(t2d_id, 16), rep("1631", 3), rep("1630", 2), rep("1640", 2)),
+  trait_id = c(
+    "114", "2499", "2549",
+    "2863", "3106", "4536",
+    "1494", "3270", "4422", "3333", "4300", "4403",
+    "3428", "3779", "3580",
+    "2814",
+    "2617", "1490", "2236",
+    "2612", "1485",
+    "2611", "915"
+  ),
+  trait_name = c(
+    "Type 2 diabetes",
+    "Type 2 diabetes (Firth correction)",
+    "Type 2 diabetes (SPA correction)",
+    "Diabetes diagnosed by doctor",
+    "Non-cancer illness code, self-reported: diabetes",
+    "Diagnoses - secondary ICD10: E11.9 Without complications",
+    "Medication use (drugs used in diabetes)",
+    "Treatment/medication code: metformin",
+    "Treatment/medication code: gliclazide",
+    "Treatment/medication code: insulin product",
+    "Medication for cholesterol, blood pressure or diabetes: Insulin",
+    "Started insulin within one year diagnosis of diabetes",
+    "Illnesses of mother: Diabetes",
+    "Illnesses of father: Diabetes",
+    "Illnesses of siblings: Diabetes",
+    "Eye problems/disorders: Diabetes related eye disease",
+    "Triglyceride levels (UKB data field 30870)",
+    "Triglycerides",
+    "Total triglycerides levels",
+    "High density lipoprotein cholesterol levels (UKB data field 30760)",
+    "HDL cholesterol",
+    "Glycated haemoglobin HbA1c levels (UKB data field 30750)",
+    "Glycated haemoglobin levels"
+  ),
+  group = c(
+    rep("T2D GWAS", 3), rep("Diagnosis", 3), rep("Treatment", 6),
+    rep("Family history", 3), "Complication",
+    rep("Other GWAS of the anchor", 7)
+  ),
+  stringsAsFactors = FALSE
+)
+proxy_trait_ids <- split(duplicate_traits$trait_id, duplicate_traits$anchor_id)
+
+knitr::kable(
+  duplicate_traits |>
+    dplyr::mutate(anchor = unname(trait_name_map[anchor_id])) |>
+    dplyr::select(anchor, trait_id, trait_name, group),
+  caption = paste0(
+    "Duplicate traits removed from each anchor's own matrix before fitting, ",
+    "and left out of every profile comparison involving that anchor."
+  ),
+  row.names = FALSE
+)
+```
+
+```{r step1-run}
+# How closely each listed duplicate tracks its anchor at the anchor's own
+# loci: n_loci (loci where the duplicate is observed), coverage (share of the
+# anchor's loci), pct_same_sign (effect in the same direction after orienting
+# to the anchor's risk allele) and r_z (uncentred correlation of the oriented
+# z-scores with the anchor's |z|; 1 = the same effects up to scale).
+duplicate_evidence <- function(coloc_groups, tid, ids) {
+  cg <- coloc_groups |>
+    dplyr::mutate(trait_id = as.character(trait_id)) |>
+    dplyr::filter(!is.na(beta), !is.na(se), se > 0)
+  anchor <- cg |>
+    dplyr::filter(trait_id == tid) |>
+    dplyr::group_by(coloc_group_id) |>
+    dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
+    dplyr::ungroup() |>
+    dplyr::transmute(coloc_group_id, z_anchor = beta / se)
+  hits <- cg |>
+    dplyr::filter(trait_id %in% ids) |>
+    dplyr::group_by(trait_id, coloc_group_id) |>
+    dplyr::slice_min(min_p, n = 1, with_ties = FALSE) |>
+    dplyr::ungroup() |>
+    dplyr::inner_join(anchor, by = "coloc_group_id") |>
+    dplyr::mutate(z = beta / se * sign(z_anchor), za = abs(z_anchor)) |>
+    dplyr::group_by(trait_id) |>
+    dplyr::summarise(
+      n_loci = dplyr::n(),
+      pct_same_sign = round(100 * mean(z > 0)),
+      r_z = round(sum(z * za) / sqrt(sum(z^2) * sum(za^2)), 2),
+      .groups = "drop"
+    )
+  out <- data.frame(anchor_id = tid, trait_id = ids, stringsAsFactors = FALSE) |>
+    dplyr::left_join(hits, by = "trait_id") |>
+    dplyr::mutate(
+      n_loci = dplyr::coalesce(n_loci, 0L),
+      coverage = round(n_loci / max(nrow(anchor), 1), 2)
+    )
+  return(out)
+}
+
+run_trait <- function(tid) {
+  obj <- trait(tid, include_associations = TRUE)
+  exclude_ids <- proxy_trait_ids[[tid]]
+  dup_evidence <- NULL
+  if (!is.null(exclude_ids)) {
+    dup_evidence <- duplicate_evidence(obj$coloc_groups, tid, exclude_ids)
+    obj$coloc_groups <- obj$coloc_groups |>
+      dplyr::filter(!as.character(trait_id) %in% exclude_ids)
+  }
+  res <- run_univariate_clustering(
+    obj,
+    target_trait_id = tid,
+    associations = associations,
+    trait_subset = trait_subset,
+    include_trans = include_trans,
+    min_snp_signals = min_snp_signals,
+    max_snp_fraction = 0.8,
+    compress_method = compress_method,
+    compress_scale = compress_scale,
+    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
+    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
+    ebmf_greedy_Kmax = ebmf_greedy_Kmax,
+    ebmf_prior = ebmf_prior,
+    ebmf_backfit = ebmf_backfit,
+    min_module_size = min_module_size,
+    min_mean_internal = min_mean_internal,
+    min_connectedness = min_connectedness
+  )
+  smry <- summarise_ebmf_programs(
+    res,
+    s_matrix = res$s_matrix,
+    edge_threshold = similarity_threshold,
+    min_module_size = min_module_size,
+    similarity_n_perm = similarity_n_perm,
+    similarity_q_threshold = similarity_q_threshold,
+    high_similarity_q = high_similarity_q,
+    high_min_connectedness = high_connectedness,
+    min_effective_traits = min_effective_traits,
+    n_null = n_null,
+    alpha_membership = alpha_membership,
+    n_candidate_tier = n_candidate_tier,
+    n_rep = n_rep,
+    frac_traits = frac_traits,
+    top_n = stability_top_n,
+    posterior_stat = posterior_stat,
+    posterior_evidence_cap = posterior_evidence_cap,
+    redundancy_threshold = redundancy_threshold,
+    cores = cores,
+    verbose = FALSE
+  )
+  extracted <- extract_program_loadings(res, smry, valid_only = TRUE)
+  list(
+    trait_id = tid, fit = res, summary = smry, extraction = extracted,
+    duplicate_evidence = dup_evidence
+  )
+}
+
+trait_results <- lapply(trait_ids, run_trait)
+names(trait_results) <- trait_ids
+
+for (tid in names(trait_results)) {
+  x <- trait_results[[tid]]
+  x$extraction$loadings$trait_name <- trait_name_map[[tid]]
+  x$extraction$profiles$trait_name <- trait_name_map[[tid]]
+  x$extraction$programs$trait_name <- trait_name_map[[tid]]
+  x$extraction$programs$trait_id <- tid
+  trait_results[[tid]] <- x
+}
+
+program_meta <- dplyr::bind_rows(lapply(trait_results, function(x) {
+  x$summary$programs |>
+    dplyr::mutate(
+      trait_id = x$trait_id,
+      trait_name = trait_name_map[[x$trait_id]]
+    )
+}))
+program_info <- dplyr::bind_rows(lapply(trait_results, function(x) x$extraction$programs))
+program_loadings <- dplyr::bind_rows(lapply(trait_results, function(x) x$extraction$loadings))
+program_data <- lapply(trait_results, function(x) x$extraction)
+
+knitr::kable(
+  program_meta |>
+    dplyr::group_by(trait_id, trait_name) |>
+    dplyr::summarise(
+      n_programs = dplyr::n(),
+      n_high = sum(confidence_tier == "high"),
+      n_medium = sum(confidence_tier == "medium"),
+      n_single_trait = sum(confidence_tier == "single_trait"),
+      n_kept_snps = sum(n_snps_filtered[confidence_tier %in% c("high", "medium")]),
+      .groups = "drop"
+    ),
+  caption = paste0(
+    "Per-trait EBMF programs by confidence tier; high- and medium-confidence ",
+    "programs are kept for the cross-trait comparison"
+  ),
+  row.names = FALSE
+)
+
+knitr::kable(
+  dplyr::bind_rows(lapply(trait_results, function(x) x$duplicate_evidence)) |>
+    dplyr::left_join(
+      duplicate_traits[, c("anchor_id", "trait_id", "trait_name")],
+      by = c("anchor_id", "trait_id")
+    ) |>
+    dplyr::mutate(
+      anchor = unname(trait_name_map[anchor_id]),
+      note = ifelse(n_loci == 0, "not present: no effect", "")
+    ) |>
+    dplyr::select(anchor, trait_id, trait_name, n_loci, coverage, pct_same_sign, r_z, note),
+  caption = paste0(
+    "How closely each removed duplicate tracks its anchor at the anchor's own ",
+    "loci. `coverage` is the share of the anchor's loci where it is observed, ",
+    "`pct_same_sign` the share with an effect in the same direction after ",
+    "orienting to the anchor's risk allele, and `r_z` the uncentred ",
+    "correlation of its oriented z-scores with the anchor's |z| (1 = the same ",
+    "effects up to scale). A true duplicate is near 100% and near 1; the ",
+    "higher its coverage, the more it would have distorted the fit."
+  ),
+  row.names = FALSE
+)
+```
+
+```{r step1-program-table, results='asis'}
+kept_programs <- program_meta |>
+  dplyr::filter(confidence_tier %in% c("high", "medium"))
+kept_programs <- dplyr::bind_rows(lapply(
+  split(kept_programs, kept_programs$trait_name),
+  order_programs_by_confidence
+))
+kable_confidence(
+  kept_programs |>
+    dplyr::transmute(
+      trait_name,
+      program = program_label,
+      confidence_tier = as.character(confidence_tier),
+      n_snps_filtered,
+      effective_n_traits = round(effective_n_traits, 2),
+      similarity_q = signif(similarity_q, 2),
+      connectedness = round(connectedness, 2),
+      mean_internal_similarity = round(mean_internal_similarity, 3),
+      factor_pve_pct = round(100 * factor_pve, 2)
+    ),
+  caption = paste0(
+    "High- and medium-confidence programs only (green high, orange medium), ",
+    "a program nested inside a larger one indented under it -- everything ",
+    "downstream uses these. The tier is set by `similarity_q` (are the ",
+    "program's SNPs more alike than random SNP sets of the same size? below ",
+    similarity_q_threshold, " to pass, below ", high_similarity_q, " for high), ",
+    "`connectedness` (share of member pairs with similarity >= ",
+    similarity_threshold, "; at least ", high_connectedness, " for high) and ",
+    "`effective_n_traits` (at least ", min_effective_traits, ", otherwise ",
+    "single_trait). `n_snps_filtered` is how many SNPs pass the program's ",
+    "lFSR/magnitude gate; `mean_internal_similarity` and `factor_pve_pct` (the ",
+    "share of matrix variance the factor explains) are descriptive. ",
+    "Low-confidence and single-trait programs are not shown -- see the ",
+    "univariate vignette for that diagnostic view."
+  )
+)
+```
+
+```{r coloc-by-trait}
+# Each trait's own coloc_groups, keyed by trait id -- needed both for
+# module_rg() (Step 3) and, for any pair involving an uploaded GWAS
+# trait, to bridge that trait's own (private) coloc_group_id numbering onto its
+# partner's (Steps 2-4); see compare_program_pairs_loadings()'s docs. Fetched
+# once here, ahead of where it is first needed, rather than refetched per use.
+coloc_by_trait <- stats::setNames(
+  lapply(trait_ids, function(tid) {
+    return(trait(tid, include_associations = TRUE)$coloc_groups)
+  }),
+  trait_ids
+)
+
+# Short display labels: "<trait name> P<k>".
+program_label <- function(program_id) {
+  tid <- sub(":[^:]*$", "", program_id)
+  k <- sub("^.*:", "", program_id)
+  return(paste0(unname(trait_name_map[tid]), " P", k))
+}
+```
+
+## Step 2: Common locus universe
+
+Programs are compared at the level of the **`coloc_group_id`** (the shared
+fine-mapped locus) rather than the exact `variant_id`, because each trait carries
+a single candidate SNP per coloc group. Two traits can only be matched where
+they were fine-mapped to the *same* signal, which is far stricter than
+positional overlap, so this universe bounds how much cross-trait evidence can
+exist before any statistic is applied.
+
+An uploaded GWAS numbers its coloc groups privately, so the T2D upload's loci
+are first translated onto GPMap's shared numbering through a locus bridge
+(the upload's own coloc record of each partner trait, then exact `variant_id`,
+then LD). `compare_program_pairs_loadings()` builds those bridges, so it is
+run here and its scores are read in Step 3.
+
+```{r step2-universe}
+conc_result <- compare_program_pairs_loadings(
+  program_data,
+  n_perm = n_perm,
+  fdr_threshold = fdr_threshold,
+  min_shared_loci = min_shared_loci_link,
+  exclude_features = proxy_trait_ids,
+  phi_high = phi_high,
+  phi_low = phi_low,
+  min_alignment = min_alignment,
+  min_eff_loci = min_eff_loci,
+  seed = 1,
+  coloc_groups = coloc_by_trait
+)
+conc_pairs <- conc_result$pairs
+
+# Every locus on GPMap's shared numbering (upload loci through their bridge).
+canonical_loci <- program_loadings |>
+  dplyr::filter(!is.na(coloc_group_id)) |>
+  dplyr::distinct(trait_id, trait_name, coloc_group_id, high_confidence) |>
+  dplyr::group_by(trait_id) |>
+  dplyr::mutate(locus = gpmapr:::.canonical_locus_ids(
+    coloc_group_id, trait_id[1], conc_result$bridges
+  )) |>
+  dplyr::ungroup()
+
+trait_locus_counts <- canonical_loci |>
+  dplyr::group_by(trait_id, trait_name) |>
+  dplyr::summarise(
+    n_loci_any = dplyr::n_distinct(locus),
+    n_high_conf_loci = dplyr::n_distinct(locus[high_confidence]),
+    .groups = "drop"
+  ) |>
+  dplyr::left_join(
+    program_loadings |>
+      dplyr::group_by(trait_id) |>
+      dplyr::summarise(n_programs = dplyr::n_distinct(program_id), .groups = "drop"),
+    by = "trait_id"
+  ) |>
+  dplyr::select(trait_name, n_programs, n_loci_any, n_high_conf_loci)
+
+shared_loci <- canonical_loci |>
+  dplyr::distinct(trait_id, locus) |>
+  dplyr::count(locus, name = "n_traits")
+
+loci_by_trait <- split(canonical_loci$locus, canonical_loci$trait_id)
+trait_pair_loci <- dplyr::bind_rows(lapply(
+  utils::combn(trait_ids, 2, simplify = FALSE),
+  function(tp) {
+    return(data.frame(
+      trait_a = trait_name_map[[tp[1]]],
+      trait_b = trait_name_map[[tp[2]]],
+      n_loci_shared = length(intersect(loci_by_trait[[tp[1]]], loci_by_trait[[tp[2]]])),
+      stringsAsFactors = FALSE
+    ))
+  }
+))
+
+knitr::kable(
+  trait_locus_counts,
+  caption = "Candidate locus (coloc group) universe per trait (across valid programs)",
+  row.names = FALSE
+)
+knitr::kable(
+  trait_pair_loci,
+  caption = paste0(
+    "Loci each pair of traits shares -- the most any two of their programs ",
+    "could be matched on."
+  ),
+  row.names = FALSE
+)
+knitr::kable(
+  data.frame(
+    n_loci_any = nrow(shared_loci),
+    n_loci_shared_by_traits = sum(shared_loci$n_traits > 1),
+    max_traits_per_locus = max(shared_loci$n_traits)
+  ),
+  caption = "Shared coloc-group universe across traits",
+  row.names = FALSE
+)
+```
+
+## Step 3: Tiers -- strength and direction
+
+Every cross-trait pair of programs is asked two questions: do the same
+background traits drive both programs (profile congruence, `phi_traits`), and
+do the same SNPs carry them (the locus measures)? What each measure checks is
+explained in
+[Multi-trait EBMF program correspondence](multitrait-overview.html#what-each-measure-checks);
+here they are combined.
+
+`profile_strength` is **strong** when |φ| ≥ `r phi_high`, **moderate** when
+`r phi_low` ≤ |φ| < `r phi_high`, and **weak** otherwise. `locus_status` has
+three outcomes:
+
+| `locus_status` | rule | reading |
+|---|---|---|
+| **too_few_loci** | `n_loci_shared` < `r min_shared_loci_link` **or** `n_eff_loci` < `r min_eff_loci` | the loci cannot settle it either way |
+| **agree** | testable, `alignment` ≥ `r min_alignment` **and** `q_concordance` ≤ `r fdr_threshold` | the same SNPs carry both programs |
+| **disagree** | testable, but `alignment` or `q_concordance` fails | the shared SNPs do not carry both programs |
+
+The two are combined into a tier:
+
+| tier | profile_strength | locus_status | reading |
+|---|---|---|---|
+| **high** | strong | agree | same biology, carried by the same SNPs |
+| **medium** | strong | too_few_loci | same biology; too few shared loci to check the SNPs |
+| **medium** | moderate | agree | a slightly weaker profile match, confirmed by the SNPs |
+| **low** | strong | disagree | same background biology, but the shared SNPs do not carry it |
+| **low** | moderate | too_few_loci | a weaker profile match the loci cannot check |
+| **low** | weak | agree | **shared loci with different biology** -- typical of large pleiotropic loci that every lipid or glycaemic program touches |
+| **none** | anything else | | including a moderate profile whose loci disagree |
+
+High and medium pairs are **links** and form the families of Step 4. The φ
+cutoffs follow Tucker's conventions for factor similarity (0.85 "fair
+similarity", 0.95 "equal"; Lorenzo-Seva & ten Berge, 2006), applied to
+genetic loadings they were not calibrated on: they are parameters of this
+vignette (`phi_high`, `phi_low`, `min_shared_loci`, `min_eff_loci`,
+`min_alignment`, `fdr_threshold`).
+
+The **direction** of a link is the sign of `phi_traits`
+(`direction_profile`). `rg` (`module_rg()`) checks it with the two traits' own
+allele effects across the loci either program claims, calling a direction
+only when its bootstrap interval excludes 0; it needs at least 10 usable
+shared loci. `direction_check` compares the two: `agree`, `conflict` (worth
+inspecting) or `no call`. `rg` never changes a tier.
+
+| column | what it means |
+|---|---|
+| `tier`, `profile_strength`, `locus_status` | as above |
+| `phi_traits` | profile congruence, signed; its sign is the direction |
+| `n_eff_traits` | how many background traits effectively carry the profile agreement |
+| `top_traits` | the background traits carrying it, with their share (negative = works against φ's sign) |
+| `n_loci_shared`, `n_eff_loci` | shared high-confidence loci, and loci effectively carrying the locus score |
+| `alignment` | R² of the SNP loadings over the shared loci |
+| `comparability` | share of both programs' loading on the shared loci |
+| `q_concordance` | BH-adjusted permutation p-value of the locus concordance |
+| `direction_profile` | sign of `phi_traits` |
+| `rg`, `rg_ci`, `direction_check` | allele-effect correlation, its 95% bootstrap interval, and whether its direction agrees with `direction_profile` (links only) |
+
+For a pair involving the uploaded T2D GWAS, `rg` reads both traits' effects
+from the **upload's own coloc table**, where the partner trait's row in each
+upload coloc group sits at the upload's lead variant and on the same allele;
+GPMap reports an upload's and an existing trait's associations on opposite
+alleles at about half of all variants, so the partner's own table cannot be
+used. `n_allele_mismatch` counts loci dropped because they could not be
+aligned.
+
+```{r step3-tiers, results='asis'}
+tier_levels <- c("high", "medium", "low", "none")
+print(knitr::kable(
+  conc_pairs |>
+    dplyr::mutate(
+      trait_pair = paste(trait_name_map[trait_id_a], "~", trait_name_map[trait_id_b]),
+      tier = factor(tier, levels = tier_levels)
+    ) |>
+    dplyr::count(trait_pair, tier, .drop = FALSE) |>
+    tidyr::pivot_wider(names_from = tier, values_from = n, values_fill = 0),
+  caption = "Program pairs per trait pair, by tier. High and medium are links.",
+  row.names = FALSE
+))
+
+tiered <- conc_pairs[conc_pairs$tier != "none", , drop = FALSE] |>
+  dplyr::left_join(
+    conc_result$module_rg |>
+      dplyr::select(
+        program_id_a, program_id_b, rg, rg_ci_lower, rg_ci_upper,
+        n_loci_rg, n_allele_mismatch, rg_direction, direction_check
+      ),
+    by = c("program_id_a", "program_id_b")
+  ) |>
+  dplyr::left_join(
+    profile_contributions(conc_result, program_data, pairs = conc_pairs[conc_pairs$tier != "none", ])$pairs,
+    by = c("program_id_a", "program_id_b")
+  )
+tiered <- tiered[order(
+  factor(tiered$tier, levels = tier_levels), -abs(tiered$phi_traits)
+), , drop = FALSE]
+
+if (nrow(tiered) > 0) {
+  print(kable_confidence(
+    tiered |>
+      dplyr::transmute(
+        program_a = program_label(program_id_a),
+        program_b = program_label(program_id_b),
+        tier = as.character(tier), profile_strength,
+        phi_traits = round(phi_traits, 3),
+        n_eff_traits = round(n_eff_traits, 1),
+        top_traits,
+        locus_status,
+        n_loci_shared,
+        n_eff_loci = round(n_eff_loci, 1),
+        alignment = round(alignment, 3),
+        comparability = round(comparability, 3),
+        q_concordance = signif(q_concordance, 3),
+        direction_profile,
+        rg = round(rg, 2),
+        rg_ci = ifelse(
+          is.finite(rg_ci_lower),
+          sprintf("[%.2f, %.2f]", rg_ci_lower, rg_ci_upper), ""
+        ),
+        direction_check
+      ),
+    caption = paste0(
+      "Every pair of tier low or above, by tier then |phi_traits| (green high, ",
+      "orange medium, red low). Links are high and medium. `locus_status` is ",
+      "`too_few_loci` when n_loci_shared < ", min_shared_loci_link,
+      " or n_eff_loci < ", min_eff_loci, "; otherwise `agree` when alignment >= ",
+      min_alignment, " and q_concordance <= ", fdr_threshold, ", else `disagree`. ",
+      "`top_traits` are the background traits carrying phi. `rg` and ",
+      "`direction_check` come from the traits' own allele effects (links only)."
+    ),
+    tier_col = "tier"
+  ))
+  linked_pairs <- tiered[tiered$linked, , drop = FALSE]
+  if (nrow(linked_pairs) > 0) {
+    print(knitr::kable(
+      linked_pairs |>
+        dplyr::mutate(
+          trait_pair = paste(trait_name_map[trait_id_a], "~", trait_name_map[trait_id_b]),
+          profile_vs_rg = dplyr::coalesce(direction_check, "no call")
+        ) |>
+        dplyr::count(trait_pair, direction_profile, profile_vs_rg) |>
+        tidyr::pivot_wider(names_from = profile_vs_rg, values_from = n, values_fill = 0),
+      caption = paste0(
+        "Links per trait pair by profile direction, and whether `rg` (where it ",
+        "calls a direction) agrees."
+      ),
+      row.names = FALSE
+    ))
+  }
+} else {
+  cat("No program pair reached the low tier.\n")
+}
+```
+
+## Step 4: Program families
+
+Links are grouped into **multi-trait families**: programs are nodes, links are
+edges weighted by `|phi_traits|`, and families are the graph's communities
+(Louvain modularity, `build_program_families()`). A program with no link
+belongs to no family. With `mutual_best: true`, a link is kept only when each
+of its programs is the other's closest partner (highest `|phi_traits|`) in the
+other's trait, so a family tends to hold one program per trait (this run:
+`mutual_best = ` `r mutual_best`).
+
+Each family is described by the loci its programs claim as high-confidence
+members, on GPMap's shared locus numbering: `n_core_loci` are claimed by every
+member and `n_union_loci` by any. Family direction is counted from its links
+(`n_rg_*`).
+
+```{r step4-families, results='asis'}
+conc_families <- build_program_families(
+  conc_result,
+  program_info = program_info,
+  program_data = program_data,
+  mutual_best = mutual_best
+)
+if (nrow(conc_families$families) > 0) {
+  cat(sprintf(
+    "\n%d families from %d linked programs (%d programs have no link); modularity %.2f.\n\n",
+    nrow(conc_families$families), nrow(conc_families$nodes),
+    conc_families$n_unlinked, conc_families$modularity
+  ))
+  print(knitr::kable(
+    conc_families$families |>
+      dplyr::mutate(mean_phi = round(mean_phi, 2)),
+    caption = paste0(
+      "Per-family metrics. `mean_phi` is the mean profile congruence of the ",
+      "family's links and `n_tier_*` their tiers; `n_rg_*` count links by ",
+      "allele-effect direction (links with no `rg` estimate count in none); ",
+      "`n_core_loci` / `n_union_loci` count loci claimed by every member and by ",
+      "any member."
+    ),
+    row.names = FALSE
+  ))
+} else {
+  cat("No program pairs were linked, so there are no families.\n")
+}
+```
+
+```{r step4-network, fig.height = 8, fig.width = 10, echo=FALSE}
+if (!is.null(conc_families$graph)) {
+  graph <- conc_families$graph
+  node_traits <- igraph::V(graph)$trait_id
+  trait_pal <- stats::setNames(
+    grDevices::hcl.colors(length(trait_ids), "Dark 3"), trait_ids
+  )
+  # Direction from rg where it calls one, otherwise from the profile sign
+  # (dashed).
+  rg_dir <- igraph::E(graph)$rg_direction
+  rg_called <- !is.na(rg_dir) & rg_dir %in% c("concordant", "antagonistic")
+  edge_dir <- ifelse(rg_called, rg_dir, igraph::E(graph)$direction_profile)
+  edge_col <- c(concordant = "#2a78d6", antagonistic = "#eb6834")[edge_dir]
+  edge_col[is.na(edge_col)] <- "#9e9e9e"
+  phi <- abs(igraph::E(graph)$phi_traits)
+  fam_ids <- igraph::V(graph)$family
+  groups <- split(seq_along(fam_ids), fam_ids)
+  groups <- groups[lengths(groups) > 1]
+  set.seed(1)
+  igraph::plot.igraph(
+    graph,
+    layout = igraph::layout_with_fr(graph),
+    vertex.color = unname(trait_pal[node_traits]),
+    vertex.size = 9,
+    vertex.frame.color = "white",
+    vertex.label = sub("^.*:", "P", igraph::V(graph)$name),
+    vertex.label.cex = 0.6,
+    vertex.label.color = "white",
+    edge.color = unname(edge_col),
+    edge.lty = ifelse(rg_called, 1, 2),
+    edge.width = 0.5 + 4 * (phi - min(phi)) / max(1e-9, max(phi) - min(phi)),
+    mark.groups = groups,
+    mark.col = grDevices::adjustcolor("grey80", alpha.f = 0.25),
+    mark.border = "grey70",
+    main = "Multi-trait program families"
+  )
+  graphics::legend(
+    "topleft", legend = unname(trait_name_map[trait_ids]),
+    fill = unname(trait_pal[trait_ids]), bty = "n", title = "trait", cex = 0.8
+  )
+  graphics::legend(
+    "bottomleft",
+    legend = c("concordant", "antagonistic", "solid: from rg", "dashed: from profile sign"),
+    col = c("#2a78d6", "#eb6834", "grey30", "grey30"),
+    lty = c(1, 1, 1, 2), lwd = 2, bty = "n", title = "link direction", cex = 0.8
+  )
+}
+```
+
+Each node is one program, coloured by trait and labelled with its program
+number; shaded hulls are the families. Edge width is `|phi_traits|`, the
+strength of the shared profile; edge colour is the link's direction -- from
+`rg` where it calls one (solid), otherwise from the sign of the profile
+congruence (dashed). Programs with no link are not drawn.
+
+## Step 5: Do families recover the same biology?
+
+Annotations play no part in forming a link, so agreement here is
+**independent corroboration** rather than a restatement of the same evidence.
+For each family, the high-confidence SNPs of its programs in each trait are
+pooled and enriched separately, against that trait's full candidate universe,
+for trait categories, tissues, and Reactome and KEGG pathways (through the
+SNPs' colocalising QTL genes, `enrich_snp_group_pathways()`). If the traits of
+one family independently surface the same category, tissue or pathway, the
+family has support beyond the loadings that created it; if they surface
+nothing in common, it rests on the loadings alone.
+
+One caveat: a SNP set holding a large share of its trait's SNPs is being
+compared against a background that is largely itself, so "none" for a dominant
+program is expected rather than informative.
+
+```{r step5-biology, results='asis'}
+snp_set_enrichment <- function(snps, tid, label, what = c("category", "tissue")) {
+  what <- match.arg(what)
+  if (length(snps) < 5) {
+    return("too few high-confidence SNPs")
+  }
+  baseline <- unique(program_loadings$snp_id[program_loadings$trait_id == tid])
+  groups <- data.frame(snp_id = snps, group = label, stringsAsFactors = FALSE)
+  res <- if (what == "category") {
+    enrich_snp_group_trait_categories(
+      groups = groups, coloc_groups = coloc_by_trait[[tid]],
+      snp_key = "variant_id", min_group_size = 5L, baseline_snp_ids = baseline
+    )
+  } else {
+    enrich_snp_group_tissues(
+      groups = groups, coloc_groups = coloc_by_trait[[tid]],
+      snp_key = "variant_id", min_group_size = 5L, background = "trait",
+      baseline_snp_ids = baseline
+    )
+  }
+  if (length(res$by_group) == 0 || nrow(res$by_group[[1]]$enriched) == 0) {
+    return("none")
+  }
+  hits <- utils::head(res$by_group[[1]]$enriched, 4)
+  hit_label <- if (what == "category") hits$trait_category else hits$tissue
+  return(paste0(hit_label, " (FDR=", signif(hits$fdr, 2), ")", collapse = "<br>"))
+}
+
+# Top Reactome and KEGG terms of one SNP set, from its colocalising QTL genes.
+snp_set_pathways <- function(snps, tid, label) {
+  if (length(snps) < 5) {
+    return(c(reactome = "too few high-confidence SNPs", kegg = "too few high-confidence SNPs"))
+  }
+  res <- tryCatch(
+    enrich_snp_group_pathways(
+      groups = data.frame(snp_id = snps, group = label, stringsAsFactors = FALSE),
+      coloc_groups = coloc_by_trait[[tid]],
+      min_group_size = 5L, snp_key = "variant_id",
+      sources = c("KEGG", "Reactome")
+    ),
+    error = function(e) return(NULL)
+  )
+  if (is.null(res)) {
+    return(c(reactome = "unavailable", kegg = "unavailable"))
+  }
+  if (nrow(res$summary) == 0) {
+    return(c(reactome = "too few genes", kegg = "too few genes"))
+  }
+  label_of <- function(x) {
+    x <- as.character(x[1])
+    return(if (is.na(x) || !nzchar(x)) "none" else x)
+  }
+  return(c(
+    reactome = label_of(res$summary$top_enriched_reactome),
+    kegg = label_of(res$summary$top_enriched_kegg)
+  ))
+}
+
+if (nrow(conc_families$nodes) > 0) {
+  members <- conc_families$nodes
+  biology <- dplyr::bind_rows(lapply(
+    split(members, list(members$family, members$trait_id), drop = TRUE),
+    function(m) {
+      tid <- as.character(m$trait_id[1])
+      snps <- unique(program_loadings$snp_id[
+        program_loadings$program_id %in% m$program_id & program_loadings$high_confidence
+      ])
+      label <- paste(m$family[1], tid, sep = "|")
+      pw <- snp_set_pathways(snps, tid, label)
+      return(data.frame(
+        family = m$family[1],
+        trait = trait_name_map[[tid]],
+        programs = paste(sub("^.*:", "P", m$program_id), collapse = ", "),
+        n_snps = length(snps),
+        categories = snp_set_enrichment(snps, tid, label, "category"),
+        tissues = snp_set_enrichment(snps, tid, label, "tissue"),
+        reactome = pw[["reactome"]],
+        kegg = pw[["kegg"]],
+        stringsAsFactors = FALSE
+      ))
+    }
+  ))
+  biology <- biology[order(as.integer(sub("^family_", "", biology$family)), biology$trait), ]
+  print(knitr::kable(
+    biology,
+    caption = paste0(
+      "Trait-category, tissue and pathway enrichment of each family's ",
+      "high-confidence SNPs, pooled per trait and computed against that trait's ",
+      "own SNP universe (pathways through the SNPs' colocalising QTL genes; top ",
+      "Reactome and KEGG term). Matching entries across a family's traits are ",
+      "held-out support for the family."
+    ),
+    row.names = FALSE,
+    escape = FALSE
+  ))
+} else {
+  cat("No families to annotate.\n")
+}
+```
+
+## Interpretation notes
+
+- **Profile first, loci second.** A link says two programs are driven by the
+  same background traits in the same proportions (`phi_traits`); `alignment`
+  adds whether the same SNPs carry it, where the traits share loci at all.
+  Two traits that share few fine-mapped loci (T2D shares 36–70 with each
+  partner here) can still share programs; their links are usually
+  `too_few_loci`.
+- **`too_few_loci` and `disagree` are different.** The first means the loci
+  cannot check the profile match; the second means they were checked and the
+  shared SNPs do not carry both programs, so a strong profile match is
+  demoted to low.
+- **Read `n_eff_traits` and `top_traits`.** A high congruence carried by one
+  or two traits is a narrower claim -- often "these programs both carry the
+  same lipid fraction" -- than one carried by dozens. Near-duplicate traits
+  each count separately, so check the names, not just the number. Neither is
+  used to gate.
+- **Shared loci with different biology** (weak profile, loci agree, tier low)
+  usually means large pleiotropic loci that many programs touch, not a shared
+  program.
+- **The profile sign is a direction.** Each trait's SNPs are oriented to its
+  own risk allele, so antagonism mirrors the profile (\(\phi < 0\)). `rg`, from
+  the traits' own allele effects, checks it where enough loci are shared; a
+  `direction_check` of `conflict` is worth inspecting.
+- **Cutoffs are judgements.** 0.85 and 0.70 come from factor-analysis
+  conventions, not from calibration on genetic loadings.
+- **Sample overlap is not corrected.** When the two target traits come from the
+  same cohort, their effect estimates share participants, which biases `rg`
+  away from the null. Treat rg magnitudes from same-cohort pairs as optimistic.
+- **Winner's curse.** Loci enter each trait's universe only by clearing that
+  trait's own significance and fine-mapping bar, so the shared set is doubly
+  selected and effect sizes are inflated.
+- **Restricted to confident programs.** Only programs of high or medium
+  confidence in their own trait are compared; Step 1 shows exactly which.

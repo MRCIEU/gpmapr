@@ -121,7 +121,7 @@ enrich_program_loadings_tissues <- function(clustering_result,
                                               "display_snp",
                                               "coloc_group_id"
                                             ),
-                                            min_category_size = 5L,
+                                            min_category_size = 2L,
                                             min_loading_magnitude = 0) {
   snp_key <- match.arg(snp_key)
   return(.enrich_program_loadings_category(
