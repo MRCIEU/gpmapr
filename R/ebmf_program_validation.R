@@ -391,6 +391,116 @@ summarise_ebmf_programs <- function(clustering_result,
 }
 
 
+#' @title Distinctness of a Trait's EBMF Programs
+#' @description How alike the programs of one EBMF fit are, on both axes of the
+#' fit. For every pair of programs:
+#' \itemize{
+#'   \item `phi` — Tucker's congruence coefficient between the two programs'
+#'   trait loadings (`L_pm`), target row left out.
+#'   \item `alignment` — the squared uncentred correlation of their SNP
+#'   loadings (`F_pm`).
+#' }
+#' Loadings are weighted by their confidence, \eqn{w(\mathrm{lfsr})}, as in
+#' [compare_program_pairs_loadings()], so the values sit on the same scale as
+#' the cross-trait link tiers (Tucker's conventions: 0.85 fair similarity, 0.95
+#' equal).
+#'
+#' `effective_rank` summarises the whole set: the exponential of the entropy
+#' of the normalised eigenvalues of the programs' Gram matrix, whose entries
+#' are \eqn{\phi \cdot \cos_F}, the cosine between two programs' rank-one fits
+#' (Roy & Vetterli 2007). It equals the number of programs when they are
+#' mutually orthogonal and falls as programs overlap: two exact copies of one
+#' program count as a single program of double weight, which the entropy
+#' scores as somewhat less than two. A pair whose cosine is undefined (a
+#' program with no confident loading) counts as orthogonal.
+#' @param clustering_result Result of `run_univariate_clustering()`.
+#' @param programs Optional program (factor) ids to compare, typically
+#'   `summarise_ebmf_programs()$programs$program`. Defaults to every factor.
+#' @return A list with:
+#'   \itemize{
+#'     \item pairs: one row per program pair with `program_a`, `program_b`,
+#'       `phi` and `alignment`
+#'     \item summary: one row with `n_programs`, `max_abs_phi`,
+#'       `n_pairs_phi_0.7` (pairs with \eqn{|\phi| \ge 0.7}), `max_alignment`
+#'       and `effective_rank`
+#'   }
+#' @export
+program_distinctness <- function(clustering_result, programs = NULL) {
+  .assert_ebmf_result(clustering_result)
+  fit <- clustering_result$cluster_details$flash_fit
+  n_factors <- if (is.null(fit)) 0L else fit$n_factors
+  if (is.null(programs)) {
+    programs <- seq_len(n_factors)
+  }
+  programs <- sort(unique(as.integer(programs)))
+  if (any(is.na(programs) | programs < 1L | programs > n_factors)) {
+    stop("programs must be factor ids between 1 and ", n_factors)
+  }
+
+  L <- fit$L_pm[, programs, drop = FALSE]
+  F <- fit$F_pm[, programs, drop = FALSE]
+  if (!is.null(fit$L_lfsr)) {
+    L <- L * .confidence_factor(fit$L_lfsr[, programs, drop = FALSE])
+  }
+  if (!is.null(fit$F_lfsr)) {
+    F <- F * .confidence_factor(fit$F_lfsr[, programs, drop = FALSE])
+  }
+  target_id <- clustering_result$parameters$target_trait_id
+  if (!is.null(target_id) && !is.null(rownames(L))) {
+    L <- L[rownames(L) != as.character(target_id), , drop = FALSE]
+  }
+
+  cosine <- function(A) {
+    norms <- sqrt(colSums(A^2))
+    out <- crossprod(A) / outer(norms, norms)
+    out[!is.finite(out)] <- NA_real_
+    return(out)
+  }
+  phi <- cosine(L)
+  cos_f <- cosine(F)
+
+  n <- length(programs)
+  pairs <- if (n >= 2) {
+    idx <- t(utils::combn(n, 2))
+    data.frame(
+      program_a = programs[idx[, 1]],
+      program_b = programs[idx[, 2]],
+      phi = phi[idx],
+      alignment = cos_f[idx]^2,
+      stringsAsFactors = FALSE
+    )
+  } else {
+    data.frame(
+      program_a = integer(0), program_b = integer(0),
+      phi = numeric(0), alignment = numeric(0)
+    )
+  }
+
+  effective_rank <- NA_real_
+  if (n > 0) {
+    gram <- phi * cos_f
+    gram[!is.finite(gram)] <- 0
+    diag(gram) <- 1
+    eigenvalues <- pmax(eigen(gram, symmetric = TRUE, only.values = TRUE)$values, 0)
+    p <- eigenvalues[eigenvalues > 0] / sum(eigenvalues)
+    effective_rank <- exp(-sum(p * log(p)))
+  }
+  safe_max <- function(x) {
+    return(if (any(is.finite(x))) max(x, na.rm = TRUE) else NA_real_)
+  }
+
+  summary <- data.frame(
+    n_programs = n,
+    max_abs_phi = safe_max(abs(pairs$phi)),
+    n_pairs_phi_0.7 = sum(abs(pairs$phi) >= 0.7, na.rm = TRUE),
+    max_alignment = safe_max(pairs$alignment),
+    effective_rank = effective_rank,
+    stringsAsFactors = FALSE
+  )
+  return(list(pairs = pairs, summary = summary))
+}
+
+
 # Confidence tier from the similarity test and connectedness:
 #   low          = fails the similarity test (similarity_q >=
 #                  similarity_q_threshold, or missing), whatever the traits

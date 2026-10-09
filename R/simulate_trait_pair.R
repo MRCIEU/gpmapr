@@ -56,6 +56,14 @@
 #' @param background_corr,n_bg_factors,snp_pleiotropy_sd Similarity-graph
 #'   realism, as in `simulate_trait()`. Defaults reproduce the historical
 #'   independent, random-signed background.
+#' @param unshared_driver_rows What a driver study that one trait's programs
+#'   use is in the **other** trait's matrix. `"absent"` (default) leaves it out
+#'   of that matrix entirely, so a profile comparison never sees it.
+#'   `"background"` gives every driver of either trait a row in both matrices:
+#'   in a trait none of whose programs it drives, it is filled like an
+#'   unstructured background study and carries no planted signal. That is the
+#'   real-data situation -- both target traits' matrices carry most of the same
+#'   background GWAS -- so an unshared driver lowers `phi_traits`.
 #' @param trait_ids Length-2 integer ids for the two target traits.
 #' @param seed RNG seed.
 #' @return A list with:
@@ -88,11 +96,13 @@ simulate_trait_pair <- function(n_loci_per_trait = 200L,
                                 background_corr = 0,
                                 n_bg_factors = 4L,
                                 snp_pleiotropy_sd = 0,
+                                unshared_driver_rows = c("absent", "background"),
                                 trait_ids = c(9001L, 9002L),
                                 seed = NULL) {
   if (!is.null(seed)) {
     set.seed(seed)
   }
+  unshared_driver_rows <- match.arg(unshared_driver_rows)
   K_shared <- as.integer(K_shared)
   K_specific <- as.integer(K_specific)
   module_size <- as.integer(module_size)
@@ -242,7 +252,16 @@ simulate_trait_pair <- function(n_loci_per_trait = 200L,
   build_one <- function(target_id, loci) {
     progs <- Filter(function(p) p$trait_id == target_id, programs)
     driver_ids <- sort(unique(unlist(lapply(progs, function(p) p$drivers))))
-    row_ids <- c(target_id, driver_ids, background_pool)
+    # Drivers of the other trait's programs only, as plain background rows here.
+    other_drivers <- if (unshared_driver_rows == "background") {
+      setdiff(
+        sort(unique(unlist(lapply(programs, function(p) p$drivers)))),
+        driver_ids
+      )
+    } else {
+      integer(0)
+    }
+    row_ids <- c(target_id, driver_ids, other_drivers, background_pool)
     M <- matrix(
       NA_real_,
       nrow = length(row_ids), ncol = length(loci),
@@ -284,7 +303,7 @@ simulate_trait_pair <- function(n_loci_per_trait = 200L,
     }
 
     # Unstructured background, with the same realism controls as simulate_trait().
-    bg_rows <- as.character(background_pool)
+    bg_rows <- as.character(c(other_drivers, background_pool))
     n_bg <- length(bg_rows)
     rate_mult <- if (background_sparsity_sd > 0) {
       stats::rlnorm(n_bg, 0, background_sparsity_sd) /
@@ -417,6 +436,7 @@ simulate_trait_pair <- function(n_loci_per_trait = 200L,
         background_effect_scale = background_effect_scale,
         background_corr = background_corr,
         snp_pleiotropy_sd = snp_pleiotropy_sd,
+        unshared_driver_rows = unshared_driver_rows,
         trait_ids = trait_ids
       )
     )

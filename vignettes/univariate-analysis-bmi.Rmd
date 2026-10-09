@@ -445,6 +445,30 @@ for (run_id in names(runs)) {
 }
 ```
 
+**Program distinctness.** How alike each run's kept programs are, on both
+axes of the fit, with the same confidence weighting as the cross-trait links
+(`program_distinctness()`): the largest Tucker congruence between two
+programs' trait loadings (BMI row left out; 0.85 is fair similarity, 0.95
+equal) and the number of pairs at or above 0.7, the largest squared uncentred
+correlation between their SNP loadings, and the effective number of distinct
+programs (equal to `n_programs` when every pair is orthogonal).
+
+```{r distinctness}
+knitr::kable(
+  dplyr::bind_rows(lapply(runs, function(r) {
+    out <- program_distinctness(r$fit, r$summary$programs$program)$summary
+    return(data.frame(run = r$label, out, check.names = FALSE))
+  })) |>
+    dplyr::mutate(
+      max_abs_phi = round(max_abs_phi, 2),
+      max_alignment = round(max_alignment, 2),
+      effective_rank = round(effective_rank, 1)
+    ),
+  caption = "Distinctness of each run's kept programs",
+  row.names = FALSE
+)
+```
+
 ## Step 4: Continuous enrichment, Run A vs Run B
 
 Each run's high- and medium-confidence programs are annotated with

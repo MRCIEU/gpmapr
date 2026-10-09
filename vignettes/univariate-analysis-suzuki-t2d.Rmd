@@ -623,6 +623,40 @@ print(knitr::kable(
 ))
 ```
 
+**Program distinctness.** How alike the kept programs are, on both axes of the
+fit, with the same confidence weighting as the cross-trait links
+(`program_distinctness()`):
+
+- **max_abs_phi** and **n_pairs_phi_0.7**: the largest Tucker congruence
+  between two programs' trait loadings (T2D row left out), and the number of
+  pairs at or above 0.7. Tucker's conventions call 0.85 fair similarity and
+  0.95 equal.
+- **max_alignment**: the largest squared uncentred correlation between two
+  programs' SNP loadings.
+- **effective_rank**: the effective number of distinct programs, from the
+  eigenvalues of the programs' Gram matrix; it equals `n_programs` when every
+  pair is orthogonal and falls as programs overlap.
+
+```{r distinctness}
+distinctness <- program_distinctness(ebmf_result, analysis_ids)
+knitr::kable(
+  distinctness$summary |>
+    dplyr::mutate(
+      max_abs_phi = round(max_abs_phi, 2),
+      max_alignment = round(max_alignment, 2),
+      effective_rank = round(effective_rank, 1)
+    ),
+  caption = "Distinctness of the kept programs",
+  row.names = FALSE
+)
+```
+
+Across the `r distinctness$summary$n_programs` kept programs, the largest
+|φ| is `r round(distinctness$summary$max_abs_phi, 2)`
+(`r distinctness$summary$n_pairs_phi_0.7` pairs at or above 0.7), the largest
+SNP alignment is `r round(distinctness$summary$max_alignment, 2)`, and the
+effective rank is `r round(distinctness$summary$effective_rank, 1)`.
+
 ### Module-specific traits and loading-based enrichment
 
 One row per analysed program, in confidence order (green high, orange medium,
@@ -1392,6 +1426,40 @@ print(kable_confidence(
   )
 ))
 ```
+
+By tier, the programs whose top cluster is enriched (q ≤ 0.05):
+
+```{r suzuki-tier-enrichment}
+suzuki_by_tier <- snv_crosstab |>
+  dplyr::filter(confidence_tier %in% c("high", "medium")) |>
+  dplyr::mutate(enriched = !is.na(q) & q <= 0.05) |>
+  dplyr::group_by(confidence_tier) |>
+  dplyr::summarise(
+    n_programs = dplyr::n(),
+    n_enriched = sum(enriched),
+    enriched_clusters = {
+      counts <- table(top_cluster[enriched])
+      paste0(names(counts), " (", counts, ")", collapse = ", ")
+    },
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(factor(confidence_tier, levels = c("high", "medium")))
+tier_enriched <- function(tier) {
+  row <- suzuki_by_tier[suzuki_by_tier$confidence_tier == tier, ]
+  return(if (nrow(row) == 0) "0 of 0" else paste(row$n_enriched, "of", row$n_programs))
+}
+knitr::kable(
+  suzuki_by_tier,
+  caption = paste0(
+    "Programs per tier whose top Suzuki cluster is enriched at q <= 0.05, ",
+    "and those clusters (number of programs)."
+  ),
+  row.names = FALSE
+)
+```
+
+`r tier_enriched("high")` high programs and `r tier_enriched("medium")`
+medium programs have an enriched top cluster.
 
 The full SNV-level table is below: every Suzuki index SNV, the GPMap SNP it
 was matched to, and the programs that SNP is in (strongest loading first).

@@ -186,3 +186,69 @@ test_that("ebmf_settings_signature is stable and order-independent", {
     ebmf_settings_signature(a), ebmf_settings_signature(changed)
   ))
 })
+
+# A minimal clustering result carrying only what program_distinctness() reads.
+# Rows of L are traits (the last is the target), rows of F are SNPs; lFSR
+# defaults to 0 (full confidence).
+distinctness_result <- function(L, F, L_lfsr = NULL, F_lfsr = NULL) {
+  rownames(L) <- c(paste0("t", seq_len(nrow(L) - 1)), "target")
+  rownames(F) <- paste0("snp", seq_len(nrow(F)))
+  if (is.null(L_lfsr)) L_lfsr <- L * 0
+  if (is.null(F_lfsr)) F_lfsr <- F * 0
+  return(list(
+    parameters = list(method = "ebmf", target_trait_id = "target"),
+    cluster_details = list(flash_fit = list(
+      n_factors = ncol(L), L_pm = L, L_lfsr = L_lfsr, F_pm = F, F_lfsr = F_lfsr
+    ))
+  ))
+}
+
+test_that("program_distinctness scores orthogonal programs as fully distinct", {
+  # The target row loads on both programs; it must be left out of phi.
+  L <- cbind(c(1, 1, 0, 0, 10), c(0, 0, 1, 1, 10))
+  F <- cbind(c(1, 1, 0, 0), c(0, 0, 1, 1))
+  out <- program_distinctness(distinctness_result(L, F))
+
+  expect_equal(out$pairs$program_a, 1L)
+  expect_equal(out$pairs$program_b, 2L)
+  expect_equal(out$pairs$phi, 0)
+  expect_equal(out$pairs$alignment, 0)
+  expect_equal(out$summary$n_programs, 2L)
+  expect_equal(out$summary$n_pairs_phi_0.7, 0L)
+  expect_equal(out$summary$effective_rank, 2)
+})
+
+test_that("program_distinctness detects a duplicated program", {
+  L <- cbind(c(1, 1, 0, 0, 1), c(0, 0, 1, 1, 1), c(1, 1, 0, 0, 1))
+  F <- cbind(c(1, 1, 0, 0), c(0, 0, 1, 1), c(1, 1, 0, 0))
+  out <- program_distinctness(distinctness_result(L, F))
+
+  dup <- out$pairs[out$pairs$program_a == 1 & out$pairs$program_b == 3, ]
+  expect_equal(dup$phi, 1)
+  expect_equal(dup$alignment, 1)
+  expect_equal(out$summary$max_abs_phi, 1)
+  expect_equal(out$summary$max_alignment, 1)
+  expect_equal(out$summary$n_pairs_phi_0.7, 1L)
+  # Gram eigenvalues 2, 1, 0: the copies count as one program of double weight.
+  expect_equal(
+    out$summary$effective_rank,
+    exp(-(2 / 3 * log(2 / 3) + 1 / 3 * log(1 / 3)))
+  )
+
+  sub <- program_distinctness(distinctness_result(L, F), programs = c(1, 2))
+  expect_equal(sub$summary$n_programs, 2L)
+  expect_equal(sub$summary$effective_rank, 2)
+  expect_error(program_distinctness(distinctness_result(L, F), programs = 4))
+})
+
+test_that("program_distinctness gives coin-flip loadings no weight", {
+  # Program 2 shares trait t1 with program 1, but at lfsr = 0.5.
+  L <- cbind(c(1, 0, 0), c(1, 1, 0))
+  L_lfsr <- cbind(c(0, 0, 0), c(0.5, 0, 0))
+  F <- cbind(c(1, 0), c(0, 1))
+  weighted <- program_distinctness(distinctness_result(L, F, L_lfsr = L_lfsr))
+  unweighted <- program_distinctness(distinctness_result(L, F))
+
+  expect_equal(weighted$pairs$phi, 0)
+  expect_equal(unweighted$pairs$phi, 1 / sqrt(2))
+})

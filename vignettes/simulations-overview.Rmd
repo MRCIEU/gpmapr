@@ -188,7 +188,7 @@ yet been re-run with the profile-based tiers, nor with the current rule,
 which grades a strong profile match by whether the shared loci agree,
 disagree or are too few to check (`locus_status`).
 
-[Simulation study of multi-trait program correspondence](investigation-multitrait-simulations.html)
+[Simulation study of multi-trait program correspondence](multitrait-simulations.html)
 checks this pipeline where the answer is known. Its most important aspects:
 
 - **Design.** `simulate_trait_pair()` plants **one** program in both traits

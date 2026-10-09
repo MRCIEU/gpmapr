@@ -75,6 +75,60 @@ test_that("the two axes are independent", {
   expect_gt(length(intersect(fa, fb)), 50)
 })
 
+test_that("unshared_driver_rows = 'background' puts every driver in both matrices", {
+  sp <- small_pair(
+    locus_overlap = 0.5, profile_overlap = 0.5, unshared_driver_rows = "background"
+  )
+  all_drivers <- unique(unlist(sp$ground_truth$program_drivers))
+  for (tid in names(sp$x_matrices)) {
+    expect_true(all(all_drivers %in% rownames(sp$x_matrices[[tid]])))
+  }
+  expect_equal(sp$ground_truth$parameters$unshared_driver_rows, "background")
+})
+
+test_that("a driver private to one trait carries no planted signal in the other", {
+  sp <- small_pair(
+    locus_overlap = 0.5, profile_overlap = 0.5, unshared_driver_rows = "background"
+  )
+  gt <- sp$ground_truth
+  private_a <- setdiff(
+    gt$program_drivers[["9001:shared1"]], gt$program_drivers[["9002:shared1"]]
+  )
+  expect_gt(length(private_a), 0)
+  snps_b <- gt$program_snps[["9002:shared1"]]
+  cells <- sp$x_matrices[["9002"]][private_a, snps_b]
+  # An unstructured background row: sparse, not a dense block proportional to
+  # the planted effect as it is in its own trait.
+  expect_lt(mean(!is.na(cells)), 0.2)
+  own <- sp$x_matrices[["9001"]][private_a, gt$program_snps[["9001:shared1"]]]
+  expect_true(all(!is.na(own)))
+})
+
+test_that("the default unshared_driver_rows reproduces the historical simulation", {
+  default <- small_pair(locus_overlap = 0.5, profile_overlap = 0.5, seed = 7)
+  absent <- small_pair(
+    locus_overlap = 0.5, profile_overlap = 0.5, seed = 7,
+    unshared_driver_rows = "absent"
+  )
+  expect_identical(default$x_matrices, absent$x_matrices)
+  expect_identical(default$traits, absent$traits)
+  # A trait's matrix holds only its own drivers.
+  drivers_b_only <- setdiff(
+    default$ground_truth$program_drivers[["9002:shared1"]],
+    default$ground_truth$program_drivers[["9001:shared1"]]
+  )
+  expect_false(any(drivers_b_only %in% rownames(default$x_matrices[["9001"]])))
+})
+
+test_that("two shared programs fit at zero locus overlap with enough private loci", {
+  expect_no_error(simulate_trait_pair(
+    n_loci_per_trait = 240L, n_shared_loci = 80L, K_shared = 2L,
+    K_specific = 2L, module_size = 36L, locus_overlap = 0,
+    profile_overlap = 0.5, directions = c(1, -1),
+    unshared_driver_rows = "background", seed = 1
+  ))
+})
+
 test_that("directions alternate so sign is scoreable both ways", {
   sp <- small_pair(locus_overlap = 0.5, profile_overlap = 0.8)
   expect_setequal(

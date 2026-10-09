@@ -6,13 +6,15 @@ output:
       in_header: investigation-wide.html
 params:
   # --- generative structure -------------------------------------------------
-  n_loci_per_trait: 200
+  # 240 loci per trait: at SNP overlap 0 the private pool must hold
+  # (K_shared + K_specific) x module_size = 144 loci.
+  n_loci_per_trait: 240
   n_shared_loci: 80
+  # Two shared programs per replicate, one concordant and one antagonistic, so
+  # direction is scored in every replicate rather than being a grid axis.
+  K_shared: 2
+  directions: !r c(1, -1)
   K_specific: 2
-  # 36 loci per program. Shared loci per overlap: 0.1 -> 4, 0.2 -> 7,
-  # 0.33 -> 12, 0.66 -> 24, 1 -> 36. Linking needs 3 shared loci and
-  # module_rg() needs 10 to estimate a direction, so 0.1 and 0.2 probe the
-  # low end: linkable, but with no direction call.
   module_size: 36
   n_drivers_per_program: 8
   n_background_traits: 300
@@ -26,30 +28,40 @@ params:
   background_effect_scale: 0.5
   background_corr: 0
   snp_pleiotropy_sd: 0
-  # --- the design -------------------------------------------------------------
-  # Crossed: every SNP overlap is run with a concordant and an antagonistic
-  # shared program.
-  snp_overlap: [0.1, 0.2, 0.33, 0.66, 1.0]
-  directions: ["concordant", "antagonistic"]
-  # --- replication (reported), as in investigation-multitrait-programs.Rmd --
-  stability_n_rep: 2
-  frac_traits: 0.8
-  stability_top_n: 20
-  # --- cross-trait comparison ----------------------------------------------
-  n_perm: 1000
+  # An unshared driver is still a row in the other trait's matrix, as an
+  # ordinary background study, so profile congruence is penalised for it.
+  unshared_driver_rows: "background"
+  # --- the grid -------------------------------------------------------------
+  # Shared loci of 36: 0, 4, 9, 18, 36. Shared drivers of 8: 0, 2, 4, 6, 8.
+  snp_overlap: !r c(0, 0.1, 0.25, 0.5, 1.0)
+  driver_overlap: !r c(0, 0.25, 0.5, 0.75, 1.0)
+  # --- linking, at the defaults of compare_program_pairs_loadings() ---------
+  phi_high: 0.85
+  phi_low: 0.70
+  min_alignment: 0.5
+  min_eff_loci: 5
+  min_shared_loci: 3
   fdr_threshold: 0.05
-  # --- planted vs resolved figure -------------------------------------------
-  # The version (SNP overlap, concordant) whose first replicate is drawn in the
-  # planted-vs-resolved loading heatmap.
-  example_snp_overlap: 0.33
+  min_loci_rg: 10
+  n_perm: 1000
+  # --- calibration targets (Q3) ---------------------------------------------
+  # A cutoff set is acceptable when false links per null replicate stay at or
+  # below max_false_links and pooled precision in the shared runs is at least
+  # min_precision; the recommended set is the acceptable one with the highest
+  # mean recall over the grid.
+  max_false_links: 0.05
+  min_precision: 0.95
+  # rg calls a direction reliably from the smallest n_loci_rg at which every
+  # larger bin has sign accuracy of at least this.
+  min_rg_accuracy: 0.95
   # --- replication ----------------------------------------------------------
-  n_sim: 50
+  n_sim: 20
   master_seed: 1
   # Replicates within a version run in parallel via parallel::mclapply
   # (fork-based; falls back to serial on Windows or when cores = 1).
   cores: 5
   # quick: fast test mode. Caps n_sim at 2 and lowers the permutation counts.
-  # All input versions are always run. Set FALSE for the full study.
+  # Every grid cell is always run. Set FALSE for the full study.
   quick: true
 vignette: >
   %\VignetteIndexEntry{Simulation study of multi-trait program correspondence}
@@ -72,6 +84,7 @@ if (requireNamespace("devtools", quietly = TRUE)) {
   library(gpmapr)
 }
 library(dplyr)
+library(ggplot2)
 
 quick <- isTRUE(params$quick)
 n_sim <- if (quick) min(as.integer(params$n_sim), 2L) else as.integer(params$n_sim)
@@ -79,8 +92,7 @@ n_perm <- if (quick) 300L else as.integer(params$n_perm)
 similarity_perm <- if (quick) 300L else 10000L
 
 # Shared EBMF settings, from the same file the univariate and real-data studies
-# read, so the per-trait discovery step here is the same discovery step used
-# everywhere else.
+# read, so the per-trait discovery step here is the one used everywhere else.
 ebmf_settings <- resolve_ebmf_settings(params)
 settings_signature <- ebmf_settings_signature(ebmf_settings)
 
@@ -94,9 +106,6 @@ generative_base <- list(
   K_specific = as.integer(params$K_specific),
   module_size = as.integer(params$module_size),
   n_drivers_per_program = as.integer(params$n_drivers_per_program),
-  # The same background GWAS sit at a shared locus in both traits, so the
-  # shared program's driver studies are identical in both.
-  profile_overlap = 1,
   n_background_traits = as.integer(params$n_background_traits),
   effect_size = params$effect_size,
   locus_effect_sd = params$locus_effect_sd,
@@ -106,214 +115,161 @@ generative_base <- list(
   background_sparsity_sd = params$background_sparsity_sd,
   background_effect_scale = params$background_effect_scale,
   background_corr = params$background_corr,
-  snp_pleiotropy_sd = params$snp_pleiotropy_sd
+  snp_pleiotropy_sd = params$snp_pleiotropy_sd,
+  unshared_driver_rows = params$unshared_driver_rows
+)
+
+# The linking cutoffs the pipeline runs at, and the ones every re-tiering in
+# Q3 is compared against.
+current_cutoffs <- list(
+  phi_high = as.numeric(params$phi_high),
+  phi_low = as.numeric(params$phi_low),
+  min_alignment = as.numeric(params$min_alignment),
+  min_eff_loci = as.numeric(params$min_eff_loci),
+  min_shared_loci = as.integer(params$min_shared_loci),
+  fdr_threshold = as.numeric(params$fdr_threshold)
 )
 
 palette_direction <- c(concordant = "#2a78d6", antagonistic = "#eb6834")
+palette_tier <- c(
+  high = "#1a6b3c", medium = "#74b98a", low = "#e3b448", none = "#d0d0d0",
+  `no valid pair` = "#8c8c8c"
+)
 ```
 
 ## How to read this document
 
-**The question.** gpmapr finds *programs* -- groups of loci that behave alike
-across hundreds of background GWAS -- separately for each target trait. The
-real-data study (`investigation-multitrait-programs.Rmd`) then links two
-traits' programs by the **loci they share**, with
-`compare_program_pairs_loadings()`, and takes the direction of each link from
-`module_rg()`. This document checks that pipeline on simulated data where the
-answer is known. Two traits share **one** program, and we ask three things:
+gpmapr finds *programs* -- groups of loci that behave alike across hundreds of
+background GWAS -- separately in each target trait, then links two traits'
+programs with `compare_program_pairs_loadings()`, as the real-data analysis
+([multi-trait analysis](multitrait-analysis.html)) does. This document runs
+that pipeline on simulated pairs of traits where the answer is known, and asks
+three questions:
 
-1. Is the shared program **found** in each trait's own fit, and if it is thrown
-   away, which validation gate threw it away?
-2. Is it **linked** across the two traits, as the SNP overlap between the two
-   copies falls from 1 to 0.1?
-3. Is the link given the right **direction**: concordant (raises both traits)
-   or antagonistic (raises one, lowers the other)?
-
-Programs are linked on loci only. Background-study profiles and annotations
-play no part in forming a link; on real data they are used afterwards, to
-describe programs that are already linked.
-
-**What happens in one simulated replicate.**
-
-1. **Simulate** two target traits with `simulate_trait_pair()`. Each is a matrix
-   of background studies x loci (z-scores). One program is planted in both
-   traits, and `K_specific` programs in each trait alone.
-2. **Fit each trait on its own** with EBMF (`run_univariate_clustering()`),
-   exactly as the real-data analysis does. EBMF knows nothing about the other
-   trait.
-3. **Validate** every fitted program (`summarise_ebmf_programs()`), with the
-   same gates used on real data, and record each program's `status`.
-4. **Link** the programs across traits (`compare_program_pairs_loadings()`),
-   which also runs `module_rg()` on every link. This is done twice: on every
-   fitted program, and on the valid programs only, so the effect of the gates
-   can be seen.
-5. **Score** discovery, links and direction against what was planted.
-
-The whole replicate is repeated `n_sim` times per setting, and each table
-reports the mean with its Monte Carlo standard error in parentheses.
+1. **Are planted programs recovered?** Is each planted program found in its own
+   trait, and is a program planted in both traits linked across them, in the
+   right direction?
+2. **How much do the two copies need to have in common?** The two copies of a
+   shared program are planted with only part of their driver studies and only
+   part of their SNPs in common. Where does linking stop finding them?
+3. **What cutoffs?** Which values of `phi_high`/`phi_low`, `min_alignment`
+   and `min_loci_rg` keep false links rare while linking as much as possible?
 
 **Glossary.**
 
-- **Program**: one EBMF factor: a set of loci (its SNP loadings) together with
-  the background studies that load on it.
-- **SNP overlap**: the fraction of the shared program's loci that are the same
-  locus (coloc group) in both traits. At 1 the two copies act at exactly the
-  same loci; at 0.1 they share 4 of their 36.
-- **Driver study**: a background study planted as part of a program. The shared
-  program has the same driver studies in both traits.
-- **Common allele frame**: effects are generated as they are reported, for one
-  fixed allele per locus. A driver study has the same sign at a shared locus in
-  both traits, because it is the same GWAS. An antagonistic program has
-  opposite-sign **target** effects at its loci.
-- **Orientation**: before fitting, every locus is flipped to its own target
-  trait's risk-increasing allele, as on real data. This is where antagonism
-  reaches the fit: in the antagonistic trait the driver studies end up negative.
-- **status**: the validation outcome of a fitted program: `valid` when its
-  confidence tier is high or medium, otherwise the tier (`single_trait` when
-  it passes the similarity test but its trait loadings rest on essentially one
-  trait, or `low` when it fails the similarity test).
-- **Link**: a pair of programs, one per trait, of high or medium tier --
-  congruent trait profiles, graded with the alignment of their SNP loadings
-  at the loci the traits share (see
-  [Multi-trait correspondence](investigation-multitrait-correspondence.html)).
-  The results shown were rendered with an earlier, locus-only link rule. A
-  program may link to more than one program in the other trait.
-- **Recall**: the fraction of planted shared programs linked (here 0 or 1 per
-  replicate).
-- **Precision**: the fraction of reported links that are real.
-- **Sign accuracy**: among real links, the fraction called in the planted
-  direction.
-- **SNP precision / recall**: for a resolved program, the share of its
-  high-confidence SNPs that were planted, and the share of the planted SNPs it
-  recovers.
-- **MCSE**: Monte Carlo standard error. It measures how precisely `n_sim`
-  replicates pin down the reported mean, not biological variability.
+- **Program**: one EBMF factor -- its SNP loadings and the background studies
+  (trait loadings) that drive it.
+- **φ (`phi_traits`)**: congruence of two programs' trait loadings over the
+  background studies both fits carry. Its sign is the link's direction.
+- **alignment**: R² of two programs' SNP loadings over the loci both traits
+  carry; tested only when they share enough loci (`n_loci_shared`,
+  `n_eff_loci`), otherwise the loci are `too_few_loci`.
+- **Tier / link**: φ strength (strong ≥ `phi_high`, moderate ≥ `phi_low`)
+  combined with the locus status (agree / disagree / too few). High and medium
+  are links.
+- **rg** (`module_rg()`): correlation of the two targets' own allele effects
+  over the program's shared loci; a check on direction, called only when its
+  bootstrap CI excludes 0.
+- **Driver / SNP overlap**: the fraction of the shared program's 8 driver
+  studies, and of its 36 loci, that are the same in both traits.
 
 ```{r settings-table}
 knitr::kable(
   data.frame(
     parameter = c(
-      names(generative_base), "snp_overlap", "directions", "stability_n_rep",
-      "frac_traits", "stability_top_n", "n_sim",
-      "n_perm", "fdr_threshold", "quick", "ebmf_settings_signature"
+      names(generative_base), "K_shared", "directions", "snp_overlap",
+      "driver_overlap", names(current_cutoffs), "min_loci_rg", "n_perm",
+      "max_false_links", "min_precision", "n_sim", "quick",
+      "ebmf_settings_signature"
     ),
     value = c(
       vapply(generative_base, function(x) paste(x, collapse = ", "), character(1)),
+      params$K_shared, paste(params$directions, collapse = ", "),
       paste(params$snp_overlap, collapse = ", "),
-      paste(params$directions, collapse = ", "),
-      params$stability_n_rep, params$frac_traits, params$stability_top_n,
-      n_sim, n_perm, params$fdr_threshold, quick,
-      settings_signature
+      paste(params$driver_overlap, collapse = ", "),
+      vapply(current_cutoffs, as.character, character(1)),
+      params$min_loci_rg, n_perm, params$max_false_links, params$min_precision,
+      n_sim, quick, settings_signature
     ),
     stringsAsFactors = FALSE
   ),
   row.names = FALSE,
   caption = paste0(
-    "Active settings. ebmf_settings_signature identifies the shared analysis ",
-    "settings this run resolved from _ebmf_settings.yml; two studies carrying ",
-    "the same signature were run on the same discovery settings."
+    "Active settings. ebmf_settings_signature identifies the shared discovery ",
+    "settings resolved from _ebmf_settings.yml."
   )
 )
 ```
 
-## Simulation design (ADEMP)
+## Design
 
-Following Morris, White and Crowther (2019, *Statistics in Medicine* 38:2074-2102),
-as the univariate studies do.
+Following Morris, White and Crowther (2019, *Statistics in Medicine*
+38:2074-2102).
 
-**Aims.** (i) Measure how often a program shared by two traits survives each
-trait's own fit and validation. (ii) Measure how often it is linked across the
-traits as a function of SNP overlap. (iii) Measure whether the direction of the
-link is called correctly, by the concordance sign and by `module_rg()`. (iv)
-Measure false links when nothing is shared.
+**Data.** `simulate_trait_pair()` builds two target traits, each a matrix of
+background studies × loci. Two programs are planted in both traits, one
+**concordant** (raises both) and one **antagonistic** (raises one, lowers the
+other), and `K_specific` programs in each trait alone. Each copy of a shared
+program has 36 loci and 8 driver studies; a fraction `snp_overlap` of the loci
+and a fraction `driver_overlap` of the drivers are the same in both traits,
+the rest are the trait's own. A driver that is not shared is still a row in the
+other trait's matrix, where it behaves like any background study. The grid
+crosses the two overlaps (25 cells), plus a **null** in which nothing is
+shared.
 
-**Data-generating mechanism.** `simulate_trait_pair()` with `K_shared = 1`. Each
-trait carries `n_loci_per_trait` loci, of which `n_shared_loci` sit in a pool
-both traits carry. The shared program has `module_size` loci in each trait; a
-fraction `snp_overlap` of them are drawn from the shared pool (the rest are
-private to each trait), and its `n_drivers_per_program` driver studies are the
-same in both traits. Each program locus carries an effect `a_s`, drawn once and
-reused in both traits at a shared locus. A driver study's effect at a locus is
-proportional to `a_s`; the target's own effect is `+a_s` in trait A and
-`+a_s` (concordant) or `-a_s` (antagonistic) in trait B. Each trait also
-carries `K_specific` programs of its own, which must not be linked, and 300
-unstructured background studies. The versions cross `snp_overlap` in
-{`r paste(params$snp_overlap, collapse = ", ")`} with the two directions, plus
-a null with nothing shared.
+**Method.** The real-data pipeline: per trait, `run_univariate_clustering()`
+and `summarise_ebmf_programs()` at the shared settings; then
+`compare_program_pairs_loadings()` on the valid (high- or medium-confidence)
+programs of the two traits, and `module_rg()` on every pair. Every cross-trait
+pair is stored with its raw φ, alignment, q-value and rg, so Q3 can re-tier
+them at any cutoffs without refitting.
 
-**Estimand / target.** For each replicate: whether the shared program is found
-valid in each trait, whether it is linked, and the planted direction of the
-link. This is a selection-plus-sign target, not a parameter.
+**Estimands.** Discovered programs are mapped to planted ones by SNP
+membership (`map_programs_to_planted()`, Jaccard ≥ 0.1). A pair is **true**
+when both of its programs map to the same shared program.
 
-**Methods.** The real-data pipeline, unchanged: `run_univariate_clustering()`
-and `summarise_ebmf_programs()` per trait at the shared settings, then
-`compare_program_pairs_loadings()` across traits, at its defaults: each pair is
-scored on the shared loci either program claims, and a pair needs at least 3
-shared high-confidence loci to be linked. Linking is run twice, on every fitted
-program and on the valid (high- or medium-confidence) programs only;
-replication is computed for every program, so low-confidence programs carry
-the same metrics as valid ones. Direction is read from `rg_direction`
-(`module_rg()`); the sign of `concordance_z` is scored alongside it only to
-show that it is not a direction.
+- *Recall*: per shared program, whether any true pair is linked. A shared
+  program lost by either trait's validation counts as not recovered.
+- *False links*: linked pairs that are not true, per replicate.
+- *Precision*: true links over all links, pooled over the shared runs.
+- *Direction accuracy*: on true pairs, the φ sign and the rg call against the
+  planted direction.
 
-**Performance measures.** Discovered programs are mapped onto planted programs
-by SNP membership (`map_programs_to_planted()`, Jaccard at least 0.1).
-
-- *Discovery*: per trait, whether a valid program maps to the shared program;
-  if not, the `status` of the best-matching program, or "not found" when no
-  program maps to it.
-- *Match quality*: for the program representing each planted program, the
-  Jaccard, SNP precision and SNP recall of its high-confidence SNPs against the
-  planted SNPs, and the correlation of its loadings with the planted per-locus
-  effects.
-- *Linking*: `evaluate_multitrait_simulation()` reports `recall` (planted
-  shared program linked) and `precision` (links that are real).
-- *Direction*: sign accuracy on true links, from the concordance sign and from
-  `module_rg()`, split by planted direction. `module_rg()` needs at least 10
-  usable shared loci, and calls a direction only when its bootstrap CI
-  excludes 0; otherwise the direction is *undetermined*, which is reported
-  rather than dropped and does not count towards sign accuracy.
-- *Null*: under `K_shared = 0` every link is a false discovery.
-
-**Monte Carlo uncertainty.** Every estimate is a mean over `n_sim` replicates
-with a Monte Carlo standard error; the replicate is the MC unit. Common random
-numbers are used -- one seed vector shared across all versions -- so
-version-to-version differences are estimated more precisely than with
-independent seeds.
+**Monte Carlo uncertainty.** Each estimate is a mean over `n_sim` replicates;
+tables give the Monte Carlo SE in parentheses. All versions share one seed
+vector.
 
 ```{r versions}
 versions <- list()
-for (dir in as.character(params$directions)) {
-  for (ov in as.numeric(params$snp_overlap)) {
+for (dov in as.numeric(params$driver_overlap)) {
+  for (sov in as.numeric(params$snp_overlap)) {
     versions[[length(versions) + 1L]] <- list(
-      label = sprintf("snp_overlap = %.2f, %s", ov, dir),
+      label = sprintf("snp %.2f, drivers %.2f", sov, dov),
       family = "shared",
-      snp_overlap = ov,
-      direction = dir,
+      snp_overlap = sov,
+      driver_overlap = dov,
       spec = list(
-        K_shared = 1L, locus_overlap = ov,
-        directions = if (dir == "antagonistic") -1L else 1L
+        K_shared = as.integer(params$K_shared), locus_overlap = sov,
+        profile_overlap = dov, directions = as.integer(params$directions)
       )
     )
   }
 }
-# The null: two traits with programs of their own and no correspondence. Any
+# The null: programs of their own in each trait and nothing shared, so every
 # link is a false discovery.
 versions[[length(versions) + 1L]] <- list(
   label = "null: nothing shared",
   family = "null",
   snp_overlap = NA_real_,
-  direction = NA_character_,
-  spec = list(K_shared = 0L, locus_overlap = 0)
+  driver_overlap = NA_real_,
+  spec = list(K_shared = 0L, locus_overlap = 0, profile_overlap = 0)
 )
-version_order <- vapply(versions, function(v) v$label, character(1))
 ```
 
 ```{r run-helpers}
-# Fit one trait and validate every program. Returns each program's status, its
-# full set of validation metrics (stability is computed for every program, not
-# only the coherent ones, so filtered programs can be compared with valid ones),
-# and the extraction of every fitted program, valid or not.
+# Fit one trait and validate every program. Returns the extraction of every
+# fitted program and each program's status ("valid" = high or medium
+# confidence, else its tier).
 discover_one_trait <- function(trait_object, trait_id) {
   res <- run_univariate_clustering(
     trait_object,
@@ -329,6 +285,7 @@ discover_one_trait <- function(trait_object, trait_id) {
     ebmf_backfit = isTRUE(ebmf_settings$ebmf_backfit),
     min_module_size = as.integer(ebmf_settings$min_module_size)
   )
+  # n_rep = 0: replication refits answer none of this study's questions.
   smry <- summarise_ebmf_programs(
     res, s_matrix = res$s_matrix,
     edge_threshold = as.numeric(ebmf_settings$similarity_threshold),
@@ -339,151 +296,18 @@ discover_one_trait <- function(trait_object, trait_id) {
     high_min_connectedness = as.numeric(ebmf_settings$high_connectedness),
     min_effective_traits = as.numeric(ebmf_settings$min_effective_traits),
     n_null = 2,
-    n_rep = as.integer(params$stability_n_rep),
-    frac_traits = as.numeric(params$frac_traits),
-    top_n = as.integer(params$stability_top_n),
+    n_rep = 0,
     verbose = FALSE
   )
-  # "valid" = high or medium confidence, as extract_program_loadings() keeps.
   program_tier <- as.character(smry$programs$confidence_tier)
-  program_status <- ifelse(
-    program_tier %in% c("high", "medium"), "valid", program_tier
-  )
-  status <- data.frame(
-    program_id = paste0(trait_id, ":", smry$programs$program),
-    status = program_status,
-    stringsAsFactors = FALSE
-  )
-  metric_cols <- intersect(
-    c(
-      "program", "n_snps", "n_snps_filtered", "effective_n_traits",
-      "similarity_q",
-      "excess_similarity", "excess_connectedness",
-      "mean_internal_similarity", "connectedness",
-      "replication", "posterior_evidence", "factor_pve",
-      "parent_program", "max_abs_factor_corr", "max_pair_redundancy",
-      "confidence_tier"
-    ),
-    names(smry$programs)
-  )
-  metrics <- smry$programs[, metric_cols, drop = FALSE]
-  metrics$confidence_tier <- as.character(metrics$confidence_tier)
-  metrics$status <- program_status
-  metrics$program_id <- paste0(trait_id, ":", metrics$program)
-  metrics$trait_id <- as.character(trait_id)
   return(list(
     all = extract_program_loadings(res, smry, valid_only = FALSE),
-    status = status,
-    metrics = metrics
-  ))
-}
-
-# What each fitted program is, against the planted truth: part of the shared
-# program, part of a trait-specific program, or no planted program at all.
-truth_class <- function(planted_label) {
-  return(dplyr::case_when(
-    is.na(planted_label) ~ "unmatched",
-    startsWith(planted_label, "shared") ~ "shared",
-    TRUE ~ "trait-specific"
-  ))
-}
-
-# Link two traits' programs and score the links against the planted truth.
-# `programs` labels the program set ("all" fitted programs or "valid" only).
-# Returns the per-tier scores, every reported link with the gate status and
-# planted match of both its programs, and the module_rg readout of the true
-# link.
-link_and_score <- function(extraction, mapping, status, gt, tids, sp, programs) {
-  n_programs <- vapply(extraction, function(x) {
-    return(length(unique(x$loadings$program_id)))
-  }, integer(1))
-  # Linking needs a program in both traits; otherwise score an empty table so
-  # the replicate counts as zero recall rather than going missing.
-  cmp <- if (all(n_programs > 0)) {
-    compare_program_pairs_loadings(
-      extraction, n_perm = n_perm, fdr_threshold = params$fdr_threshold,
-      seed = 1,
-      coloc_groups = stats::setNames(
-        lapply(tids, function(tid) sp$traits[[tid]]$coloc_groups), tids
-      )
+    status = data.frame(
+      program_id = paste0(trait_id, ":", smry$programs$program),
+      status = ifelse(program_tier %in% c("high", "medium"), "valid", program_tier),
+      stringsAsFactors = FALSE
     )
-  } else {
-    NULL
-  }
-  pairs <- if (is.null(cmp)) NULL else cmp$pairs
-  pairs_rg <- pairs
-  if (!is.null(pairs) && nrow(pairs) > 0) {
-    rg <- cmp$module_rg[, c(
-      "program_id_a", "program_id_b", "rg", "rg_ci_lower", "rg_ci_upper",
-      "n_loci_rg", "rg_direction"
-    )]
-    pairs_rg <- dplyr::left_join(
-      pairs, rg, by = c("program_id_a", "program_id_b")
-    )
-    pairs_rg$direction <- pairs_rg$rg_direction
-    # The concordance sign, scored only to show it is not a direction.
-    pairs$direction <- ifelse(pairs$concordance_z > 0, "concordant", "antagonistic")
-  }
-
-  by_sign <- evaluate_multitrait_simulation(pairs, mapping, gt)
-  by_rg <- evaluate_multitrait_simulation(pairs_rg, mapping, gt)
-  links <- by_sign
-  links$tiers <- "linked"
-  links$rg_sign_accuracy_concordant <- by_rg$sign_accuracy_concordant
-  links$rg_sign_accuracy_antagonistic <- by_rg$sign_accuracy_antagonistic
-  links$programs <- programs
-  links$n_programs_a <- n_programs[[1]]
-  links$n_programs_b <- n_programs[[2]]
-
-  label_of <- stats::setNames(mapping$planted_label, mapping$program_id)
-  status_of <- stats::setNames(status$status, status$program_id)
-  link_details <- data.frame()
-  true_link <- data.frame()
-  if (!is.null(pairs_rg) && nrow(pairs_rg) > 0) {
-    linked <- pairs_rg[!is.na(pairs_rg$linked) & pairs_rg$linked, , drop = FALSE]
-    if (nrow(linked) > 0) {
-      label_a <- unname(label_of[as.character(linked$program_id_a)])
-      label_b <- unname(label_of[as.character(linked$program_id_b)])
-      link_details <- data.frame(
-        programs = programs,
-        program_id_a = as.character(linked$program_id_a),
-        program_id_b = as.character(linked$program_id_b),
-        concordance_z = linked$concordance_z,
-        n_loci_shared = linked$n_loci_shared,
-        status_a = unname(status_of[as.character(linked$program_id_a)]),
-        status_b = unname(status_of[as.character(linked$program_id_b)]),
-        truth_a = truth_class(label_a),
-        truth_b = truth_class(label_b),
-        true_link = !is.na(label_a) & !is.na(label_b) & label_a == label_b &
-          startsWith(label_a, "shared"),
-        stringsAsFactors = FALSE
-      )
-    }
-    # The true link itself (both programs map to the shared program), for the
-    # module_rg readout: the strongest true link.
-    if (nrow(gt$correspondence) > 0) {
-      shared_label <- gt$correspondence$program_label[1]
-      is_true <- !is.na(pairs_rg$linked) & pairs_rg$linked &
-        label_of[as.character(pairs_rg$program_id_a)] %in% shared_label &
-        label_of[as.character(pairs_rg$program_id_b)] %in% shared_label
-      tl <- pairs_rg[is_true, , drop = FALSE]
-      if (nrow(tl) > 0) {
-        tl <- tl[order(-abs(tl$concordance_z)), ][1, ]
-        true_link <- data.frame(
-          programs = programs,
-          concordance_z = tl$concordance_z,
-          rg = tl$rg,
-          ci_excludes_zero = is.finite(tl$rg_ci_lower) &
-            is.finite(tl$rg_ci_upper) &
-            (tl$rg_ci_lower > 0 | tl$rg_ci_upper < 0),
-          n_loci_rg = tl$n_loci_rg,
-          rg_undetermined = !is.finite(tl$rg),
-          stringsAsFactors = FALSE
-        )
-      }
-    }
-  }
-  return(list(links = links, link_details = link_details, true_link = true_link))
+  ))
 }
 
 # Keep only the valid programs of an extraction.
@@ -498,21 +322,17 @@ valid_extraction <- function(extraction, valid_ids) {
   ))
 }
 
-# For each planted program in one trait: found valid, found but filtered (with
-# the status of the best-matching program), or not found. For the program that
-# represents it -- the best-matching valid program, else the best-matching
-# program of any status -- also score how closely its SNPs match the planted
-# ones: Jaccard, SNP precision (share of its high-confidence SNPs that were
-# planted) and recall (share of planted SNPs it recovers), and the correlation
-# of its loadings over every locus in the trait with the planted effect a_s
-# (0 at loci outside the program).
+# For each planted program in one trait: found valid, found but filtered by
+# validation, or not found; and, for the program that represents it (best
+# valid match, else best match of any status), how closely its high-confidence
+# SNPs and its loadings match the planted ones.
 planted_outcomes <- function(mapping, status, gt, trait_id, loadings) {
   labels <- gt$programs$program_label[gt$programs$trait_id == as.integer(trait_id)]
   m <- dplyr::left_join(mapping, status, by = "program_id")
   trait_loadings <- loadings[loadings$trait_id == as.character(trait_id), , drop = FALSE]
   rows <- lapply(labels, function(lab) {
-    # Planted labels are not trait-specific ("shared1" is planted in both
-    # traits), so a hit must also be one of this trait's programs.
+    # Planted labels are common to both traits ("shared1"), so a hit must also
+    # be one of this trait's programs.
     hits <- m[
       !is.na(m$planted_label) & m$planted_label == lab &
         m$trait_id == as.character(trait_id), ,
@@ -524,26 +344,20 @@ planted_outcomes <- function(mapping, status, gt, trait_id, loadings) {
     } else if (nrow(valid_hits) > 0) {
       "valid"
     } else {
-      best <- hits[which.max(hits$score), , drop = FALSE]
-      paste0("filtered: ", dplyr::coalesce(best$status, "unsummarised"))
+      "filtered"
     }
-    quality <- data.frame(
-      jaccard = NA_real_, snp_precision = NA_real_, snp_recall = NA_real_,
-      loading_cor = NA_real_
-    )
+    quality <- data.frame(jaccard = NA_real_, loading_cor = NA_real_)
     if (nrow(hits) > 0) {
       pool <- if (nrow(valid_hits) > 0) valid_hits else hits
       rep_id <- pool$program_id[which.max(pool$score)]
       prog <- trait_loadings[trait_loadings$program_id == rep_id, , drop = FALSE]
       planted <- gt$program_snps[[paste0(trait_id, ":", lab)]]
       resolved <- unique(prog$snp_id[prog$high_confidence %in% TRUE])
-      shared <- length(intersect(resolved, planted))
       effect <- gt$program_effects[[paste0(trait_id, ":", lab)]]
       truth <- ifelse(prog$snp_id %in% names(effect), effect[prog$snp_id], 0)
       quality <- data.frame(
-        jaccard = shared / length(union(resolved, planted)),
-        snp_precision = if (length(resolved) > 0) shared / length(resolved) else NA_real_,
-        snp_recall = shared / length(planted),
+        jaccard = length(intersect(resolved, planted)) /
+          length(union(resolved, planted)),
         loading_cor = if (nrow(prog) > 2 && stats::sd(prog$loading) > 0) {
           stats::cor(prog$loading, truth)
         } else {
@@ -553,50 +367,17 @@ planted_outcomes <- function(mapping, status, gt, trait_id, loadings) {
     }
     return(data.frame(
       trait_id = as.character(trait_id), planted_label = lab,
-      is_shared = startsWith(lab, "shared"), outcome = outcome,
-      n_programs_mapped = nrow(hits),
-      quality,
-      stringsAsFactors = FALSE
+      outcome = outcome, quality, stringsAsFactors = FALSE
     ))
   })
   return(dplyr::bind_rows(rows))
 }
 
-# Planted vs resolved loadings for one replicate, for the heatmap: every fitted
-# program's loading at every locus, with the planted program each locus belongs
-# to (planted labels are made common to both traits so the traits line up) and
-# the planted program each fitted program maps to, if any.
-planted_vs_resolved <- function(loadings, status, gt, tids, mapping) {
-  common_label <- function(lab) {
-    out <- sub("^shared[0-9]+$", "shared", lab)
-    return(sub("^specific([0-9]+)_t[0-9]+$", "specific \\1", out))
-  }
-  rows <- lapply(tids, function(tid) {
-    tab <- loadings[loadings$trait_id == as.character(tid), , drop = FALSE]
-    keys <- names(gt$program_snps)[startsWith(names(gt$program_snps), paste0(tid, ":"))]
-    planted_of <- unlist(lapply(keys, function(k) {
-      return(stats::setNames(
-        rep(common_label(sub("^[^:]*:", "", k)), length(gt$program_snps[[k]])),
-        gt$program_snps[[k]]
-      ))
-    }))
-    effect_of <- unlist(unname(gt$program_effects[keys]))
-    tab$planted <- dplyr::coalesce(unname(planted_of[tab$snp_id]), "unplanted")
-    tab$planted_effect <- dplyr::coalesce(unname(effect_of[tab$snp_id]), 0)
-    tab <- dplyr::left_join(tab, status, by = "program_id")
-    tab <- dplyr::left_join(
-      tab,
-      mapping[, c("program_id", "planted_label")] |>
-        dplyr::rename(maps_to = planted_label),
-      by = "program_id"
-    )
-    return(tab[, c(
-      "trait_id", "program_id", "program", "status", "maps_to", "snp_id",
-      "loading", "high_confidence", "planted", "planted_effect"
-    )])
-  })
-  return(dplyr::bind_rows(rows))
-}
+pair_columns <- c(
+  "program_id_a", "program_id_b", "phi_traits", "n_eff_traits",
+  "n_loci_shared", "n_eff_loci", "alignment", "q_concordance",
+  "direction_profile", "tier", "linked"
+)
 
 run_replicate <- function(spec, seed) {
   sp <- do.call(
@@ -611,56 +392,75 @@ run_replicate <- function(spec, seed) {
   status <- dplyr::bind_rows(lapply(fits, function(x) x$status))
   valid_ids <- status$program_id[status$status == "valid"]
   loadings_all <- dplyr::bind_rows(lapply(fits, function(x) x$all$loadings))
-  mapping_all <- map_programs_to_planted(loadings_all, gt, by = "snps")
-  mapping_valid <- mapping_all[mapping_all$program_id %in% valid_ids, , drop = FALSE]
+  mapping <- map_programs_to_planted(loadings_all, gt, by = "snps")
 
-  discovery <- dplyr::bind_rows(lapply(tids, function(tid) {
-    return(planted_outcomes(mapping_all, status, gt, tid, loadings_all))
-  }))
-  discovery$trait <- ifelse(discovery$trait_id == tids[1], "trait A", "trait B")
-
-  # Every fitted program, with its validation metrics and what it is against
-  # the planted truth.
-  program_metrics <- dplyr::bind_rows(lapply(fits, function(x) x$metrics)) |>
-    dplyr::left_join(
-      mapping_all[, c("program_id", "planted_label", "score")] |>
-        dplyr::rename(jaccard = score),
-      by = "program_id"
-    ) |>
-    dplyr::mutate(
-      truth = truth_class(planted_label),
-      trait = ifelse(trait_id == tids[1], "trait A", "trait B")
-    )
-
-  # Link twice: on every fitted program (the primary analysis), and on the
-  # valid programs only, as the gates would have it.
-  extraction_all <- lapply(fits, function(x) x$all)
-  extraction_valid <- lapply(fits, function(x) valid_extraction(x$all, valid_ids))
-  scored <- list(
-    link_and_score(extraction_all, mapping_all, status, gt, tids, sp, "all"),
-    link_and_score(extraction_valid, mapping_valid, status, gt, tids, sp, "valid")
+  direction_of <- stats::setNames(
+    gt$correspondence$direction, gt$correspondence$program_label
   )
-  links <- dplyr::bind_rows(lapply(scored, function(x) x$links))
-  link_details <- dplyr::bind_rows(lapply(scored, function(x) x$link_details))
-  true_link <- dplyr::bind_rows(lapply(scored, function(x) x$true_link))
+  discovery <- dplyr::bind_rows(lapply(tids, function(tid) {
+    return(planted_outcomes(mapping, status, gt, tid, loadings_all))
+  }))
+  discovery$kind <- dplyr::coalesce(
+    unname(direction_of[discovery$planted_label]), "trait-specific"
+  )
 
-  # Keep the full loadings of the first replicate only, for the heatmap.
-  example <- if (identical(seed, sim_seeds[[1]])) {
-    planted_vs_resolved(loadings_all, status, gt, tids, mapping_all)
-  } else {
-    data.frame()
+  # Link the valid programs, as the real analysis does, and run module_rg() on
+  # every pair (not only the linked ones) so Q3 can study rg on its own.
+  # min_loci_rg = 2 keeps an estimate wherever one is possible; the cutoff is
+  # applied afterwards.
+  extraction <- lapply(fits, function(x) valid_extraction(x$all, valid_ids))
+  n_valid <- vapply(extraction, function(x) {
+    return(length(unique(x$loadings$program_id)))
+  }, integer(1))
+  pairs <- data.frame()
+  if (all(n_valid > 0)) {
+    cmp <- do.call(
+      compare_program_pairs_loadings,
+      c(
+        list(program_data = extraction, n_perm = n_perm, seed = 1),
+        current_cutoffs
+      )
+    )
+    pairs <- cmp$pairs[, pair_columns, drop = FALSE]
+    if (nrow(pairs) > 0) {
+      rg <- module_rg(
+        cmp, program_data = extraction,
+        coloc_groups = stats::setNames(
+          lapply(tids, function(tid) sp$traits[[tid]]$coloc_groups), tids
+        ),
+        linked_only = FALSE, min_loci_rg = 2L, seed = 1
+      )
+      pairs <- dplyr::left_join(
+        pairs,
+        rg[, c(
+          "program_id_a", "program_id_b", "rg", "rg_ci_lower", "rg_ci_upper",
+          "n_loci_rg", "rg_direction"
+        )],
+        by = c("program_id_a", "program_id_b")
+      )
+      label_of <- stats::setNames(mapping$planted_label, mapping$program_id)
+      la <- unname(label_of[as.character(pairs$program_id_a)])
+      lb <- unname(label_of[as.character(pairs$program_id_b)])
+      pairs$true_pair <- !is.na(la) & !is.na(lb) & la == lb & la %in% names(direction_of)
+      pairs$planted_label <- ifelse(pairs$true_pair, la, NA_character_)
+      pairs$direction_planted <- unname(direction_of[pairs$planted_label])
+    }
   }
+  # One row per planted shared program, so a replicate in which no true pair
+  # exists (a copy was not valid in its trait) still counts towards recall.
+  shared_programs <- data.frame(
+    planted_label = gt$correspondence$program_label,
+    direction_planted = gt$correspondence$direction,
+    stringsAsFactors = FALSE
+  )
   return(list(
-    links = links, discovery = discovery, true_link = true_link,
-    program_metrics = program_metrics, link_details = link_details,
-    example = example
+    discovery = discovery, pairs = pairs, shared_programs = shared_programs
   ))
 }
 
 # Run every version. The runner returns a named list of tables; each is stacked
 # across replicates and versions and tagged with both. Errors are returned
-# rather than recorded with `<<-`, so they survive a forked mclapply worker (a
-# child process's `<<-` never reaches the parent).
+# rather than recorded with `<<-`, so they survive a forked mclapply worker.
 run_versions <- function(versions, runner) {
   n_jobs <- max(1L, min(as.integer(params$cores), n_sim))
   one <- function(spec, r) {
@@ -702,10 +502,7 @@ run_versions <- function(versions, runner) {
         tab$version <- versions[[v]]$label
         tab$family <- versions[[v]]$family
         tab$snp_overlap <- versions[[v]]$snp_overlap
-        tab$direction_planted <- versions[[v]]$direction
-        if (is.null(tables[[nm]])) {
-          tables[[nm]] <- list()
-        }
+        tab$driver_overlap <- versions[[v]]$driver_overlap
         tables[[nm]][[length(tables[[nm]]) + 1L]] <- tab
       }
     }
@@ -741,6 +538,10 @@ fmt_mc <- function(x, digits = 2) {
   ))
 }
 
+pct <- function(x) {
+  return(sprintf("%.0f%%", 100 * mean(x %in% TRUE)))
+}
+
 print_errors <- function(err) {
   if (is.null(err) || nrow(err) == 0) {
     return(invisible(NULL))
@@ -759,355 +560,333 @@ print_errors <- function(err) {
 }
 ```
 
+```{r scoring-helpers}
+# Re-tier every stored pair at a set of cutoffs, with the pipeline's own tier
+# rule, so any cutoff can be scored without refitting.
+retier <- function(pairs, cutoffs) {
+  if (nrow(pairs) == 0) {
+    return(pairs)
+  }
+  return(gpmapr:::.assign_link_tiers(
+    pairs,
+    phi_high = cutoffs$phi_high, phi_low = cutoffs$phi_low,
+    min_shared_loci = cutoffs$min_shared_loci,
+    min_eff_loci = cutoffs$min_eff_loci,
+    min_alignment = cutoffs$min_alignment,
+    fdr_threshold = cutoffs$fdr_threshold
+  ))
+}
+
+# The best true pair of each planted shared program in each replicate (highest
+# tier, then largest |phi|), with "no valid pair" when no true pair exists.
+tier_levels <- c("high", "medium", "low", "none")
+best_true_pairs <- function(pairs, shared_programs) {
+  keys <- c("version", "rep", "planted_label")
+  best <- pairs[pairs$true_pair, , drop = FALSE] |>
+    dplyr::mutate(tier_rank = match(tier, tier_levels)) |>
+    dplyr::group_by(dplyr::across(dplyr::all_of(keys))) |>
+    dplyr::arrange(tier_rank, dplyr::desc(abs(phi_traits)), .by_group = TRUE) |>
+    dplyr::slice(1) |>
+    dplyr::ungroup() |>
+    dplyr::select(-tier_rank, -direction_planted, -snp_overlap, -driver_overlap, -family)
+  out <- dplyr::left_join(shared_programs, best, by = keys)
+  out$tier <- dplyr::coalesce(out$tier, "no valid pair")
+  out$linked <- out$tier %in% c("high", "medium")
+  return(out)
+}
+
+# Recall per grid cell and planted direction, false links per replicate in the
+# null and shared runs, and pooled precision, at one set of cutoffs.
+score_cutoffs <- function(pairs, shared_programs, cutoffs) {
+  tiered <- retier(pairs, cutoffs)
+  best <- best_true_pairs(tiered, shared_programs)
+  linked <- tiered[tiered$linked, , drop = FALSE]
+  false_per_rep <- function(fam) {
+    reps <- unique(all_reps[all_reps$family == fam, c("version", "rep")])
+    n_false <- linked[linked$family == fam & !linked$true_pair, , drop = FALSE] |>
+      dplyr::count(version, rep, name = "n_false")
+    counts <- dplyr::left_join(reps, n_false, by = c("version", "rep"))
+    return(dplyr::coalesce(counts$n_false, 0L))
+  }
+  shared_linked <- linked[linked$family == "shared", , drop = FALSE]
+  return(list(
+    best = best,
+    recall = mean(best$linked),
+    false_null = false_per_rep("null"),
+    false_shared = false_per_rep("shared"),
+    precision = if (nrow(shared_linked) > 0) mean(shared_linked$true_pair) else NA_real_
+  ))
+}
+```
+
 ```{r run}
+t_start <- Sys.time()
 sim <- run_versions(versions, run_replicate)
-links <- if (is.null(sim$links)) data.frame() else sim$links
-discovery <- if (is.null(sim$discovery)) data.frame() else sim$discovery
-true_links <- if (is.null(sim$true_link)) data.frame() else sim$true_link
-examples <- if (is.null(sim$example)) data.frame() else sim$example
-program_metrics <- if (is.null(sim$program_metrics)) data.frame() else sim$program_metrics
-link_details <- if (is.null(sim$link_details)) data.frame() else sim$link_details
+run_minutes <- as.numeric(difftime(Sys.time(), t_start, units = "mins"))
+empty_if_null <- function(x) {
+  return(if (is.null(x)) data.frame() else x)
+}
+discovery <- empty_if_null(sim$discovery)
+pairs <- empty_if_null(sim$pairs)
+shared_programs <- empty_if_null(sim$shared_programs)
+# Every completed replicate, including those that produced no pair at all.
+all_reps <- dplyr::distinct(discovery, version, rep, family)
+if (nrow(pairs) > 0) {
+  # The offline re-tiering must reproduce the pipeline's own links exactly, or
+  # nothing in Q3 can be trusted.
+  stopifnot(identical(retier(pairs, current_cutoffs)$linked, pairs$linked))
+}
+current <- if (nrow(pairs) > 0) {
+  score_cutoffs(pairs, shared_programs, current_cutoffs)
+} else {
+  NULL
+}
 ```
 
 ```{r errors, results='asis'}
 print_errors(sim$errors)
+cat(sprintf(
+  "\nRun time: %.1f minutes for %d versions x %d replicates (%.1f s per replicate).\n\n",
+  run_minutes, length(versions), n_sim,
+  60 * run_minutes / max(1, length(versions) * n_sim)
+))
 ```
 
-## 1. Every fitted program, before filtering
+## Q1. Are planted programs recovered?
 
-**What this section shows.** EBMF returns many more programs than were
-planted: the planted ones plus small factors fitted to noise. Here every
-fitted program is shown with its validation metrics, before any gate is
-applied, next to what it really is:
+**Within each trait.** For every planted program, the share of
+trait-replicates in which a **valid** program represents it, in which the best
+match was **filtered** out by validation, and in which no fitted program
+matches it at all (**not found**). `jaccard` and `loading_cor` describe the
+representing program: overlap of its high-confidence SNPs with the planted
+SNPs, and correlation of its loadings with the planted per-locus effects.
 
-- **shared**: its high-confidence SNPs match the shared planted program;
-- **trait-specific**: they match one of the trait's own planted programs;
-- **unmatched**: they match no planted program (Jaccard below 0.1), so it is
-  noise.
-
-A gate is doing its job when it keeps the shared and trait-specific programs
-and removes the unmatched ones. The figure shows where each metric separates
-the three, which is the evidence for where a threshold should sit.
-
-- **n_snps_filtered**: SNPs passing the lFSR/magnitude membership cut;
-  programs below `min_module_size` are dropped before any check.
-- **similarity_q** and **connectedness** (the confidence tier): whether the
-  member SNPs are more alike than random SNP groups of the same size
-  (BH-adjusted, shown as −log10), and the share of member pairs with `S >=
-  similarity_threshold`.
-- **excess_similarity** and **excess_connectedness** (reported): the same
-  quantities minus their values in the random groups.
-- **replication** (reported): mean Jaccard overlap between the program's
-  top SNPs and the best-matching factor when 20% of the background studies are
-  held out and EBMF is refit. Computed here for every program.
-- **posterior_evidence**: median −log10(lFSR) of the program's members.
-- **factor_pve**: share of the matrix variance the factor explains.
-- **jaccard**: overlap with the best-matching planted program (0 when none).
-
-```{r program-overview, results='asis'}
-threshold_lines <- data.frame(
-  metric = c("-log10(similarity_q)", "connectedness"),
-  value = c(
-    -log10(as.numeric(ebmf_settings$similarity_q)),
-    as.numeric(ebmf_settings$high_connectedness)
-  )
-)
-truth_levels <- c("shared", "trait-specific", "unmatched")
-if (nrow(program_metrics) == 0) {
+```{r q1-discovery, results='asis'}
+if (nrow(discovery) == 0) {
   cat("No replicates completed.\n\n")
 } else {
-  program_metrics <- program_metrics |>
-    dplyr::mutate(
-      truth = factor(truth, levels = truth_levels),
-      valid = status == "valid",
-      jaccard = dplyr::coalesce(jaccard, 0)
-    )
-  n_fits <- dplyr::n_distinct(
-    paste(program_metrics$version, program_metrics$rep, program_metrics$trait)
-  )
-  med <- function(x) {
-    return(if (all(!is.finite(x))) "--" else formatC(stats::median(x, na.rm = TRUE), format = "g", digits = 3))
-  }
-  pct <- function(x) {
-    return(sprintf("%.0f%%", 100 * mean(x %in% TRUE)))
-  }
+  kind_levels <- c("concordant", "antagonistic", "trait-specific")
   print(knitr::kable(
-    program_metrics |>
-      dplyr::group_by(truth) |>
+    discovery |>
+      dplyr::mutate(kind = factor(kind, levels = kind_levels)) |>
+      dplyr::group_by(planted = kind) |>
       dplyr::summarise(
-        per_trait_fit = round(dplyr::n() / n_fits, 1),
-        high = pct(confidence_tier == "high"),
-        medium = pct(confidence_tier == "medium"),
-        single_trait = pct(confidence_tier == "single_trait"),
-        valid = pct(valid),
-        n_snps_filtered = med(n_snps_filtered),
-        similarity_q = med(similarity_q),
-        connectedness = med(connectedness),
-        excess_similarity = med(excess_similarity),
-        replication = med(replication),
-        posterior_evidence = med(posterior_evidence),
-        factor_pve = med(factor_pve),
-        jaccard = med(jaccard),
+        n = dplyr::n(),
+        valid = pct(outcome == "valid"),
+        filtered = pct(outcome == "filtered"),
+        not_found = pct(outcome == "not found"),
+        jaccard = fmt_mc(jaccard),
+        loading_cor = fmt_mc(loading_cor),
         .groups = "drop"
       ),
     row.names = FALSE,
     caption = paste0(
-      "Every fitted program, pooled over versions, replicates and traits (",
-      n_fits, " trait fits). per_trait_fit = programs of this kind per trait ",
-      "fit, over all fits including the null versions, which have no shared ",
-      "program; pass_* = share passing each check; high / medium / ",
-      "single_trait = share in each confidence tier; valid = high or medium; ",
-      "the metric columns are medians."
+      "Recovery of each planted program in its own trait, pooled over the ",
+      "grid, both traits and replicates (n = program-trait-replicates). ",
+      "Jaccard and loading_cor are means (Monte Carlo SE) over replicates in ",
+      "which a fitted program matched."
     )
+  ))
+  by_cell <- discovery[discovery$family == "shared" & discovery$kind != "trait-specific", ] |>
+    dplyr::group_by(version) |>
+    dplyr::summarise(valid = mean(outcome == "valid"), .groups = "drop")
+  cat(sprintf(
+    "\nThe shared programs are valid in %.0f%%-%.0f%% of trait-replicates across the %d grid cells.\n\n",
+    100 * min(by_cell$valid), 100 * max(by_cell$valid), nrow(by_cell)
   ))
 }
 ```
 
-```{r program-metrics-plot, fig.width = 10, fig.height = 7}
-if (nrow(program_metrics) > 0 && requireNamespace("ggplot2", quietly = TRUE)) {
-  metric_long <- program_metrics |>
-    dplyr::transmute(
-      truth, valid,
-      n_snps_filtered = as.numeric(n_snps_filtered),
-      `-log10(similarity_q)` = -log10(pmax(similarity_q, 1e-10)),
-      connectedness, excess_similarity,
-      replication, posterior_evidence,
-      factor_pve = 100 * factor_pve,
-      jaccard
-    ) |>
-    tidyr::pivot_longer(-c(truth, valid), names_to = "metric", values_to = "value") |>
-    dplyr::filter(is.finite(value)) |>
+Each trait is fitted on its own matrix, so recovery here should not depend on
+the overlap with the partner trait: a wide range across grid cells points to a
+problem in the simulation, not the fit. A shared program that is not valid in
+both traits cannot be linked, so this is the ceiling on recall below.
+
+**Across traits, when the copies are identical.** At full overlap (all 36 loci
+and all 8 drivers shared), the share of replicates in which the shared
+program is linked, the tier of its best true pair, and whether the link has
+the right direction -- from the sign of φ, and from rg where rg calls one
+(at least `min_loci_rg` = `r params$min_loci_rg` loci and a CI excluding 0).
+
+```{r q1-links, results='asis'}
+full_label <- sprintf("snp %.2f, drivers %.2f", 1, 1)
+if (is.null(current) || !full_label %in% current$best$version) {
+  cat("No completed replicates at full overlap.\n\n")
+} else {
+  full <- current$best[current$best$version == full_label, , drop = FALSE] |>
     dplyr::mutate(
-      metric = factor(metric, levels = c(
-        "n_snps_filtered", "-log10(similarity_q)", "connectedness",
-        "excess_similarity",
-        "replication", "posterior_evidence", "factor_pve", "jaccard"
-      )),
-      gate = ifelse(valid, "valid", "filtered")
+      phi_ok = direction_profile == direction_planted,
+      rg_call = is.finite(n_loci_rg) & n_loci_rg >= params$min_loci_rg &
+        rg_direction %in% c("concordant", "antagonistic"),
+      rg_ok = rg_direction == direction_planted
+    )
+  print(knitr::kable(
+    full |>
+      dplyr::group_by(direction = direction_planted) |>
+      dplyr::summarise(
+        recall = fmt_mc(as.numeric(linked)),
+        high = pct(tier == "high"),
+        medium = pct(tier == "medium"),
+        `low/none` = pct(tier %in% c("low", "none")),
+        no_valid_pair = pct(tier == "no valid pair"),
+        phi_sign_correct = fmt_mc(as.numeric(phi_ok[linked])),
+        rg_called = pct(rg_call[linked]),
+        rg_correct = fmt_mc(as.numeric(rg_ok[rg_call & linked])),
+        .groups = "drop"
+      ),
+    row.names = FALSE,
+    caption = paste0(
+      "The shared programs at full overlap, at the current cutoffs. Tier ",
+      "columns are the share of replicates whose best true pair is in each ",
+      "tier. Direction accuracy is over linked true pairs; rg_called is the ",
+      "share of them in which rg calls a direction."
+    )
+  ))
+  shared_full_links <- retier(pairs, current_cutoffs) |>
+    dplyr::filter(version == full_label, linked)
+  cat(sprintf(
+    paste0(
+      "\nPrecision at full overlap: %s of %d links are true. False links per ",
+      "replicate in the null: %s, in %d of %d replicates with any.\n\n"
+    ),
+    pct(shared_full_links$true_pair), nrow(shared_full_links),
+    fmt_mc(current$false_null), sum(current$false_null > 0),
+    length(current$false_null)
+  ))
+}
+```
+
+**How to read it.** At full overlap the true pair should be **high** tier
+(strong φ, loci agree) in nearly every replicate, with φ's sign and rg both
+reading the planted direction. Any **no valid pair** goes back to the
+within-trait table above.
+
+## Q2. How much do the copies need to have in common?
+
+**What these figures show.** Recall of the shared program at the current
+cutoffs over every combination of driver overlap and SNP overlap, then which
+tier the true pair lands in, then the two scores that decide the tier.
+
+```{r q2-recall-heatmap, fig.width = 9, fig.height = 4.5}
+recall_heatmap <- function(best, title) {
+  cell <- best |>
+    dplyr::filter(family == "shared") |>
+    dplyr::group_by(snp_overlap, driver_overlap, direction_planted) |>
+    dplyr::summarise(recall = mean(linked), .groups = "drop") |>
+    dplyr::mutate(direction_planted = factor(direction_planted, levels = names(palette_direction)))
+  return(
+    ggplot(cell, aes(factor(snp_overlap), factor(driver_overlap), fill = recall)) +
+      geom_tile(colour = "white") +
+      geom_text(aes(label = sprintf("%.2f", recall), colour = recall > 0.6), size = 3.2) +
+      facet_wrap(~direction_planted) +
+      scale_fill_gradient(low = "#f4f1ea", high = "#1a6b3c", limits = c(0, 1)) +
+      scale_colour_manual(values = c(`TRUE` = "white", `FALSE` = "grey20"), guide = "none") +
+      labs(
+        title = title,
+        x = "SNP overlap (share of the 36 loci common to both copies)",
+        y = "driver overlap (share of 8 drivers)", fill = "recall"
+      ) +
+      theme_minimal() +
+      theme(panel.grid = element_blank())
+  )
+}
+if (!is.null(current)) {
+  print(recall_heatmap(current$best, "Recall of the shared program, current cutoffs"))
+}
+```
+
+```{r q2-tiers, fig.width = 10, fig.height = 7}
+if (!is.null(current)) {
+  tiers <- current$best |>
+    dplyr::filter(family == "shared") |>
+    dplyr::count(snp_overlap, driver_overlap, direction_planted, tier) |>
+    dplyr::group_by(snp_overlap, driver_overlap, direction_planted) |>
+    dplyr::mutate(share = n / sum(n)) |>
+    dplyr::ungroup() |>
+    dplyr::mutate(
+      tier = factor(tier, levels = names(palette_tier)),
+      driver_overlap = paste("drivers", driver_overlap)
     )
   print(
-    ggplot2::ggplot(metric_long, ggplot2::aes(x = truth, y = value)) +
-      ggplot2::geom_boxplot(outlier.shape = NA, colour = "grey55", width = 0.6) +
-      ggplot2::geom_jitter(
-        ggplot2::aes(colour = gate), width = 0.2, height = 0, alpha = 0.6, size = 1.2
+    ggplot(tiers, aes(factor(snp_overlap), share, fill = tier)) +
+      geom_col(width = 0.8) +
+      facet_grid(direction_planted ~ driver_overlap) +
+      scale_fill_manual(values = palette_tier) +
+      labs(
+        title = "Tier of the shared program's best true pair",
+        x = "SNP overlap", y = "share of replicates", fill = NULL
       ) +
-      ggplot2::geom_hline(
-        data = dplyr::mutate(
-          threshold_lines,
-          metric = factor(metric, levels = levels(metric_long$metric))
-        ),
-        ggplot2::aes(yintercept = value), linetype = "dashed", colour = "#b2182b"
-      ) +
-      ggplot2::facet_wrap(~metric, scales = "free_y", ncol = 4) +
-      ggplot2::scale_colour_manual(values = c(valid = "#2a78d6", filtered = "grey40")) +
-      ggplot2::labs(
-        title = "Validation metrics of every fitted program, by what it really is",
-        subtitle = "Dashed red lines: current gate thresholds. factor_pve in %.",
-        x = NULL, y = NULL, colour = NULL
-      ) +
-      ggplot2::theme_minimal() +
-      ggplot2::theme(
-        legend.position = "top",
-        axis.text.x = ggplot2::element_text(angle = 20, hjust = 1)
-      )
+      theme_minimal() +
+      theme(legend.position = "top", panel.grid.major.x = element_blank())
   )
 }
 ```
 
-```{r gate-by-truth, results='asis'}
-if (nrow(program_metrics) > 0) {
-  print(knitr::kable(
-    program_metrics |>
-      dplyr::count(status, truth) |>
-      tidyr::pivot_wider(names_from = truth, values_from = n, values_fill = 0L) |>
-      dplyr::arrange(status != "valid", status),
-    row.names = FALSE,
-    caption = paste0(
-      "Programs by validation outcome (rows) and what they really are (columns), ",
-      "pooled. A good gate puts shared and trait-specific programs in the ",
-      "'valid' row and unmatched programs everywhere else."
+```{r q2-scores, fig.width = 9, fig.height = 3.5}
+if (!is.null(current)) {
+  scores <- current$best |>
+    dplyr::filter(family == "shared", tier != "no valid pair")
+  score_plot <- function(df, x, colour, y, cuts, title, x_lab, colour_lab) {
+    med <- df |>
+      dplyr::group_by(x = .data[[x]], colour = factor(.data[[colour]])) |>
+      dplyr::summarise(value = stats::median(.data[[y]], na.rm = TRUE), .groups = "drop") |>
+      dplyr::filter(is.finite(value))
+    return(
+      ggplot(med, aes(x, value, colour = colour)) +
+        geom_hline(yintercept = cuts, linetype = "dashed", colour = "#b2182b") +
+        geom_line(linewidth = 0.7) +
+        geom_point(size = 1.8) +
+        scale_colour_viridis_d(end = 0.9) +
+        scale_y_continuous(limits = c(0, 1)) +
+        labs(title = title, x = x_lab, y = NULL, colour = colour_lab) +
+        theme_minimal()
     )
+  }
+  scores$abs_phi <- abs(scores$phi_traits)
+  print(score_plot(
+    scores, "driver_overlap", "snp_overlap", "abs_phi",
+    c(current_cutoffs$phi_high, current_cutoffs$phi_low),
+    "Median |phi| of the best true pair (dashed: phi_high, phi_low)",
+    "driver overlap", "SNP overlap"
   ))
-
-  metric_view <- function(tab) {
-    return(tab |>
-      dplyr::transmute(
-        version, rep, trait, program, planted_label,
-        jaccard = round(jaccard, 2),
-        n_snps_filtered,
-        excess_similarity = round(excess_similarity, 3),
-        excess_connectedness = round(excess_connectedness, 3),
-        confidence_tier,
-        replication = round(replication, 2),
-        posterior_evidence = round(posterior_evidence, 1),
-        factor_pve_pct = round(100 * factor_pve, 2),
-        status
-      ))
-  }
-  real_filtered <- program_metrics |>
-    dplyr::filter(!valid, truth != "unmatched") |>
-    dplyr::arrange(dplyr::desc(jaccard))
-  if (nrow(real_filtered) > 0) {
-    print(knitr::kable(
-      metric_view(utils::head(real_filtered, 20)),
-      row.names = FALSE,
-      caption = paste0(
-        "Real programs the gates removed: filtered programs that match a planted ",
-        "program, best match first (up to 20 of ", nrow(real_filtered), "). ",
-        "Many are fragments of a planted program that EBMF split off."
-      )
-    ))
-  } else {
-    cat("No filtered program matches a planted program.\n\n")
-  }
-  noise_valid <- program_metrics |>
-    dplyr::filter(valid, truth == "unmatched") |>
-    dplyr::arrange(dplyr::desc(n_snps_filtered))
-  if (nrow(noise_valid) > 0) {
-    print(knitr::kable(
-      metric_view(utils::head(noise_valid, 20)),
-      row.names = FALSE,
-      caption = paste0(
-        "Noise the gates let through: valid programs that match no planted ",
-        "program (up to 20 of ", nrow(noise_valid), ")."
-      )
-    ))
-  } else {
-    cat("No valid program is unmatched: the gates let no noise program through.\n\n")
-  }
-}
-```
-
-**How to read it.**
-
-- **similarity_q and connectedness** decide the tier. Check that shared and
-  trait-specific programs sit above their dashed lines in the figure and
-  unmatched ones below.
-- **Replication** is reported, not used for the tier. If shared and
-  trait-specific programs cluster near 1 and unmatched ones spread lower, it
-  separates them; where the two groups overlap, it does not.
-- **The two lists** are the direct evidence. Real programs removed by a gate
-  argue for loosening it; noise passing every gate argues for tightening one.
-- **Quick mode floors similarity.** With `quick = TRUE` the similarity null
-  uses 300 random SNP sets, so the smallest possible p is about 0.003. The full
-  run uses 10000, which leaves more room.
-
-## 2. Was the shared program found in each trait?
-
-**What this table shows.** For the shared program, in each trait, the share of
-replicates in which a **valid** program represents it, in which the best
-program representing it was **filtered** out by validation (with the gates it
-failed), and in which **no** fitted program represents it at all. The trait-
-specific programs are shown last, pooled, for comparison.
-
-```{r discovery-table, results='asis'}
-if (nrow(discovery) == 0) {
-  cat("No replicates completed.\n\n")
-} else {
-  shared_disc <- discovery[discovery$is_shared, , drop = FALSE]
-  tbl <- shared_disc |>
-    dplyr::count(version, trait, outcome) |>
-    dplyr::group_by(version, trait) |>
-    dplyr::mutate(share = sprintf("%.0f%%", 100 * n / sum(n))) |>
-    dplyr::ungroup() |>
-    dplyr::select(-n) |>
-    tidyr::pivot_wider(names_from = outcome, values_from = share, values_fill = "0%") |>
-    dplyr::mutate(version = factor(version, levels = version_order)) |>
-    dplyr::arrange(version, trait)
-  front <- intersect(c("version", "trait", "valid"), names(tbl))
-  tbl <- tbl[, c(front, sort(setdiff(names(tbl), front)))]
-  print(knitr::kable(
-    tbl, row.names = FALSE,
-    caption = paste0(
-      "Discovery of the shared program, per trait. 'filtered: low' means the ",
-      "best-matching program was of low confidence; 'not found' ",
-      "means no fitted program overlaps the planted loci (Jaccard >= 0.1)."
-    )
-  ))
-  spec_tbl <- discovery[!discovery$is_shared, , drop = FALSE] |>
-    dplyr::count(family, outcome) |>
-    dplyr::group_by(family) |>
-    dplyr::mutate(share = sprintf("%.0f%%", 100 * n / sum(n))) |>
-    dplyr::ungroup() |>
-    dplyr::select(-n) |>
-    tidyr::pivot_wider(names_from = outcome, values_from = share, values_fill = "0%")
-  print(knitr::kable(
-    spec_tbl, row.names = FALSE,
-    caption = "Discovery of the trait-specific programs, pooled over versions and traits."
+  print(score_plot(
+    scores, "snp_overlap", "driver_overlap", "alignment",
+    current_cutoffs$min_alignment,
+    "Median alignment of the best true pair (dashed: min_alignment; missing where too few loci are shared)",
+    "SNP overlap", "driver overlap"
   ))
 }
 ```
 
-**How to read it.** SNP overlap should not change discovery much: each trait's
-fit sees only its own matrix, and the shared program is an ordinary program
-there. If the `valid` column is well below 100%, the shared program is being
-lost before linking: `filtered: low` means the best-matching program was of
-low confidence, i.e. its member SNPs are no more alike than random SNP sets of
-the same size, or it is below the size floor.
-
-## 2b. How closely do the resolved programs match the planted ones?
-
-**What this table shows.** Section 2 counts a planted program as found when a
-fitted program overlaps it with Jaccard of at least 0.1, which is a low bar.
-This table shows how close that match actually is. For each planted program,
-the program that represents it is the best-matching valid program (or, if
-none is valid, the best-matching program of any status). Its match is then
-scored four ways:
-
-- **jaccard**: the overlap between its high-confidence SNPs and the planted
-  SNPs, divided by their union.
-- **snp_precision**: the share of its high-confidence SNPs that were planted in
-  the program. Below 1 means it has picked up SNPs from elsewhere.
-- **snp_recall**: the share of the planted SNPs it recovers as high-confidence
-  members. Below 1 means planted SNPs were missed or went to another program.
-- **loading_cor**: the correlation of its SNP loadings, over every locus in the
-  trait, with the planted per-locus effect `a_s` (0 outside the program). This
-  scores the loadings themselves, not just the membership cut.
-
-`n_programs` is the mean number of fitted programs mapped to the planted one.
-Values above 1 mean EBMF split it.
-
-```{r match-quality-table, results='asis'}
-if (nrow(discovery) == 0) {
-  cat("No replicates completed.\n\n")
-} else {
-  quality_summary <- function(tab) {
-    return(tab |>
-      dplyr::summarise(
-        jaccard = fmt_mc(jaccard),
-        snp_precision = fmt_mc(snp_precision),
-        snp_recall = fmt_mc(snp_recall),
-        loading_cor = fmt_mc(loading_cor),
-        n_programs = fmt_mc(n_programs_mapped, 1),
-        .groups = "drop"
-      ))
+```{r q2-breakpoints, results='asis'}
+if (!is.null(current)) {
+  cell <- current$best |>
+    dplyr::filter(family == "shared") |>
+    dplyr::group_by(snp_overlap, driver_overlap) |>
+    dplyr::summarise(recall = mean(linked), .groups = "drop")
+  first_at <- function(x, ok) {
+    return(if (any(ok)) as.character(min(x[ok])) else "never")
   }
-  shared_quality <- discovery[discovery$is_shared, , drop = FALSE] |>
-    dplyr::group_by(version, trait) |>
-    quality_summary() |>
-    dplyr::mutate(version = factor(version, levels = version_order)) |>
-    dplyr::arrange(version, trait)
-  specific_quality <- discovery[!discovery$is_shared, , drop = FALSE] |>
-    dplyr::mutate(
-      version = dplyr::if_else(
-        family == "null", "trait-specific, null version",
-        "trait-specific, shared versions"
-      ),
-      trait = "both"
-    ) |>
-    dplyr::group_by(version, trait) |>
-    quality_summary()
   print(knitr::kable(
     dplyr::bind_rows(
-      dplyr::mutate(shared_quality, version = as.character(version)),
-      specific_quality
+      cell |>
+        dplyr::group_by(fixed = "driver overlap", at = driver_overlap) |>
+        dplyr::summarise(
+          varied = "SNP overlap", needed = first_at(snp_overlap, recall >= 0.8),
+          .groups = "drop"
+        ),
+      cell |>
+        dplyr::group_by(fixed = "SNP overlap", at = snp_overlap) |>
+        dplyr::summarise(
+          varied = "driver overlap", needed = first_at(driver_overlap, recall >= 0.8),
+          .groups = "drop"
+        )
     ),
     row.names = FALSE,
     caption = paste0(
-      "Match between planted and resolved programs (mean over replicates, ",
-      "Monte Carlo SE). The shared program is shown per version and trait; the ",
-      "trait-specific programs are pooled in the last rows. Scores are over ",
-      "replicates in which some fitted program mapped to the planted one."
+      "Holding one overlap fixed at `at`, the smallest value of the other ",
+      "(`varied`) at which recall reaches 0.8, both directions pooled; ",
+      "'never' when no value in the grid does."
     )
   ))
 }
@@ -1115,389 +894,301 @@ if (nrow(discovery) == 0) {
 
 **How to read it.**
 
-- **Precision and recall near 1** mean the resolved program is the planted
-  program, locus for locus.
-- **A high loading_cor** means the fitted loadings also track how strongly each
-  locus acts in the program, not only which loci are in it.
-- **SNP overlap should not matter here.** Each trait is fitted on its own, so
-  the shared program's match should look the same at every overlap. A trend
-  with overlap would point to a problem in the simulation, not the fit.
-- **Recall well below precision** usually goes with `n_programs` above 1: the
-  planted program was split, and the representative program holds only part of
-  it.
+- **The φ axis can link on its own.** With no loci in common the loci are
+  `too_few_loci`, so a strong φ alone gives a **medium** link; recall along the
+  SNP overlap = 0 column is driver overlap working alone.
+- **Loci alone cannot.** With no drivers in common φ is weak, and a weak φ
+  whose loci agree is only **low** -- not a link -- however many loci are
+  shared. The drivers 0 row should be near 0 at every SNP overlap.
+- **Partial SNP overlap can hurt.** A few shared loci make the loci testable;
+  if they then fail `min_alignment` or the permutation test, a strong-φ pair
+  falls from medium (`too_few_loci`) to low (`disagree`). A dip in the middle
+  of a row is this.
+- The breakpoint table is the summary answer to Q2.
 
-```{r example-heatmap, fig.width = 9, fig.height = 8}
-example_label <- sprintf("snp_overlap = %.2f, concordant", params$example_snp_overlap)
-example <- if (nrow(examples) > 0) {
-  examples[examples$version == example_label, , drop = FALSE]
-} else {
-  data.frame()
-}
-if (nrow(example) > 0 && requireNamespace("ggplot2", quietly = TRUE)) {
-  # EBMF also returns many small factors that fail validation and match no
-  # planted program; drawing them would bury the programs that matter.
-  n_fitted <- dplyr::n_distinct(example$program_id)
-  example <- example[example$status %in% "valid" | !is.na(example$maps_to), , drop = FALSE]
-  n_omitted <- n_fitted - dplyr::n_distinct(example$program_id)
-  planted_levels <- c("shared", sort(setdiff(unique(example$planted), c("shared", "unplanted"))), "unplanted")
-  example <- example |>
-    dplyr::mutate(
-      trait = ifelse(trait_id == min(as.integer(trait_id)), "trait A", "trait B"),
-      planted = factor(planted, levels = planted_levels),
-      fitted = paste0(
-        "P", program, ifelse(status == "valid", "", paste0("\n(", status, ")"))
-      )
-    )
-  # Rank loci within each trait's planted block (strongest planted effect at
-  # the top) so both traits' blocks line up row for row.
-  snp_rank <- example |>
-    dplyr::distinct(trait, snp_id, planted, planted_effect) |>
-    dplyr::group_by(trait, planted) |>
-    dplyr::arrange(dplyr::desc(planted_effect), snp_id, .by_group = TRUE) |>
-    dplyr::mutate(y = -dplyr::row_number()) |>
-    dplyr::ungroup() |>
-    dplyr::select(trait, snp_id, y)
-  example <- dplyr::left_join(example, snp_rank, by = c("trait", "snp_id"))
-  limit <- max(abs(example$loading), na.rm = TRUE)
-  print(
-    ggplot2::ggplot(example, ggplot2::aes(x = fitted, y = y, fill = loading)) +
-      ggplot2::geom_tile() +
-      ggplot2::geom_point(
-        data = example[example$high_confidence %in% TRUE, , drop = FALSE],
-        size = 0.35, colour = "grey15"
-      ) +
-      ggplot2::facet_grid(planted ~ trait, scales = "free", space = "free") +
-      ggplot2::scale_fill_gradient2(
-        low = "#2166ac", mid = "white", high = "#b2182b",
-        limits = c(-limit, limit), name = "SNP loading"
-      ) +
-      ggplot2::labs(
-        title = "Planted vs resolved programs, one replicate",
-        subtitle = paste0(
-          example_label, ", first replicate. Dots: high-confidence members. ",
-          n_omitted, " small unmatched, invalid programs not drawn."
-        ),
-        x = "fitted program", y = NULL
-      ) +
-      ggplot2::theme_minimal() +
-      ggplot2::theme(
-        axis.text.y = ggplot2::element_blank(),
-        panel.grid = ggplot2::element_blank(),
-        strip.text.y = ggplot2::element_text(angle = 0),
-        plot.subtitle = ggplot2::element_text(size = 8)
-      )
-  )
-} else {
-  cat("No example replicate for ", example_label, ".\n", sep = "")
-}
-```
+## Q3. What cutoffs?
 
-**How to read it.** Each row block is one planted program, plus the loci that
-belong to no program ("unplanted"). Columns are the fitted programs that are
-valid or that map to a planted program. Small factors that fail validation and
-match nothing are left out. A clean recovery is one strong column per
-planted block, with dots, and pale everywhere else. Two columns sharing a block
-show a split program. A column lit up across several blocks shows programs
-merged into one. Dots outside a block's own column are high-confidence SNPs
-assigned to the wrong program.
+**What these figures show.** The distribution of |φ| and of alignment for
+true pairs (the two copies of a shared program, over the whole grid) and false
+pairs (everything else, including every pair in the null), with the current
+cutoffs dashed. A good cutoff sits where the false pairs end.
 
-## 3. Was it linked?
-
-**What this table shows.** Linking was run twice on every replicate:
-
-- on **all** fitted programs, the primary analysis;
-- on the **valid** programs only, as the gates would have it.
-
-For each setting and program set, the table shows how many links were reported
-per replicate, the fraction of replicates in which the shared program was
-linked (`recall`), and the fraction of links that were real (`precision`).
-
-```{r link-table, results='asis'}
-shared_links <- if (nrow(links) > 0) {
-  links[links$family == "shared", , drop = FALSE]
-} else {
-  data.frame()
-}
-if (nrow(shared_links) == 0) {
-  cat("No replicates completed.\n\n")
-} else {
-  tbl <- shared_links |>
-    dplyr::group_by(version, programs) |>
-    dplyr::summarise(
-      links = fmt_mc(n_links, 1),
-      recall = fmt_mc(recall),
-      precision = fmt_mc(precision),
-      .groups = "drop"
-    ) |>
-    dplyr::mutate(
-      version = factor(version, levels = version_order),
-      programs = factor(programs, levels = c("all", "valid"))
-    ) |>
-    dplyr::arrange(version, programs)
-  print(knitr::kable(
-    tbl, row.names = FALSE,
-    caption = paste0(
-      "Link recovery on all fitted programs and on valid programs only (mean ",
-      "over ", n_sim, " replicates, Monte Carlo SE). ",
-      "recall is whether the shared program was linked; precision is over ",
-      "reported links."
-    )
-  ))
-}
-```
-
-**How to read it.** Links are scored on loci only, so a program shared at
-entirely different variants (overlap 0) cannot be detected by design and is not
-run. At `snp_overlap = 0.10` the two copies share 4 loci, just above the 3 a
-link needs, so this is where recall should start to fall. For the valid-only
-run, compare recall with section 2: it cannot exceed the rate at which the
-shared program is valid in *both* traits. A recall below that rate is a failure
-of the link, and a recall at that rate is a failure of discovery. Precision
-below 1 means links other than the true one were reported. The next table says
-whether they came from programs the gates would have removed.
-
-```{r link-details, results='asis'}
-if (nrow(link_details) > 0) {
-  detail <- link_details[link_details$programs == "all", , drop = FALSE] |>
-    dplyr::mutate(
-      n_valid = (status_a %in% "valid") + (status_b %in% "valid"),
-      pair_status = dplyr::case_when(
-        n_valid == 2 ~ "both valid",
-        n_valid == 1 ~ "one filtered",
-        TRUE ~ "both filtered"
-      ),
-      pair_status = factor(pair_status, levels = c("both valid", "one filtered", "both filtered")),
-      link = ifelse(true_link, "true link", "false link"),
-      arm = ifelse(family == "null", "null version", "shared versions")
-    )
-  print(knitr::kable(
-    detail |>
-      dplyr::count(arm, link, pair_status) |>
-      tidyr::pivot_wider(
-        names_from = pair_status, values_from = n, values_fill = 0L,
-        names_sort = TRUE
+```{r q3-distributions, fig.width = 10, fig.height = 4.5}
+if (nrow(pairs) > 0) {
+  dist_df <- dplyr::bind_rows(
+    pairs |>
+      dplyr::transmute(metric = "|phi|", value = abs(phi_traits), true_pair),
+    pairs |>
+      dplyr::filter(
+        n_loci_shared >= current_cutoffs$min_shared_loci,
+        n_eff_loci >= current_cutoffs$min_eff_loci
       ) |>
-      dplyr::arrange(arm, link),
-    row.names = FALSE,
-    caption = paste0(
-      "Links reported when every fitted program is linked, by whether they are ",
-      "real and by the gate status of the two programs, pooled over replicates. ",
-      "False links between filtered programs are what the gates prevent; true ",
-      "links involving a filtered program are what the gates cost."
-    )
-  ))
-  false_detail <- detail[!detail$true_link, , drop = FALSE]
-  if (nrow(false_detail) > 0) {
-    print(knitr::kable(
-      false_detail |>
-        dplyr::count(arm, pair_status, truth_a, truth_b) |>
-        dplyr::arrange(arm, pair_status, dplyr::desc(n)),
-      row.names = FALSE,
-      caption = "False links in the all-programs run, by what the two linked programs really are."
+      dplyr::transmute(metric = "alignment (testable pairs)", value = alignment, true_pair)
+  ) |>
+    dplyr::filter(is.finite(value)) |>
+    dplyr::mutate(pair = ifelse(true_pair, "true pair", "false pair"))
+  cut_df <- data.frame(
+    metric = c("|phi|", "|phi|", "alignment (testable pairs)"),
+    value = c(current_cutoffs$phi_high, current_cutoffs$phi_low, current_cutoffs$min_alignment)
+  )
+  print(
+    ggplot(dist_df, aes(value, colour = pair)) +
+      stat_ecdf(linewidth = 0.8) +
+      geom_vline(data = cut_df, aes(xintercept = value), linetype = "dashed", colour = "#b2182b") +
+      facet_wrap(~metric) +
+      scale_colour_manual(values = c(`true pair` = "#1a6b3c", `false pair` = "#8c8c8c")) +
+      labs(
+        title = "Scores of true and false pairs",
+        subtitle = sprintf(
+          "%d true and %d false pairs, pooled over the grid and the null.",
+          sum(pairs$true_pair), sum(!pairs$true_pair)
+        ),
+        x = NULL, y = "cumulative share of pairs", colour = NULL
+      ) +
+      theme_minimal() +
+      theme(legend.position = "top")
+  )
+}
+```
+
+**The sweep.** Every stored pair is re-tiered at each combination of
+`phi_high` (0.50 to 0.95), `phi_low` (`phi_high` minus 0.10, 0.15 or 0.20)
+and `min_alignment` (0.1 to 0.9). A combination is **acceptable** when false
+links per null replicate average at most `r params$max_false_links` and
+precision in the shared runs is at least `r params$min_precision`. The
+recommended combination is the acceptable one with the highest mean recall
+over the grid; ties go to the stricter one.
+
+```{r q3-sweep, results='asis'}
+sweep <- data.frame()
+recommended <- NULL
+if (nrow(pairs) > 0) {
+  grid <- expand.grid(
+    phi_high = seq(0.50, 0.95, by = 0.05),
+    phi_gap = c(0.10, 0.15, 0.20),
+    min_alignment = seq(0.1, 0.9, by = 0.1)
+  )
+  sweep <- dplyr::bind_rows(lapply(seq_len(nrow(grid)), function(i) {
+    cutoffs <- utils::modifyList(current_cutoffs, list(
+      phi_high = grid$phi_high[i],
+      phi_low = grid$phi_high[i] - grid$phi_gap[i],
+      min_alignment = grid$min_alignment[i]
+    ))
+    s <- score_cutoffs(pairs, shared_programs, cutoffs)
+    return(data.frame(
+      phi_high = cutoffs$phi_high, phi_low = cutoffs$phi_low,
+      min_alignment = cutoffs$min_alignment,
+      recall = s$recall,
+      false_null = mean(s$false_null),
+      false_shared = mean(s$false_shared),
+      precision = s$precision
+    ))
+  }))
+  sweep$acceptable <- sweep$false_null <= params$max_false_links &
+    dplyr::coalesce(sweep$precision, 1) >= params$min_precision
+  # Highest recall first; among equal recall, the stricter setting first.
+  sweep <- sweep[order(
+    -sweep$recall, -sweep$phi_high, -sweep$phi_low, -sweep$min_alignment
+  ), , drop = FALSE]
+  is_current <- abs(sweep$phi_high - current_cutoffs$phi_high) < 1e-9 &
+    abs(sweep$phi_low - current_cutoffs$phi_low) < 1e-9 &
+    abs(sweep$min_alignment - current_cutoffs$min_alignment) < 1e-9
+  ok <- sweep[sweep$acceptable, , drop = FALSE]
+  if (nrow(ok) > 0) {
+    recommended <- utils::modifyList(current_cutoffs, as.list(
+      ok[1, c("phi_high", "phi_low", "min_alignment")]
     ))
   }
-} else {
-  cat("No links were reported.\n\n")
+  is_recommended <- if (is.null(recommended)) {
+    rep(FALSE, nrow(sweep))
+  } else {
+    abs(sweep$phi_high - recommended$phi_high) < 1e-9 &
+      abs(sweep$phi_low - recommended$phi_low) < 1e-9 &
+      abs(sweep$min_alignment - recommended$min_alignment) < 1e-9
+  }
+  show <- sweep |>
+    dplyr::mutate(setting = dplyr::case_when(
+      is_current & is_recommended ~ "current = recommended",
+      is_current ~ "current",
+      is_recommended ~ "recommended",
+      TRUE ~ ""
+    )) |>
+    dplyr::filter(acceptable | setting != "") |>
+    dplyr::filter(dplyr::row_number() <= 15 | setting != "") |>
+    dplyr::mutate(dplyr::across(c(recall, false_null, false_shared, precision), ~ round(.x, 3)))
+  print(knitr::kable(
+    show, row.names = FALSE,
+    caption = paste0(
+      "Top acceptable cutoff combinations by mean recall over the grid (up to ",
+      "15; equal recall ordered strictest first), plus the current setting. false_null and false_shared are mean ",
+      "false links per replicate in the null and shared runs. ",
+      sum(sweep$acceptable), " of ", nrow(sweep), " combinations are acceptable."
+    )
+  ))
+  if (is.null(recommended)) {
+    cat("\n**No combination meets both targets**; no cutoffs are recommended.\n\n")
+  }
 }
 ```
 
-```{r link-plot, fig.width=9, fig.height=6}
-if (requireNamespace("ggplot2", quietly = TRUE) && nrow(shared_links) > 0) {
-  plot_df <- shared_links |>
-    dplyr::group_by(snp_overlap, direction_planted, programs) |>
-    dplyr::summarise(recall = mean(recall, na.rm = TRUE), .groups = "drop") |>
-    dplyr::mutate(programs = paste(programs, "programs"))
+```{r q3-sweep-plot, fig.width = 10, fig.height = 4.5}
+if (nrow(sweep) > 0) {
+  best_gap <- sweep |>
+    dplyr::group_by(phi_high, min_alignment) |>
+    dplyr::slice_max(recall, n = 1, with_ties = FALSE) |>
+    dplyr::ungroup()
   print(
-    ggplot2::ggplot(
-      plot_df,
-      ggplot2::aes(
-        snp_overlap, recall, colour = direction_planted, group = direction_planted
-      )
-    ) +
-      ggplot2::geom_line(linewidth = 0.7) +
-      ggplot2::geom_point(size = 2.5) +
-      ggplot2::facet_wrap(~programs) +
-      ggplot2::scale_colour_manual(values = palette_direction) +
-      ggplot2::scale_y_continuous(limits = c(0, 1)) +
-      ggplot2::labs(
-        x = "SNP overlap (fraction of the shared program's loci common to both traits)",
-        y = "recall of the shared program", colour = "planted direction"
+    ggplot(best_gap, aes(factor(phi_high), factor(min_alignment), fill = recall)) +
+      geom_tile(colour = "white") +
+      geom_point(data = best_gap[!best_gap$acceptable, ], shape = 4, size = 2, colour = "#b2182b") +
+      scale_fill_gradient(low = "#f4f1ea", high = "#1a6b3c", limits = c(0, 1)) +
+      labs(
+        title = "Mean recall over the grid by phi_high and min_alignment",
+        subtitle = "Best phi_low gap per cell. x: fails the false-link or precision target.",
+        x = "phi_high", y = "min_alignment", fill = "recall"
       ) +
-      ggplot2::theme_minimal() +
-      ggplot2::theme(legend.position = "top")
+      theme_minimal() +
+      theme(panel.grid = element_blank())
   )
 }
 ```
 
-## 4. Was the direction right?
+**rg.** rg never forms a link; it checks the direction of one. The question is
+how many shared loci it needs before its call can be trusted. For every true
+pair, by the number of loci rg was estimated over: how often its CI excludes 0
+(a call), and how often that call is the planted direction.
 
-**What this table shows.** For the all-programs run: among real links, the
-fraction called in the planted direction, from the sign of `concordance_z` and
-from `module_rg()` (links whose `rg` is undetermined are left out). For the true link itself: the mean `rg`, how often its bootstrap
-CI excludes 0, and how often `module_rg()` could not estimate it (fewer than 10
-usable shared loci).
-
-```{r sign-table, results='asis'}
-if (nrow(shared_links) > 0) {
-  sign_tbl <- shared_links[
-    shared_links$programs == "all", ,
-    drop = FALSE
-  ] |>
-    dplyr::group_by(version, direction_planted) |>
-    dplyr::summarise(
-      concordance_sign = fmt_mc(dplyr::if_else(
-        direction_planted == "concordant",
-        sign_accuracy_concordant, sign_accuracy_antagonistic
-      )),
-      module_rg = fmt_mc(dplyr::if_else(
-        direction_planted == "concordant",
-        rg_sign_accuracy_concordant, rg_sign_accuracy_antagonistic
-      )),
-      .groups = "drop"
-    )
-  rg_tbl <- if (nrow(true_links) > 0) {
-    true_links[true_links$programs == "all", , drop = FALSE] |>
-      dplyr::group_by(version) |>
+```{r q3-rg, results='asis'}
+recommended_rg <- NA_integer_
+if (nrow(pairs) > 0) {
+  rg_true <- pairs[pairs$true_pair & is.finite(pairs$rg), , drop = FALSE]
+  if (nrow(rg_true) > 0) {
+    breaks <- c(2, 5, 10, 15, 20, 30, Inf)
+    rg_true$bin <- cut(rg_true$n_loci_rg, breaks = breaks, right = FALSE)
+    rg_true$called <- rg_true$rg_direction %in% c("concordant", "antagonistic")
+    rg_true$correct <- rg_true$rg_direction == rg_true$direction_planted
+    rg_tbl <- rg_true |>
+      dplyr::group_by(n_loci_rg = bin) |>
       dplyr::summarise(
-        true_links = dplyr::n(),
-        mean_rg = fmt_mc(rg),
-        ci_excludes_zero = fmt_mc(as.numeric(ci_excludes_zero[!rg_undetermined])),
-        undetermined = sprintf("%.0f%%", 100 * mean(rg_undetermined)),
-        mean_n_loci_rg = fmt_mc(n_loci_rg, 1),
+        n_pairs = dplyr::n(),
+        call_rate = pct(called),
+        accuracy = if (any(called)) mean(correct[called]) else NA_real_,
+        accuracy_concordant = if (any(called & direction_planted == "concordant")) {
+          mean(correct[called & direction_planted == "concordant"])
+        } else {
+          NA_real_
+        },
+        accuracy_antagonistic = if (any(called & direction_planted == "antagonistic")) {
+          mean(correct[called & direction_planted == "antagonistic"])
+        } else {
+          NA_real_
+        },
         .groups = "drop"
       )
-  } else {
-    data.frame(version = character(0))
+    # Smallest bin from which every larger bin is accurate enough.
+    good <- rev(cumprod(rev(dplyr::coalesce(rg_tbl$accuracy, 0) >= params$min_rg_accuracy)))
+    if (any(good == 1)) {
+      first_bin <- as.character(rg_tbl$n_loci_rg[which(good == 1)[1]])
+      recommended_rg <- as.integer(breaks[match(first_bin, levels(rg_true$bin))])
+    }
+    print(knitr::kable(
+      rg_tbl |>
+        dplyr::mutate(dplyr::across(dplyr::starts_with("accuracy"), ~ round(.x, 3))),
+      row.names = FALSE,
+      caption = paste0(
+        "rg on true pairs, by usable loci (n_loci_rg). called = CI excludes 0; ",
+        "accuracy = share of calls in the planted direction."
+      )
+    ))
   }
-  tbl <- dplyr::left_join(sign_tbl, rg_tbl, by = "version") |>
-    dplyr::mutate(version = factor(version, levels = version_order)) |>
-    dplyr::arrange(version) |>
-    dplyr::select(-direction_planted)
-  print(knitr::kable(
-    tbl, row.names = FALSE,
-    caption = paste0(
-      "Sign accuracy on real links by each direction call (mean, Monte Carlo ",
-      "SE), and the module_rg readout for the true link. ci_excludes_zero and ",
-      "mean_rg are over replicates where rg was estimated; undetermined is the ",
-      "share where it was not."
-    )
+  rg_false <- pairs[
+    !pairs$true_pair & is.finite(pairs$rg) & pairs$n_loci_rg >= params$min_loci_rg, ,
+    drop = FALSE
+  ]
+  linked_true <- pairs[pairs$true_pair & pairs$linked, , drop = FALSE]
+  conflict <- linked_true$rg_direction %in% c("concordant", "antagonistic") &
+    linked_true$n_loci_rg >= params$min_loci_rg &
+    linked_true$rg_direction != linked_true$direction_profile
+  direction_msg <- paste0(
+    "\nOn linked true pairs, the sign of phi gives the planted direction in %s ",
+    "(%d pairs); rg (at least %d loci) contradicts phi in %s. ",
+    "%d false pairs had an rg estimate over at least %d loci.\n\n"
+  )
+  cat(sprintf(
+    direction_msg,
+    pct(linked_true$direction_profile == linked_true$direction_planted),
+    nrow(linked_true), as.integer(params$min_loci_rg), pct(conflict),
+    nrow(rg_false), as.integer(params$min_loci_rg)
   ))
 }
 ```
 
-**How to read it.** The **concordance sign** is expected to read about 1 for
-concordant and about 0 for antagonistic programs. That is not noise: each
-trait's loci are oriented to its own risk allele before fitting, so a shared
-locus loads positively in both traits' programs whatever the direction, and the
-sign of `concordance_z` cannot express antagonism. **`module_rg()`** correlates
-the two targets' own effects in a common allele frame, so it should read close
-to 1 in both directions, with `mean_rg` positive for concordant and negative
-for antagonistic. It is the direction call used on real data, and the one to
-trust. `undetermined` should be 100% at overlaps 0.10 and 0.20, which leave 4
-and 7 shared loci, below the 10 `module_rg()` needs. It should be 0% from 0.33
-up (12 or more). On real data too, links resting on fewer than 10 shared loci
-get no direction.
+**Recommended against current.**
 
-## 5. False links when nothing is shared
-
-**What this table shows.** Under the null the two traits have programs of
-their own and no correspondence, so every reported link is a false discovery.
-
-```{r null-arm, results='asis'}
-null_res <- if (nrow(links) > 0) {
-  links[links$family == "null", , drop = FALSE]
-} else {
-  data.frame()
-}
-if (nrow(null_res) == 0) {
-  cat("The null arm produced no completed replicates.\n\n")
-} else {
+```{r q3-recommended, results='asis'}
+if (!is.null(current)) {
+  rows <- list(current = current_cutoffs)
+  if (!is.null(recommended)) {
+    rows$recommended <- recommended
+  }
   print(knitr::kable(
-    null_res |>
-      dplyr::group_by(programs) |>
-      dplyr::summarise(
-        false_links = fmt_mc(n_links, 2),
-        reps_with_any_link = sprintf("%d of %d", sum(n_links > 0), dplyr::n()),
-        .groups = "drop"
-      ),
+    dplyr::bind_rows(lapply(names(rows), function(nm) {
+      s <- score_cutoffs(pairs, shared_programs, rows[[nm]])
+      return(data.frame(
+        setting = nm,
+        phi_high = rows[[nm]]$phi_high,
+        phi_low = rows[[nm]]$phi_low,
+        min_alignment = rows[[nm]]$min_alignment,
+        min_loci_rg = if (nm == "current") as.integer(params$min_loci_rg) else recommended_rg,
+        recall = fmt_mc(as.numeric(s$best$linked)),
+        false_null = fmt_mc(s$false_null),
+        false_shared = fmt_mc(s$false_shared),
+        precision = round(s$precision, 3)
+      ))
+    })),
     row.names = FALSE,
     caption = paste0(
-      "False links per replicate with nothing shared, on all fitted programs ",
-      "and on valid programs only (Monte Carlo SE in parentheses); any value ",
-      "above 0 is a false discovery."
+      "Current and recommended cutoffs. recall is over every shared program in ",
+      "the grid; false_null / false_shared are false links per replicate. ",
+      "The recommended min_loci_rg is the smallest n_loci_rg bin from which rg's ",
+      "calls are at least ", params$min_rg_accuracy, " accurate (NA when none is)."
     )
   ))
 }
 ```
 
-**How to read it.** The trait-specific programs share no loci, so the locus
-statistic has nothing to score between them, and false links should be
-essentially 0. Treat this as optimistic: the background is
-unstructured by default, and a false-discovery rate is only as realistic as the
-noise it is measured in (see Notes).
-
-## 6. Scale of each comparison
-
-**What this table shows.** How many programs EBMF fitted per trait, and how many
-of them survived validation, per setting.
-
-```{r scale, results='asis'}
-if (nrow(links) > 0) {
-  print(knitr::kable(
-    links |>
-      dplyr::group_by(version) |>
-      dplyr::summarise(
-        fitted_trait_a = fmt_mc(n_programs_a[programs == "all"], 1),
-        valid_trait_a = fmt_mc(n_programs_a[programs == "valid"], 1),
-        fitted_trait_b = fmt_mc(n_programs_b[programs == "all"], 1),
-        valid_trait_b = fmt_mc(n_programs_b[programs == "valid"], 1),
-        .groups = "drop"
-      ) |>
-      dplyr::mutate(version = factor(version, levels = version_order)) |>
-      dplyr::arrange(version),
-    row.names = FALSE,
-    caption = paste0(
-      "Programs fitted and surviving per-trait validation, per version. Each trait carries ",
-      "1 + K_specific planted programs in the shared versions and K_specific in ",
-      "the null."
-    )
-  ))
+```{r q3-recommended-heatmap, fig.width = 9, fig.height = 4.5}
+if (!is.null(recommended)) {
+  rec <- score_cutoffs(pairs, shared_programs, recommended)
+  print(recall_heatmap(rec$best, sprintf(
+    "Recall at the recommended cutoffs (phi_high %.2f, phi_low %.2f, min_alignment %.1f)",
+    recommended$phi_high, recommended$phi_low, recommended$min_alignment
+  )))
 }
 ```
 
-**How to read it.** Each trait carries `1 + K_specific` =
-`r 1 + params$K_specific` planted programs in the shared versions and
-`K_specific` = `r params$K_specific` in the null. Counts close to those mean
-EBMF recovered the planted programs almost one-to-one; counts well below mean
-programs were lost to validation (section 2 says which). The gap between fitted
-and valid is the noise the gates remove (section 1 shows what it is).
+**How to read it.** The recommendation is only as good as its negatives.
+Compare the recommended heatmap with the one in Q2: the cells that gain
+recall are the overlaps the current cutoffs are too strict for. A
+recommended `phi_high` well below the Tucker conventions behind the current
+0.85 is a statement about these simulated negatives, which are easy (see
+Notes); treat it as the least strict cutoff that could be justified, not the
+one to adopt unexamined.
 
-# Notes for interpreting runs
+## Notes
 
-- **One shared program, isolated.** Each planted program has its own driver
-  studies and its own loci, so the fits here are easy. This checks that the
-  pipeline recovers and links a shared program when nothing else interferes;
-  it does not test programs that share driver studies or loci with other
-  programs in the same trait.
-- **Recall is credited per planted program, not per link.** EBMF can split one
-  planted program into several factors, so counting links would reward
-  splitting.
-- **Sign accuracy is conditional on a real link.** A high value alongside a low
-  recall means the few links found were directionally right, not that direction
-  is well recovered overall.
-- **Driver overlap is fixed at 1.** At a shared locus the same background GWAS
-  are present in both traits' matrices, so the shared program's driver studies
-  are identical in both. Only SNP overlap varies.
-- **Background realism is off by default.** `background_corr` and
-  `snp_pleiotropy_sd` default to 0, the historical independent, random-signed
-  background. The discovery and linking results are largely insensitive to
-  that, but **the null is not**: run the realism arm of the grid script before
-  quoting a false-link rate.
-- **Sample overlap is not simulated.** Two real target traits from the same
-  cohort share participants, which biases cross-trait statistics, and
-  `module_rg()` in particular, away from the null.
-- **Results are not comparable with earlier renders.** Earlier versions of this
-  document planted antagonism by flipping driver signs and gave the target a
-  flat effect at every locus, and compared a background-study profile axis
-  alongside the locus axis. Effects are now generated in a common allele frame,
-  and only the locus axis is used.
+- **The false pairs are easy.** Different planted programs share neither
+  drivers nor loci here, so the false-link rate is optimistic. Real data has
+  pleiotropic hub loci and correlated background studies that many programs
+  touch; run the realism arm of the grid script before quoting a false-link
+  rate.
+- **rg is a direction check only.** False pairs here rarely share enough loci
+  for an rg estimate (the count is given under Q3), so rg is not calibrated as
+  a link filter.
+- **Sample overlap is not simulated.** Two target traits from the same cohort
+  share participants, which biases `module_rg()` away from the null.
+- **Background realism is off by default** (`background_corr` and
+  `snp_pleiotropy_sd` are 0).
+- **Not comparable with earlier renders.** Earlier versions linked on loci
+  only, planted one shared program per replicate with every driver shared, and
+  left unshared drivers out of the partner's matrix.

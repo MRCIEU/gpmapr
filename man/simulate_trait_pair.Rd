@@ -25,6 +25,7 @@ simulate_trait_pair(
   background_corr = 0,
   n_bg_factors = 4L,
   snp_pleiotropy_sd = 0,
+  unshared_driver_rows = c("absent", "background"),
   trait_ids = c(9001L, 9002L),
   seed = NULL
 )
@@ -79,6 +80,15 @@ absent entirely.}
 \item{background_corr, n_bg_factors, snp_pleiotropy_sd}{Similarity-graph
 realism, as in \code{simulate_trait()}. Defaults reproduce the historical
 independent, random-signed background.}
+
+\item{unshared_driver_rows}{What a driver study that one trait's programs
+use is in the \strong{other} trait's matrix. \code{"absent"} (default) leaves it out
+of that matrix entirely, so a profile comparison never sees it.
+\code{"background"} gives every driver of either trait a row in both matrices:
+in a trait none of whose programs it drives, it is filled like an
+unstructured background study and carries no planted signal. That is the
+real-data situation -- both target traits' matrices carry most of the same
+background GWAS -- so an unshared driver lowers \code{phi_traits}.}
 
 \item{trait_ids}{Length-2 integer ids for the two target traits.}
 

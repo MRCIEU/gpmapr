@@ -1,16 +1,19 @@
 # Render the multi-trait correspondence simulation vignette across its
 # parameter grids.
 #
-# The vignette already crosses SNP overlap x planted direction (concordant /
-# antagonistic) internally, plus a null -- that cross IS the study. The grids
-# below vary things ORTHOGONAL to it, so each render evaluates the full design
-# under a different condition.
+# The vignette already crosses SNP overlap x driver overlap internally, plants
+# one concordant and one antagonistic shared program in every replicate, and
+# runs a null -- that design IS the study, and it recommends linking cutoffs
+# from it. The grids below vary things ORTHOGONAL to it, so each render
+# evaluates the full design, and re-derives the cutoffs, under a different
+# condition.
 #
 # Investigation R: similarity-graph realism
 #   Discovery and linking of the shared program are largely insensitive to the
 #   background regime, but the NULL arm is not: a false-link rate measured in an
 #   unrealistic noise regime is as weak here as in the univariate null study.
-#   Do not quote a false-link rate from the snpsd0_corr0 arm.
+#   Do not quote a false-link rate, or the cutoffs calibrated against it, from
+#   the snpsd0_corr0 arm.
 #
 # Investigation S: how many background studies a program needs
 #   n_drivers_per_program is the number of driver studies behind each planted
@@ -24,7 +27,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VIGNETTES_DIR="$(cd "${SCRIPT_DIR}/../vignettes" && pwd)"
-RMD="investigation-multitrait-simulations.Rmd"
+RMD="multitrait-simulations.Rmd"
 
 # ---------------------------------------------------------------------------
 # Replication settings
@@ -63,7 +66,7 @@ render_one() {
   local label=$1
   shift
 
-  local out="investigation-multitrait-simulations_${label}.html"
+  local out="multitrait-simulations_${label}.html"
 
   echo "$(date +%Y-%m-%d\ %H:%M:%S) >>> Rendering ${label} -> ${out}"
 
@@ -142,8 +145,8 @@ echo ""
 echo "Done."
 echo ""
 echo "Investigation R: similarity-graph realism (false-link rate only meaningful here):"
-ls -1 investigation-multitrait-simulations_R_*.html
+ls -1 multitrait-simulations_R_*.html
 
 echo ""
 echo "Investigation S: driver studies per program:"
-ls -1 investigation-multitrait-simulations_S_*.html
+ls -1 multitrait-simulations_S_*.html
