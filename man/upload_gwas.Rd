@@ -8,7 +8,7 @@ upload_gwas(
   file,
   name,
   p_value_threshold = 5e-08,
-  column_names = list(),
+  column_names = NULL,
   email = NA,
   category = "continuous",
   is_published = FALSE,
@@ -17,7 +17,20 @@ upload_gwas(
   ancestry = "EUR",
   sample_size = NA,
   reference_build = "GRCh38",
-  compare_with_upload_guids = NA
+  compare_with_upload_guids = NA,
+  chr_col = NULL,
+  bp_col = NULL,
+  ea_col = NULL,
+  oa_col = NULL,
+  p_col = NULL,
+  eaf_col = NULL,
+  beta_col = NULL,
+  se_col = NULL,
+  or_col = NULL,
+  or_lb_col = NULL,
+  or_ub_col = NULL,
+  snp_col = NULL,
+  rsid_col = NULL
 )
 }
 \arguments{
@@ -27,21 +40,9 @@ upload_gwas(
 
 \item{p_value_threshold}{The p-value threshold for the GWAS}
 
-\item{column_names}{A list of column names in the format of: list(CHR = "chr", BP = "pos"...)
-\itemize{
-\item CHR: chromosome
-\item BP: base pair position
-\item P: p-value
-\item EA: allele 1
-\item OA: allele 2
-\item EAF: allele frequency
-And either BETA and SE, or OR, LB, and UB
-\item BETA: beta
-\item SE: standard error
-\item OR: odds ratio
-\item LB: lower bound of the confidence interval
-\item UB: upper bound of the confidence interval
-}}
+\item{column_names}{Deprecated, use the \verb{*_col} arguments instead.
+A named list of column names in the format of: list(CHR = "chr", BP = "pos"...).
+Accepted names are SNP, RSID, CHR, BP, EA, OA, P, EAF, BETA, SE, OR, OR_LB (or LB) and OR_UB (or UB).}
 
 \item{email}{The email of the user}
 
@@ -60,10 +61,38 @@ And either BETA and SE, or OR, LB, and UB
 \item{reference_build}{The reference build of the GWAS.  Only "GRCh37" and "GRCh38" are accepted.}
 
 \item{compare_with_upload_guids}{A vector of GUIDs of uploads to compare with}
+
+\item{chr_col}{The name of the chromosome column (required)}
+
+\item{bp_col}{The name of the base pair position column (required)}
+
+\item{ea_col}{The name of the effect allele column (required)}
+
+\item{oa_col}{The name of the other allele column (required)}
+
+\item{p_col}{The name of the p-value column (required)}
+
+\item{eaf_col}{The name of the effect allele frequency column (optional)}
+
+\item{beta_col}{The name of the beta column (required with \code{se_col}, unless using odds ratios)}
+
+\item{se_col}{The name of the standard error column (required with \code{beta_col}, unless using odds ratios)}
+
+\item{or_col}{The name of the odds ratio column (required with \code{or_lb_col} and \code{or_ub_col}, unless using beta)}
+
+\item{or_lb_col}{The name of the odds ratio lower confidence bound column}
+
+\item{or_ub_col}{The name of the odds ratio upper confidence bound column}
+
+\item{snp_col}{The name of the SNP identifier column (optional)}
+
+\item{rsid_col}{The name of the rsID column (optional)}
 }
 \value{
-A list containing the GWAS information
+A list containing the GWAS information, including the \code{guid} used to fetch results
 }
 \description{
-Upload a GWAS to the API
+Upload a GWAS to the API.  Column names are specified with the \verb{*_col} arguments, e.g.
+\code{chr_col = "chr"}.  \code{chr_col}, \code{bp_col}, \code{ea_col}, \code{oa_col} and \code{p_col} are required, along with either
+\code{beta_col} and \code{se_col}, or \code{or_col}, \code{or_lb_col} and \code{or_ub_col}.
 }

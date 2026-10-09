@@ -79,6 +79,18 @@ traits_api <- function() {
   return(traits)
 }
 
+#' @title Get Trait Duplicates API
+#' @description Get all traits marked as duplicates, along with the parent trait they duplicate
+#' @return A dataframe containing the trait duplicates
+#' @noRd
+trait_duplicates_api <- function() {
+  url <- paste0(getOption("gpmap_url"), "/v1/traits/duplicates")
+  duplicates <- httr::GET(url, httr::timeout(timeout_seconds))
+  duplicates <- httr::content(duplicates, "text", encoding = "UTF-8")
+  duplicates <- jsonlite::fromJSON(duplicates)
+  return(duplicates$duplicates)
+}
+
 #' @title Get Specific Traits API
 #' @description Get specific traits from the API
 #' @param trait_ids A vector of trait ids
@@ -504,7 +516,7 @@ get_gwas_summary_stats_api <- function(gwas_id) {
 #' @param file The path to the GWAS file, maximum size is 1GB
 #' @param name The name of the GWAS
 #' @param p_value_threshold The p-value threshold for the GWAS
-#' @param column_names A list of column names in the format of: list(CHR = "chr", BP = "pos"...)
+#' @param column_names A validated named list of column names, e.g. list(CHR = "chr", BP = "pos"...)
 #' @param email The email of the user
 #' @param category The category of the GWAS.  Only "continuous" and "categorical" are accepted.
 #' @param is_published Whether the GWAS is published
@@ -531,7 +543,7 @@ upload_gwas_api <- function(file,
                             compare_with_upload_guids = NA) {
   url <- paste0(getOption("gpmap_url"), "/v1/gwas")
 
-  if (!is.na(compare_with_upload_guids)) {
+  if (!all(is.na(compare_with_upload_guids))) {
     compare_with_upload_guids <- I(as.character(compare_with_upload_guids))
   }
 
@@ -559,4 +571,23 @@ upload_gwas_api <- function(file,
   gwas <- httr::content(gwas, "text", encoding = "UTF-8")
   gwas <- jsonlite::fromJSON(gwas)
   return(gwas)
+}
+
+#' @title Delete a GWAS API
+#' @description Permanently delete a GWAS upload from the API
+#' @param guid The GUID of the GWAS upload
+#' @param email The email used for the upload
+#' @return A list containing the API response message
+#' @noRd
+delete_gwas_api <- function(guid, email) {
+  url <- paste0(getOption("gpmap_url"), "/v1/gwas/", guid)
+  response <- httr::DELETE(url, body = list(email = email), encode = "json", httr::timeout(timeout_seconds))
+  content <- httr::content(response, "text", encoding = "UTF-8")
+  content <- tryCatch(jsonlite::fromJSON(content), error = function(e) NULL)
+
+  if (httr::status_code(response) >= 400) {
+    detail <- if (!is.null(content$detail)) content$detail else httr::http_status(response)$message
+    stop("Failed to delete GWAS upload ", guid, ": ", detail)
+  }
+  return(content)
 }

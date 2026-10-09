@@ -113,3 +113,74 @@ test_that("variants() returns expected output", {
   expect_true(!is.null(result$study_extractions))
   expect_true(nrow(result$study_extractions) > 0)
 })
+test_that("search_gpmap() orders results by coloc groups and rare results", {
+  result <- search_gpmap("haemoglobin")
+  importance <- result$num_coloc_groups + result$num_rare_results
+  expect_false(is.unsorted(rev(importance)))
+})
+
+test_that("trait_duplicates() returns expected output", {
+  result <- trait_duplicates()
+  expect_true(is.data.frame(result))
+  expect_true(nrow(result) > 0)
+  expected_names <- c("trait_id", "trait_name", "parent_trait_id", "parent_trait_name")
+  expect_true(all(expected_names %in% names(result)))
+})
+
+test_that("delete_gwas() validates its inputs", {
+  guid <- "00000000-0000-0000-0000-000000000000"
+  expect_error(delete_gwas("not-a-guid", "user@example.com"), "GUID")
+  expect_error(delete_gwas(guid), "email is required")
+  expect_error(delete_gwas(guid, ""), "email is required")
+})
+
+test_that("delete_gwas() surfaces API errors", {
+  expect_error(
+    delete_gwas("00000000-0000-0000-0000-000000000000", "user@example.com"),
+    "not found"
+  )
+})
+
+test_that("upload_gwas() validates column arguments", {
+  file <- tempfile(fileext = ".tsv")
+  writeLines(c("chr\tpos\tea\toa\tp\tbeta\tse", "1\t100\tA\tG\t1e-9\t0.1\t0.01"), file)
+  on.exit(unlink(file))
+  upload <- function(...) {
+    upload_gwas(file, name = "test", email = "user@example.com", sample_size = 1000, ...)
+  }
+
+  expect_error(
+    upload(chr_col = "chr", bp_col = "pos", ea_col = "ea", oa_col = "oa", beta_col = "beta", se_col = "se"),
+    "Missing required column arguments: p_col"
+  )
+  expect_error(
+    upload(chr_col = "chr", bp_col = "pos", ea_col = "ea", oa_col = "oa", p_col = "p", beta_col = "beta"),
+    "Either beta_col and se_col"
+  )
+  expect_error(
+    upload(chr_col = "chr", bp_col = "pos", ea_col = "ea", oa_col = "oa", p_col = "pval",
+      beta_col = "beta", se_col = "se"),
+    "Columns not found in file: pval"
+  )
+  expect_error(
+    upload(column_names = list(CHR = "chr"), chr_col = "chr"),
+    "not both"
+  )
+  expect_error(
+    suppressWarnings(upload(column_names = list(CHR = "chr", POS = "pos"))),
+    "Unknown column_names: POS"
+  )
+  expect_warning(
+    expect_error(upload(column_names = list(CHR = "chr", BP = "pos")), "Missing required"),
+    "deprecated"
+  )
+})
+
+test_that("legacy column_names are mapped to API column names", {
+  result <- suppressWarnings(build_gwas_column_names(
+    list(chr = "chr", BP = "pos", EA = "ea", OA = "oa", P = "p", OR = "or", LB = "lb", UB = "ub"),
+    list()
+  ))
+  expect_equal(names(result), c("CHR", "BP", "EA", "OA", "P", "OR", "OR_LB", "OR_UB"))
+  expect_equal(result$OR_LB, "lb")
+})
