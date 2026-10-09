@@ -27,16 +27,14 @@ result <- gpmapr::upload_gwas(
   file = "path/to/your_gwas.tsv.gz",
   name = "Specific Triat",
   p_value_threshold = 5e-8,
-  column_names = list(
-    CHR = "chr",
-    BP = "pos",
-    P = "pval",
-    EA = "effect_allele",
-    OA = "other_allele",
-    EAF = "eaf",
-    BETA = "beta",
-    SE = "se"
-  ),
+  chr_col = "chr",
+  bp_col = "pos",
+  p_col = "pval",
+  ea_col = "effect_allele",
+  oa_col = "other_allele",
+  eaf_col = "eaf",
+  beta_col = "beta",
+  se_col = "se",
   email = "your@email.com",
   category = "continuous",
   ancestry = "EUR",
@@ -45,13 +43,15 @@ result <- gpmapr::upload_gwas(
 )
 ```
 
+The `*_col` arguments name the columns in your file. `chr_col`, `bp_col`, `ea_col`, `oa_col` and `p_col` are required, along with either `beta_col` and `se_col`, or `or_col`, `or_lb_col` and `or_ub_col` for odds ratios. `eaf_col`, `snp_col` and `rsid_col` are optional.
+
 You can also compare your upload with another upload by passing the GUIDs of the uploads you want to compare with, by including `compare_with_upload_guids = c("GUID1")`.
 
 The response includes a **GUID** (a UUID such as `a1b2c3d4-e5f6-7890-abcd-ef1234567890`). Save this GUID; you use it to fetch your results once they are ready.
 
 ```{r guid-example, eval = FALSE}
 # The GUID is returned in the response
-my_guid <- result$id
+my_guid <- result$guid
 ```
 
 ## Fetching your results
@@ -286,4 +286,12 @@ if (!is.null(pairs) && nrow(pairs) > 0) {
 } else {
   "No coloc pairs for these traits"
 }
+```
+
+## Deleting an upload
+
+If you no longer want an upload stored in the GPMap, you can permanently delete it, along with all of its results, using `delete_gwas()`. You need to provide the same email address that you used for the upload. Uploads that are still processing can't be deleted.
+
+```{r delete-example, eval = FALSE}
+gpmapr::delete_gwas(my_guid, email = "your@email.com")
 ```

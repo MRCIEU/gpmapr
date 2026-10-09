@@ -6,7 +6,8 @@
 #' @param rsquared_threshold A numeric value specifying the rsquared threshold for proxy variants, defaults to 0.8
 #' @details After calling search, you can use call the subsequent data as described in the `call` column of the
 #' search results.
-#' @return A dataframe containing the search results with the following columns:
+#' @return A dataframe containing the search results, ordered by the number of colocalisation groups plus rare
+#' results (most first).  For variant searches the searched variant is always first.  Columns include:
 #' \itemize{
 #'   \item type: the type of the search result: "original_variant", "proxy_variant", "trait", "gene"
 #'   \item name: the name of the search result
@@ -117,6 +118,15 @@ search_gpmap <- function(search_text, rsquared_threshold = 0.8) {
 
     columns_to_remove <- c("rsq", "name_lower", "alt_name", "alt_name_lower")
     search_results <- dplyr::select(search_results, -dplyr::any_of(columns_to_remove))
+
+    # most important results first, keeping an exact variant match above its proxies
+    num_coloc_groups <- search_results$num_coloc_groups
+    num_rare_results <- search_results$num_rare_results
+    importance <- ifelse(is.na(num_coloc_groups), 0, num_coloc_groups) +
+      ifelse(is.na(num_rare_results), 0, num_rare_results)
+    is_original_variant <- search_results$type == "original_variant"
+    search_results <- search_results[order(!is_original_variant, -importance, method = "radix"), ]
+    rownames(search_results) <- NULL
   }
   return(search_results)
 }
