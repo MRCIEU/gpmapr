@@ -24,6 +24,21 @@ all_traits <- function() {
   return(traits$traits)
 }
 
+#' @title Trait duplicates
+#' @description Get all traits that have been marked as a duplicate of another trait
+#' @return A dataframe containing the duplicated traits with the following columns:
+#'   \itemize{
+#'     \item trait_id: the id of the duplicated trait
+#'     \item trait_name: the name of the duplicated trait
+#'     \item parent_trait_id: the id of the trait it duplicates
+#'     \item parent_trait_name: the name of the trait it duplicates
+#'   }
+#' @export
+trait_duplicates <- function() {
+  duplicates <- trait_duplicates_api()
+  return(duplicates)
+}
+
 #' @title Trait
 #' @description A collection of studies that are associated with a particular phenotype.
 #' A trait will include a common study and occasionally a rare study.

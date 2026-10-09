@@ -1,6 +1,6 @@
 api_to_package_version <- list(
   "1.0.0" = c("0.0.0.9000"),
-  "1.0.1" = c("0.0.1.0")
+  "1.0.1" = c("0.0.1.0", "0.0.2.0")
 )
 
 #' Check if a string is a GUID

@@ -12,7 +12,8 @@ search_gpmap(search_text, rsquared_threshold = 0.8)
 \item{rsquared_threshold}{A numeric value specifying the rsquared threshold for proxy variants, defaults to 0.8}
 }
 \value{
-A dataframe containing the search results with the following columns:
+A dataframe containing the search results, ordered by the number of colocalisation groups plus rare
+results (most first).  For variant searches the searched variant is always first.  Columns include:
 \itemize{
 \item type: the type of the search result: "original_variant", "proxy_variant", "trait", "gene"
 \item name: the name of the search result
