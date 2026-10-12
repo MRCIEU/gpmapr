@@ -13,6 +13,7 @@ summarise_ebmf_programs(
   similarity_q_threshold = 0.05,
   high_similarity_q = 0.01,
   high_min_connectedness = 0.4,
+  high_min_similarity_z = 6,
   min_effective_traits = 1.5,
   n_null = 10,
   alpha_membership = 0.05,
@@ -53,6 +54,12 @@ connectedness) a program is high confidence. Defaults to \code{0.01}.}
 
 \item{high_min_connectedness}{Minimum connectedness for high confidence.
 Defaults to \code{0.4}.}
+
+\item{high_min_similarity_z}{\code{similarity_z} at or above which a program
+that passes \code{high_similarity_q} is high confidence even below
+\code{high_min_connectedness}. Defaults to \code{6}, just above every multi-trait
+null program that passed \code{high_similarity_q} in 50 null simulations
+(maximum 5.3); \code{Inf} restores the connectedness-only rule.}
 
 \item{min_effective_traits}{Programs that pass the similarity test but
 whose \code{effective_n_traits} is below this are \code{"single_trait"}. Defaults
@@ -138,8 +145,11 @@ multi-trait; a factor carried by one trait is just that trait's hits,
 which noise produces too, and a set of SNPs sharing one trait looks
 coherent to the similarity checks whether or not it is real. It needs a
 closer look rather than being discarded, so it sorts above low.
-\item \strong{high} — \code{similarity_q < high_similarity_q} and
-\code{connectedness >= high_min_connectedness}.
+\item \strong{high} — \code{similarity_q < high_similarity_q}, and either
+\code{connectedness >= high_min_connectedness} or \code{similarity_z >= high_min_similarity_z}. On real data large programs are looser (on the
+Suzuki T2D benchmark connectedness fell as programs grew), so
+connectedness alone demotes them; a large \code{similarity_z} lets a program
+that is far above its size-matched random sets reach high without it.
 \item \strong{medium} — \code{similarity_q < similarity_q_threshold}, but not high.
 }
 \code{effective_n_traits} is \code{1 / sum(p^2)}, where \code{p} are the program's squared
@@ -157,14 +167,17 @@ the trait's background similarity (see \code{background}) sets how hard it is
 to pass.
 \item \strong{Connectedness} — share of member pairs with
 \code{S >= edge_threshold}.
+\item \strong{similarity_z} — \verb{(mean_internal_similarity - random mean) / random SD}, from the same random sets as \code{similarity_q}. Unlike
+\code{similarity_emp_p}, it has no floor at \code{1 / similarity_n_perm}, so it keeps
+ranking programs that beat every random set.
 }
 Reported, not used for the tier:
 \itemize{
 \item \code{excess_similarity} / \code{excess_connectedness} — the member mean
 similarity and connectedness minus their means in the random sets: effect
 sizes that do not grow with program size. \code{similarity_lift} (observed /
-random mean; NA when the random mean is at most 0.01) and \code{similarity_z}
-come from the same random sets.
+random mean; NA when the random mean is at most 0.01) comes from the same
+random sets.
 \item \code{factor_pve} — the proportion of variance explained by the factor
 (flashier's \code{pve}).
 \item \code{replication} / \code{sd_replication} — mean best Jaccard overlap of the

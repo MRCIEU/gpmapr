@@ -24,8 +24,12 @@
 #'   which noise produces too, and a set of SNPs sharing one trait looks
 #'   coherent to the similarity checks whether or not it is real. It needs a
 #'   closer look rather than being discarded, so it sorts above low.
-#'   \item **high** — `similarity_q < high_similarity_q` and
-#'   `connectedness >= high_min_connectedness`.
+#'   \item **high** — `similarity_q < high_similarity_q`, and either
+#'   `connectedness >= high_min_connectedness` or `similarity_z >=
+#'   high_min_similarity_z`. On real data large programs are looser (on the
+#'   Suzuki T2D benchmark connectedness fell as programs grew), so
+#'   connectedness alone demotes them; a large `similarity_z` lets a program
+#'   that is far above its size-matched random sets reach high without it.
 #'   \item **medium** — `similarity_q < similarity_q_threshold`, but not high.
 #' }
 #' `effective_n_traits` is `1 / sum(p^2)`, where `p` are the program's squared
@@ -43,14 +47,18 @@
 #'   to pass.
 #'   \item **Connectedness** — share of member pairs with
 #'   `S >= edge_threshold`.
+#'   \item **similarity_z** — `(mean_internal_similarity - random mean) /
+#'   random SD`, from the same random sets as `similarity_q`. Unlike
+#'   `similarity_emp_p`, it has no floor at `1 / similarity_n_perm`, so it keeps
+#'   ranking programs that beat every random set.
 #' }
 #' Reported, not used for the tier:
 #' \itemize{
 #'   \item `excess_similarity` / `excess_connectedness` — the member mean
 #'   similarity and connectedness minus their means in the random sets: effect
 #'   sizes that do not grow with program size. `similarity_lift` (observed /
-#'   random mean; NA when the random mean is at most 0.01) and `similarity_z`
-#'   come from the same random sets.
+#'   random mean; NA when the random mean is at most 0.01) comes from the same
+#'   random sets.
 #'   \item `factor_pve` — the proportion of variance explained by the factor
 #'   (flashier's `pve`).
 #'   \item `replication` / `sd_replication` — mean best Jaccard overlap of the
@@ -88,6 +96,11 @@
 #'   connectedness) a program is high confidence. Defaults to `0.01`.
 #' @param high_min_connectedness Minimum connectedness for high confidence.
 #'   Defaults to `0.4`.
+#' @param high_min_similarity_z `similarity_z` at or above which a program
+#'   that passes `high_similarity_q` is high confidence even below
+#'   `high_min_connectedness`. Defaults to `6`, just above every multi-trait
+#'   null program that passed `high_similarity_q` in 50 null simulations
+#'   (maximum 5.3); `Inf` restores the connectedness-only rule.
 #' @param min_effective_traits Programs that pass the similarity test but
 #'   whose `effective_n_traits` is below this are `"single_trait"`. Defaults
 #'   to `1.5`.
@@ -142,6 +155,7 @@ summarise_ebmf_programs <- function(clustering_result,
                                     similarity_q_threshold = 0.05,
                                     high_similarity_q = 0.01,
                                     high_min_connectedness = 0.4,
+                                    high_min_similarity_z = 6,
                                     min_effective_traits = 1.5,
                                     n_null = 10,
                                     alpha_membership = 0.05,
@@ -274,6 +288,8 @@ summarise_ebmf_programs <- function(clustering_result,
     similarity_q_threshold = similarity_q_threshold,
     high_similarity_q = high_similarity_q,
     high_min_connectedness = high_min_connectedness,
+    similarity_z = out$similarity_z,
+    high_min_similarity_z = high_min_similarity_z,
     effective_n_traits = out$effective_n_traits,
     min_effective_traits = min_effective_traits
   )
@@ -374,6 +390,7 @@ summarise_ebmf_programs <- function(clustering_result,
       similarity_q_threshold = similarity_q_threshold,
       high_similarity_q = high_similarity_q,
       high_min_connectedness = high_min_connectedness,
+      high_min_similarity_z = high_min_similarity_z,
       min_effective_traits = min_effective_traits,
       n_null = n_null,
       alpha_membership = alpha_membership,
@@ -507,7 +524,8 @@ program_distinctness <- function(clustering_result, programs = NULL) {
 #   single_trait = passes it, but effective_n_traits < min_effective_traits
 #                  (skipped when effective_n_traits is NULL or missing)
 #   high         = similarity_q < high_similarity_q &
-#                  connectedness >= high_min_connectedness
+#                  (connectedness >= high_min_connectedness |
+#                   similarity_z >= high_min_similarity_z)
 #   medium       = similarity_q < similarity_q_threshold (not high)
 # Returned as an ordered factor, levels c("low", "single_trait", "medium",
 # "high").
@@ -517,10 +535,18 @@ program_distinctness <- function(clustering_result, programs = NULL) {
                                      high_similarity_q = 0.01,
                                      high_min_connectedness = 0.4,
                                      effective_n_traits = NULL,
-                                     min_effective_traits = 1.5) {
+                                     min_effective_traits = 1.5,
+                                     similarity_z = NULL,
+                                     high_min_similarity_z = Inf) {
   medium <- is.finite(similarity_q) & similarity_q < similarity_q_threshold
+  connected <- is.finite(connectedness) & connectedness >= high_min_connectedness
+  far_above_random <- if (is.null(similarity_z)) {
+    rep(FALSE, length(similarity_q))
+  } else {
+    is.finite(similarity_z) & similarity_z >= high_min_similarity_z
+  }
   high <- is.finite(similarity_q) & similarity_q < high_similarity_q &
-    is.finite(connectedness) & connectedness >= high_min_connectedness
+    (connected | far_above_random)
   tier <- ifelse(high, "high", ifelse(medium, "medium", "low"))
   if (!is.null(effective_n_traits)) {
     single <- is.finite(effective_n_traits) &

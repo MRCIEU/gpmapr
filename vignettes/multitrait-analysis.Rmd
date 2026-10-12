@@ -43,6 +43,7 @@ params:
   min_shared_loci: 3
   mutual_best: false
   associations: "coloc"
+  remove_duplicates: true
 ---
 
 
@@ -92,24 +93,24 @@ trait_name_map <- stats::setNames(
 ```
 
 This vignette extends the single-trait investigation
-(`investigation-univariate-analysis.html`) to **multiple traits**, and asks one
+(`univariate-analysis-bmi.html`) to **multiple traits**, and asks one
 question: **which programs are shared between traits, which SNPs carry them,
 and do those SNPs push the traits the same way or opposite ways?**
 
 The default set runs this on real data with a strong, independently
 published prior to check against: the T2D GWAS upload from
-[Suzuki T2D](investigation-suzuki-t2d.html) (GUID
+[Suzuki T2D](univariate-analysis-suzuki-t2d.html) (GUID
 `c6d2e20f-6ece-d093-78ee-37534547c466`), whose high/medium programs turned out
 unusually clean, alongside three more specific metabolic traits rather than
 BMI -- whose own background is dominated by dozens of body-size traits that
 move with it almost everywhere (see
-[Investigation of univariate analysis](investigation-univariate-analysis.html))
+[Investigation of univariate analysis](univariate-analysis-bmi.html))
 and so needs more care than a first cross-trait check calls for. Every
 cross-trait pair of programs is scored, from however many traits are
 supplied: triglyceride levels (1631), HDL cholesterol (1630) and HbA1c (1640),
 each paired with T2D and with each other. Suzuki et al.'s own cluster profiles
 give concrete expectations to check the links against
-([Suzuki T2D, Part 5](investigation-suzuki-t2d.html)):
+([Suzuki T2D, Part 5](univariate-analysis-suzuki-t2d.html)):
 
 - **Triglycerides** should link to T2D's Lipodystrophy and Metabolic syndrome
   programs (P2, P6, P10, P24, P31, P35, P47 in the T2D-only fit) and be mostly
@@ -165,6 +166,7 @@ similarity_n_perm <- as.integer(ebmf_settings$similarity_n_perm)
 similarity_q_threshold <- as.numeric(ebmf_settings$similarity_q)
 high_similarity_q <- as.numeric(ebmf_settings$high_similarity_q)
 high_connectedness <- as.numeric(ebmf_settings$high_connectedness)
+high_similarity_z <- as.numeric(ebmf_settings$high_similarity_z)
 min_effective_traits <- as.numeric(ebmf_settings$min_effective_traits)
 associations <- params$associations
 min_mean_internal <- as.numeric(params$min_mean_internal)
@@ -216,6 +218,7 @@ knitr::kable(
     min_shared_loci = min_shared_loci_link,
     mutual_best = mutual_best,
     associations = associations,
+    remove_duplicates = isTRUE(params$remove_duplicates),
     stringsAsFactors = FALSE
   ),
   caption = "Active run parameters",
@@ -316,6 +319,7 @@ duplicate_traits <- data.frame(
   stringsAsFactors = FALSE
 )
 proxy_trait_ids <- split(duplicate_traits$trait_id, duplicate_traits$anchor_id)
+gpmap_duplicates <- if (isTRUE(params$remove_duplicates)) trait_duplicates() else NULL
 
 knitr::kable(
   duplicate_traits |>
@@ -377,6 +381,19 @@ run_trait <- function(tid) {
     obj$coloc_groups <- obj$coloc_groups |>
       dplyr::filter(!as.character(trait_id) %in% exclude_ids)
   }
+  removed_duplicates <- NULL
+  if (!is.null(gpmap_duplicates)) {
+    coloc_groups_before <- obj$coloc_groups
+    obj$coloc_groups <- remove_duplicate_traits(
+      coloc_groups_before, gpmap_duplicates, keep_trait_ids = trait_ids
+    )
+    removed_duplicates <- coloc_groups_before |>
+      dplyr::mutate(trait_id = as.character(trait_id)) |>
+      dplyr::filter(!trait_id %in% as.character(obj$coloc_groups$trait_id)) |>
+      dplyr::group_by(trait_id, trait_name) |>
+      dplyr::summarise(n_coloc_groups = dplyr::n_distinct(coloc_group_id), .groups = "drop") |>
+      dplyr::mutate(anchor_id = tid)
+  }
   res <- run_univariate_clustering(
     obj,
     target_trait_id = tid,
@@ -405,6 +422,7 @@ run_trait <- function(tid) {
     similarity_q_threshold = similarity_q_threshold,
     high_similarity_q = high_similarity_q,
     high_min_connectedness = high_connectedness,
+    high_min_similarity_z = high_similarity_z,
     min_effective_traits = min_effective_traits,
     n_null = n_null,
     alpha_membership = alpha_membership,
@@ -421,7 +439,7 @@ run_trait <- function(tid) {
   extracted <- extract_program_loadings(res, smry, valid_only = TRUE)
   list(
     trait_id = tid, fit = res, summary = smry, extraction = extracted,
-    duplicate_evidence = dup_evidence
+    duplicate_evidence = dup_evidence, removed_duplicates = removed_duplicates
   )
 }
 
@@ -506,6 +524,7 @@ kable_confidence(
       n_snps_filtered,
       effective_n_traits = round(effective_n_traits, 2),
       similarity_q = signif(similarity_q, 2),
+      similarity_z = round(similarity_z, 1),
       connectedness = round(connectedness, 2),
       mean_internal_similarity = round(mean_internal_similarity, 3),
       factor_pve_pct = round(100 * factor_pve, 2)
@@ -517,7 +536,8 @@ kable_confidence(
     "program's SNPs more alike than random SNP sets of the same size? below ",
     similarity_q_threshold, " to pass, below ", high_similarity_q, " for high), ",
     "`connectedness` (share of member pairs with similarity >= ",
-    similarity_threshold, "; at least ", high_connectedness, " for high) and ",
+    similarity_threshold, "; at least ", high_connectedness, " for high, or ",
+    "`similarity_z` at least ", high_similarity_z, ") and ",
     "`effective_n_traits` (at least ", min_effective_traits, ", otherwise ",
     "single_trait). `n_snps_filtered` is how many SNPs pass the program's ",
     "lFSR/magnitude gate; `mean_internal_similarity` and `factor_pve_pct` (the ",

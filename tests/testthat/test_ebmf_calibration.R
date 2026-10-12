@@ -140,7 +140,9 @@ test_that("summarise_ebmf_programs reports metrics and a confidence tier", {
       ps$settings$similarity_q_threshold, ps$settings$high_similarity_q,
       ps$settings$high_min_connectedness,
       effective_n_traits = ps$programs$effective_n_traits,
-      min_effective_traits = ps$settings$min_effective_traits
+      min_effective_traits = ps$settings$min_effective_traits,
+      similarity_z = ps$programs$similarity_z,
+      high_min_similarity_z = ps$settings$high_min_similarity_z
     ))
   )
   # Programs below the size floor are dropped before any check.
@@ -169,7 +171,7 @@ test_that("summarise_ebmf_programs reports metrics and a confidence tier", {
                        ps$programs$max_pair_redundancy <= 1)))
   expect_true(all(c("similarity_n_perm", "similarity_q_threshold",
                     "high_similarity_q", "high_min_connectedness",
-                    "min_effective_traits") %in%
+                    "high_min_similarity_z", "min_effective_traits") %in%
                     names(ps$settings)))
   expect_false(any(c("min_excess_similarity", "min_excess_connectedness") %in%
                      names(ps$settings)))

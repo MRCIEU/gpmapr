@@ -15,6 +15,9 @@ ebmf_backfit: true
 ebmf_lfsr_threshold: 0.02
 ebmf_magnitude_threshold: 0.5
 ebmf_greedy_Kmax: 100
+# An unobserved cell (no colocalising association) is fit as an observed 0 with
+# this standard error (1 = confidently zero; larger = small, sign unknown).
+ebmf_missing_se: 1
 
 # --- Pleiotropy matrix ----------------------------------------------------
 trait_subset: phenotypic
@@ -41,6 +44,12 @@ similarity_n_perm: 10000
 similarity_q: 0.05
 high_similarity_q: 0.01
 high_connectedness: 0.4
+# A program that passes high_similarity_q is also high when its similarity_z is
+# at least this, even below high_connectedness: on real data large programs are
+# looser, so connectedness alone demotes them. 6 is just above every multi-trait
+# null program that passed high_similarity_q in 50 null simulations (max 5.3).
+# REVISED BY HPC.
+high_similarity_z: 6
 # Programs that pass the similarity test but whose trait loadings rest on
 # fewer than this effective number of traits are tiered single_trait (needs a
 # closer look, not yet a program). A program that fails the similarity test is

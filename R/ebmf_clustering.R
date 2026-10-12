@@ -162,8 +162,9 @@ build_ebmf_matrix <- function(trait_id,
 #'
 #' Known per-observation standard errors are passed to flashier via \code{S}.
 #' For z-score matrices, \code{se_mode = "unit"} (default) is recommended:
-#' missing cells stay \code{NA} and flashier uses \code{S = 1}. The legacy
-#' \code{se_mode = "matrix"} path fills missing values with 0 and large SEs.
+#' observed cells get \code{S = 1}. An unobserved cell (no colocalising
+#' association) is fit as an observed 0 with standard error
+#' \code{missing_se}, so the pattern of observed cells informs the fit.
 #'
 #' @param beta_matrix Features x SNPs matrix of signed z-scores, typically
 #'   \code{build_ebmf_matrix()$beta_matrix}. Rows and columns that are entirely
@@ -171,9 +172,12 @@ build_ebmf_matrix <- function(trait_id,
 #' @param se_matrix Features x SNPs matrix of standard errors aligned with
 #'   \code{beta_matrix}. Used to mark missing cells when \code{se_mode = "unit"}
 #'   and passed as flashier \code{S} when \code{se_mode = "matrix"}.
-#' @param se_mode \code{"unit"} (default): data keeps \code{NA} missingness and
-#'   flashier uses \code{S = 1}. \code{"matrix"}: pass \code{se_matrix} with
-#'   missing cells as \code{Y = 0}, \code{S = 1e6}.
+#' @param se_mode \code{"unit"} (default): observed cells get \code{S = 1}.
+#'   \code{"matrix"}: observed cells get their \code{se_matrix} value.
+#' @param missing_se Standard error of an unobserved cell, which is fit as an
+#'   observed 0. \code{1} (default) treats it as confidently zero; a larger
+#'   value (e.g. \code{2.5}) says only that the effect is small, with unknown
+#'   sign.
 #' @param greedy_Kmax Maximum number of factors to add greedily. Factors are
 #'   only added while they improve the variational lower bound. Defaults to 50.
 #' @param backfit Logical; if \code{TRUE} (default), all factors are cyclically
@@ -200,6 +204,7 @@ build_ebmf_matrix <- function(trait_id,
 run_ebmf <- function(beta_matrix,
                      se_matrix,
                      se_mode = c("unit", "matrix"),
+                     missing_se = 1,
                      greedy_Kmax = 50L,
                      backfit = TRUE,
                      ebnm_fn = NULL,
@@ -213,6 +218,10 @@ run_ebmf <- function(beta_matrix,
   }
 
   se_mode <- match.arg(se_mode)
+  if (!is.numeric(missing_se) || length(missing_se) != 1 ||
+        !is.finite(missing_se) || missing_se <= 0) {
+    stop("missing_se must be a single positive number")
+  }
   if (!is.matrix(beta_matrix)) {
     stop("beta_matrix must be a matrix")
   }
@@ -233,7 +242,8 @@ run_ebmf <- function(beta_matrix,
   prepared <- .prepare_ebmf_flash_inputs(
     beta_matrix = beta_matrix,
     se_matrix = se_matrix,
-    se_mode = se_mode
+    se_mode = se_mode,
+    missing_se = missing_se
   )
 
   fit <- flashier::flash(
@@ -853,25 +863,36 @@ remove_ebmf_factors <- function(flash_fit, kset = integer(0)) {
 }
 
 
-.prepare_ebmf_flash_inputs <- function(beta_matrix, se_matrix, se_mode) {
+.prepare_ebmf_flash_inputs <- function(beta_matrix, se_matrix, se_mode,
+                                       missing_se = 1) {
+  # Mark unobserved cells by their SE so they survive the filter, which fills
+  # them with Y = 0 / SE = 1e6.
+  se_matrix[is.na(beta_matrix)] <- NA_real_
   filtered <- .filter_ebmf_matrices(
     beta_matrix = beta_matrix,
     se_matrix = se_matrix
   )
+  # Found from the filter's SE marker, not from data or S: after the filter
+  # data holds 0 there, and in "unit" mode S is the scalar 1.
+  missing <- filtered$se_matrix >= 1e6
 
-  # Restore NA missingness; flashier skips NA cells natively. In "matrix"
-  # mode the observed per-cell SEs are passed as flashier's S (with NAs at
-  # unobserved cells), replacing the legacy Y = 0 / S = 1e6 fill which
-  # degraded fits.
+  # In "matrix" mode the observed per-cell SEs are passed as flashier's S,
+  # replacing the legacy Y = 0 / S = 1e6 fill which degraded fits.
   data <- filtered$beta_matrix
   S <- if (se_mode == "matrix") filtered$se_matrix else 1
-  missing <- is.na(data) |
-    (!is.matrix(S) && FALSE) | (is.matrix(S) & is.na(S)) |
-    (is.matrix(S) & S >= 1e6)
-  data[missing] <- NA_real_
-  if (is.matrix(S)) {
-    S[is.na(S)] <- NA_real_
-    S[S >= 1e6] <- NA_real_
+
+  # An unobserved cell means no colocalising association: it enters the fit
+  # as a 0 with SE missing_se, so the pattern of observed cells informs the
+  # fit. Leaving these cells out (NA) discards that pattern and, on a matrix
+  # this sparse, leaves EBMF with almost nothing to separate programs by.
+  if (any(missing)) {
+    data[missing] <- 0
+    if (is.matrix(S) || missing_se != S) {
+      if (!is.matrix(S)) {
+        S <- matrix(S, nrow = nrow(data), ncol = ncol(data), dimnames = dimnames(data))
+      }
+      S[missing] <- missing_se
+    }
   }
 
   return(list(data = data, S = S))

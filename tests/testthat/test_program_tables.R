@@ -10,6 +10,19 @@ test_that(".program_confidence_tier applies the similarity and connectedness cut
   )
 })
 
+test_that(".program_confidence_tier lets a large similarity_z stand in for connectedness", {
+  tier <- .program_confidence_tier(
+    similarity_q = c(0.005, 0.005, 0.005, 0.03, 0.005),
+    connectedness = c(0.2, 0.2, 0.5, 0.2, 0.2),
+    similarity_z = c(9, 5, 5, 20, NA),
+    high_min_similarity_z = 8
+  )
+  # z only rescues connectedness: the program must still pass high_similarity_q.
+  expect_equal(as.character(tier), c("high", "medium", "high", "medium", "medium"))
+  # Without similarity_z the rule is connectedness only.
+  expect_equal(as.character(.program_confidence_tier(0.005, 0.2)), "medium")
+})
+
 test_that(".program_confidence_tier marks single-trait programs only when they pass the similarity test", {
   tier <- .program_confidence_tier(
     similarity_q = c(0.005, 0.005, 0.03, 0.5, 0.005, 0.03, NA),

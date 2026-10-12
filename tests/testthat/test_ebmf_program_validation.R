@@ -157,8 +157,9 @@ test_that("resolve_ebmf_settings merges overrides over the shared file", {
     c("ebmf_prior", "ebmf_magnitude_threshold", "min_module_size",
       "similarity_q", "high_similarity_q", "high_connectedness",
       "min_effective_traits",
-      "include_trans") %in% names(defaults)
+      "include_trans", "ebmf_missing_se", "high_similarity_z") %in% names(defaults)
   ))
+  expect_equal(defaults$ebmf_missing_se, 1)
   expect_false(any(c("coherence_q", "coherence_n_perm", "strength_q",
                      "min_excess_similarity", "min_excess_connectedness") %in%
                      names(defaults)))

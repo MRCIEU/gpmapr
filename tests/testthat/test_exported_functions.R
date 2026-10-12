@@ -321,6 +321,39 @@ test_that("extract_ebmf_clusters defaults to stricter magnitude_threshold", {
   expect_equal(eval(formals(build_ebmf_matrix)$compress_method), c("asinh", "none"))
   expect_equal(formals(select_ebmf_comparison_run)$min_total_pve, 0.01)
   expect_equal(eval(formals(run_ebmf)$se_mode), c("unit", "matrix"))
+  expect_equal(formals(run_ebmf)$missing_se, 1)
+})
+
+test_that("EBMF inputs encode unobserved cells as zeros", {
+  beta <- matrix(
+    c(2, NA, 3, 1, NA, 4),
+    nrow = 2,
+    dimnames = list(c("t1", "t2"), c("s1", "s2", "s3"))
+  )
+  se <- matrix(1, 2, 3, dimnames = dimnames(beta))
+  se[is.na(beta)] <- NA_real_
+
+  hard <- gpmapr:::.prepare_ebmf_flash_inputs(beta, se, "unit")
+  expect_equal(hard$data["t2", "s1"], 0)
+  expect_false(anyNA(hard$data))
+  expect_equal(hard$S, 1)
+
+  # In "matrix" mode the unobserved cells get missing_se, not the filter's 1e6.
+  hard_matrix <- gpmapr:::.prepare_ebmf_flash_inputs(beta, se, "matrix")
+  expect_equal(hard_matrix$data["t2", "s1"], 0)
+  expect_equal(hard_matrix$S["t2", "s1"], 1)
+
+  soft <- gpmapr:::.prepare_ebmf_flash_inputs(beta, se, "unit", missing_se = 2.5)
+  expect_equal(soft$data["t2", "s1"], 0)
+  expect_equal(soft$S["t2", "s1"], 2.5)
+  expect_equal(soft$S["t1", "s1"], 1)
+
+  expect_error(run_ebmf(beta, se, missing_se = 0), "missing_se")
+})
+
+test_that("EBMF refits default to SE 1 for results saved before ebmf_missing_se", {
+  expect_equal(gpmapr:::.ebmf_missing_se(list()), 1)
+  expect_equal(gpmapr:::.ebmf_missing_se(list(ebmf_missing_se = 2.5)), 2.5)
 })
 
 test_that("filter_perturbation_features() drops sparse columns", {
@@ -805,6 +838,25 @@ test_that("trait_duplicates() returns expected output", {
   expect_true(nrow(result) > 0)
   expected_names <- c("trait_id", "trait_name", "parent_trait_id", "parent_trait_name")
   expect_true(all(expected_names %in% names(result)))
+})
+
+test_that("remove_duplicate_traits() drops duplicates and keeps parents", {
+  duplicates <- data.frame(
+    trait_id = c(11L, 12L, 21L),
+    trait_name = c("A copy 1", "A copy 2", "B copy"),
+    parent_trait_id = c(1L, 1L, 2L),
+    parent_trait_name = c("A", "A", "B")
+  )
+  data <- data.frame(trait_id = c(1, 11, 12, 2, 21, 3, 1), value = 1:7)
+
+  result <- remove_duplicate_traits(data, duplicates)
+  expect_equal(result$trait_id, c(1, 2, 3, 1))
+
+  # a kept duplicate stays, and its parent goes instead
+  result <- remove_duplicate_traits(data, duplicates, keep_trait_ids = "21")
+  expect_equal(result$trait_id, c(1, 21, 3, 1))
+
+  expect_error(remove_duplicate_traits(data.frame(id = 1), duplicates), "trait_id")
 })
 
 test_that("delete_gwas() validates its inputs", {

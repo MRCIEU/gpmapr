@@ -50,6 +50,8 @@
 #'   better when true effects are large relative to noise).
 #' @param ebmf_backfit If `TRUE` (default), cyclically refit all factors after
 #'   the greedy phase. `FALSE` is faster but leaves greedy-order artifacts.
+#' @param ebmf_missing_se Standard error of an unobserved cell (no colocalising
+#'   association), which EBMF fits as an observed 0. See `run_ebmf()`.
 #' @param min_module_size,min_mean_internal,min_connectedness Recorded pipeline
 #'   settings for the downstream program-validation layer and used (for
 #'   `min_module_size`) by `calibrate_ebmf_programs()`. They do not affect the
@@ -92,6 +94,7 @@ run_univariate_clustering <- function(trait_object,
                                       ebmf_drop_global = TRUE,
                                       ebmf_prior = c("point_normal", "point_laplace"),
                                       ebmf_backfit = TRUE,
+                                      ebmf_missing_se = 1,
                                       min_module_size = 1L,
                                       min_mean_internal = 0.3,
                                       min_connectedness = 0.5) {
@@ -231,7 +234,8 @@ run_univariate_clustering <- function(trait_object,
     magnitude_threshold = ebmf_magnitude_threshold,
     drop_global = ebmf_drop_global,
     prior = ebmf_prior,
-    backfit = ebmf_backfit
+    backfit = ebmf_backfit,
+    missing_se = ebmf_missing_se
   )
 
   return(list(
@@ -276,6 +280,7 @@ run_univariate_clustering <- function(trait_object,
       ebmf_drop_global = ebmf_drop_global,
       ebmf_prior = ebmf_prior,
       ebmf_backfit = ebmf_backfit,
+      ebmf_missing_se = ebmf_missing_se,
       min_module_size = min_module_size,
       min_mean_internal = min_mean_internal,
       min_connectedness = min_connectedness
@@ -299,7 +304,8 @@ run_univariate_clustering <- function(trait_object,
                                        magnitude_threshold = 0.25,
                                        drop_global = TRUE,
                                        prior = "point_normal",
-                                       backfit = TRUE) {
+                                       backfit = TRUE,
+                                       missing_se = 1) {
   beta_matrix <- x_matrix
   se_matrix <- matrix(
     1,
@@ -315,6 +321,7 @@ run_univariate_clustering <- function(trait_object,
       beta_matrix = beta_matrix,
       se_matrix = se_matrix,
       se_mode = "unit",
+      missing_se = missing_se,
       greedy_Kmax = greedy_Kmax,
       backfit = backfit,
       ebnm_fn = .resolve_ebnm_fn(prior),

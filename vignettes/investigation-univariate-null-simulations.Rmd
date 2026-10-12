@@ -43,6 +43,7 @@ params:
   similarity_q: 0.05
   high_similarity_q: 0.01
   high_connectedness: 0.4
+  high_similarity_z: 6
   min_effective_traits: 1.5
   ebmf_greedy_Kmax: 100
   n_null: 5
@@ -135,6 +136,7 @@ validation_settings <- list(
   similarity_q_threshold = params$similarity_q,
   high_similarity_q = params$high_similarity_q,
   high_min_connectedness = params$high_connectedness,
+  high_min_similarity_z = params$high_similarity_z,
   min_effective_traits = params$min_effective_traits,
   n_null = n_null,
   alpha_membership = params$alpha_membership,
@@ -173,8 +175,9 @@ The checks are exactly the same as on the real pipeline:
     loadings rest on fewer than `min_effective_traits` effective traits. It is
     one trait's hits, which noise produces too, so it needs a closer look
     rather than being discarded or accepted.
-  - `high` when `similarity_q < high_similarity_q` and `connectedness >=
-    high_connectedness`; `medium` otherwise.
+  - `high` when `similarity_q < high_similarity_q` and either
+    `connectedness >= high_connectedness` or `similarity_z >=
+    high_similarity_z`; `medium` otherwise.
 
   A program counts as `valid` when its tier is high or medium.
 - `excess_similarity` / `excess_connectedness` (effect sizes against the random
@@ -670,6 +673,7 @@ check_table <- function(which_tier) {
       mean_internal_similarity = round(mean_internal_similarity, 3),
       excess_similarity = round(excess_similarity, 3),
       similarity_q = signif(similarity_q, 2),
+      similarity_z = round(similarity_z, 1),
       connectedness = round(connectedness, 3),
       excess_connectedness = round(excess_connectedness, 3),
       factor_pve_pct = round(100 * factor_pve, 2),
@@ -678,7 +682,7 @@ check_table <- function(which_tier) {
     dplyr::select(
       rep, program, confidence_tier, n_snps, n_snps_filtered,
       effective_n_traits, mean_internal_similarity, excess_similarity,
-      similarity_q, connectedness,
+      similarity_q, similarity_z, connectedness,
       excess_connectedness,
       factor_pve_pct, replication
     ) |>
@@ -686,7 +690,7 @@ check_table <- function(which_tier) {
       col.names = c(
         "rep", "program", "confidence", "n_snps", "n_snps filtered",
         "effective traits", "mean internal similarity", "excess similarity",
-        "similarity q",
+        "similarity q", "similarity z",
         "connectedness", "excess connectedness", "factor PVE %", "replication"
       )
     )

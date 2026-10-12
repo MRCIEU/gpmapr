@@ -39,6 +39,28 @@ trait_duplicates <- function() {
   return(duplicates)
 }
 
+#' @title Remove duplicate traits
+#' @description Drop rows for traits marked as a duplicate of another trait, keeping the parent trait.
+#' A trait in `keep_trait_ids` (e.g. the target trait) is never removed; if it is itself a duplicate,
+#' its parent is removed instead, so only one copy of the measurement remains.
+#' @param data A dataframe with a `trait_id` column, e.g. `trait()$coloc_groups`
+#' @param duplicates The output of `trait_duplicates()`.  Fetched from the API if not supplied.
+#' @param keep_trait_ids Trait ids that must not be removed
+#' @return `data` without the duplicate traits' rows
+#' @export
+remove_duplicate_traits <- function(data, duplicates = trait_duplicates(), keep_trait_ids = NULL) {
+  if (!is.data.frame(data) || !"trait_id" %in% names(data)) {
+    stop("data must be a dataframe with a trait_id column")
+  }
+  keep_trait_ids <- as.character(keep_trait_ids)
+  duplicate_ids <- as.character(duplicates$trait_id)
+  parent_ids <- as.character(duplicates$parent_trait_id)
+
+  drop_ids <- union(duplicate_ids, parent_ids[duplicate_ids %in% keep_trait_ids])
+  drop_ids <- setdiff(drop_ids, keep_trait_ids)
+  return(data[!as.character(data$trait_id) %in% drop_ids, , drop = FALSE])
+}
+
 #' @title Trait
 #' @description A collection of studies that are associated with a particular phenotype.
 #' A trait will include a common study and occasionally a rare study.

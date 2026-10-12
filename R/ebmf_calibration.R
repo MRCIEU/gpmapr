@@ -133,7 +133,8 @@ calibrate_ebmf_programs <- function(clustering_result,
       prior = params$ebmf_prior,
       # Null refits only feed the descriptive membership calibration, so
       # greedy-only fits are enough and much cheaper than backfitting.
-      backfit = FALSE
+      backfit = FALSE,
+      missing_se = .ebmf_missing_se(params)
     )
   }
 
@@ -338,7 +339,8 @@ stability_ebmf_programs <- function(clustering_result,
       # depressed for a structural reason rather than a stability one.
       drop_global = isTRUE(params$ebmf_drop_global),
       prior = params$ebmf_prior,
-      backfit = params$ebmf_backfit
+      backfit = params$ebmf_backfit,
+      missing_se = .ebmf_missing_se(params)
     )$details$flash_fit
     if (is.null(fit) || fit$n_factors == 0) {
       return(list())
@@ -423,4 +425,11 @@ stability_ebmf_programs <- function(clustering_result,
     return(0L)
   }
   return(as.integer(max(1L, min(as.integer(top_n), ceiling(n_available / 2)))))
+}
+
+
+# Refits must give unobserved cells the main fit's SE. Results saved before
+# ebmf_missing_se existed were fit with SE 1.
+.ebmf_missing_se <- function(params) {
+  return(if (is.null(params$ebmf_missing_se)) 1 else params$ebmf_missing_se)
 }

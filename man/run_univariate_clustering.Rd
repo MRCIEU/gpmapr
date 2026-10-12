@@ -22,6 +22,7 @@ run_univariate_clustering(
   ebmf_drop_global = TRUE,
   ebmf_prior = c("point_normal", "point_laplace"),
   ebmf_backfit = TRUE,
+  ebmf_missing_se = 1,
   min_module_size = 1L,
   min_mean_internal = 0.3,
   min_connectedness = 0.5
@@ -80,6 +81,9 @@ better when true effects are large relative to noise).}
 
 \item{ebmf_backfit}{If \code{TRUE} (default), cyclically refit all factors after
 the greedy phase. \code{FALSE} is faster but leaves greedy-order artifacts.}
+
+\item{ebmf_missing_se}{Standard error of an unobserved cell (no colocalising
+association), which EBMF fits as an observed 0. See \code{run_ebmf()}.}
 
 \item{min_module_size, min_mean_internal, min_connectedness}{Recorded pipeline
 settings for the downstream program-validation layer and used (for

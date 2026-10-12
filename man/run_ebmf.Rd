@@ -8,6 +8,7 @@ run_ebmf(
   beta_matrix,
   se_matrix,
   se_mode = c("unit", "matrix"),
+  missing_se = 1,
   greedy_Kmax = 50L,
   backfit = TRUE,
   ebnm_fn = NULL,
@@ -24,9 +25,13 @@ missing or zero are removed before fitting.}
 \code{beta_matrix}. Used to mark missing cells when \code{se_mode = "unit"}
 and passed as flashier \code{S} when \code{se_mode = "matrix"}.}
 
-\item{se_mode}{\code{"unit"} (default): data keeps \code{NA} missingness and
-flashier uses \code{S = 1}. \code{"matrix"}: pass \code{se_matrix} with
-missing cells as \code{Y = 0}, \code{S = 1e6}.}
+\item{se_mode}{\code{"unit"} (default): observed cells get \code{S = 1}.
+\code{"matrix"}: observed cells get their \code{se_matrix} value.}
+
+\item{missing_se}{Standard error of an unobserved cell, which is fit as an
+observed 0. \code{1} (default) treats it as confidently zero; a larger
+value (e.g. \code{2.5}) says only that the effect is small, with unknown
+sign.}
 
 \item{greedy_Kmax}{Maximum number of factors to add greedily. Factors are
 only added while they improve the variational lower bound. Defaults to 50.}
@@ -66,6 +71,7 @@ from the data.
 
 Known per-observation standard errors are passed to flashier via \code{S}.
 For z-score matrices, \code{se_mode = "unit"} (default) is recommended:
-missing cells stay \code{NA} and flashier uses \code{S = 1}. The legacy
-\code{se_mode = "matrix"} path fills missing values with 0 and large SEs.
+observed cells get \code{S = 1}. An unobserved cell (no colocalising
+association) is fit as an observed 0 with standard error
+\code{missing_se}, so the pattern of observed cells informs the fit.
 }

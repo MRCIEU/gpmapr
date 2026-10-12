@@ -294,6 +294,7 @@ discover_one_trait <- function(trait_object, trait_id) {
     similarity_q_threshold = as.numeric(ebmf_settings$similarity_q),
     high_similarity_q = as.numeric(ebmf_settings$high_similarity_q),
     high_min_connectedness = as.numeric(ebmf_settings$high_connectedness),
+    high_min_similarity_z = as.numeric(ebmf_settings$high_similarity_z),
     min_effective_traits = as.numeric(ebmf_settings$min_effective_traits),
     n_null = 2,
     n_rep = 0,

@@ -33,6 +33,7 @@ params:
   redundancy_threshold: 0.9
   cores: 5
   associations: "coloc"
+  remove_duplicates: true
 ---
 
 
@@ -121,6 +122,7 @@ similarity_n_perm <- as.integer(ebmf_settings$similarity_n_perm)
 similarity_q_threshold <- as.numeric(ebmf_settings$similarity_q)
 high_similarity_q <- as.numeric(ebmf_settings$high_similarity_q)
 high_connectedness <- as.numeric(ebmf_settings$high_connectedness)
+high_similarity_z <- as.numeric(ebmf_settings$high_similarity_z)
 min_effective_traits <- as.numeric(ebmf_settings$min_effective_traits)
 ebmf_greedy_Kmax <- as.integer(ebmf_settings$ebmf_greedy_Kmax)
 associations <- params$associations
@@ -163,11 +165,13 @@ knitr::kable(
     similarity_q = similarity_q_threshold,
     high_similarity_q = high_similarity_q,
     high_connectedness = high_connectedness,
+    high_similarity_z = high_similarity_z,
     min_effective_traits = min_effective_traits,
     ebmf_greedy_Kmax = ebmf_greedy_Kmax,
     redundancy_threshold = redundancy_threshold,
     cores = cores,
     associations = associations,
+    remove_duplicates = isTRUE(params$remove_duplicates),
     stringsAsFactors = FALSE
   ),
   caption = "Active run parameters",
@@ -215,6 +219,16 @@ coloc_groups_all <- target_trait$coloc_groups |>
 if (!include_trans && "cis_trans" %in% names(coloc_groups_all)) {
   coloc_groups_all <- coloc_groups_all |>
     dplyr::filter(is.na(cis_trans) | tolower(cis_trans) != "trans")
+}
+```
+
+```{r duplicate-traits, include=FALSE}
+# Traits GPMap marks as duplicates of another trait (trait_duplicates(), e.g. a
+# second import of the same GWAS) are dropped from every run, keeping the parent.
+if (isTRUE(params$remove_duplicates)) {
+  coloc_groups_all <- remove_duplicate_traits(
+    coloc_groups_all, trait_duplicates(), keep_trait_ids = target_trait_id
+  )
 }
 ```
 
@@ -290,6 +304,11 @@ compressed trait profiles (missing cells counted as 0, the BMI row left out).
   run; `similarity_q` is the BH-adjusted share of random groups at least as
   similar. It is a significance test, so larger programs pass more easily, and
   the run's background similarity sets how hard it is to pass.
+- **similarity_z** — how many standard deviations of those random groups the
+  program's mean `S` sits above them. Same random groups as `similarity_q`, but
+  no floor, so it keeps ranking programs that beat every random group; at
+  `high_similarity_z` or above it makes a program high in place of
+  connectedness.
 - **connectedness** — share of member pairs with `S >= similarity_threshold`.
 
 - **low** — `similarity_q >= similarity_q`: the member SNPs are no more alike
@@ -302,8 +321,10 @@ compressed trait profiles (missing cells counted as 0, the BMI row left out).
   so it needs a closer look rather than being discarded. Near-duplicate traits
   each count, so a program spread over several body-size traits is not
   flagged.
-- **high** — `similarity_q < high_similarity_q` and `connectedness >=
-  high_connectedness`.
+- **high** — `similarity_q < high_similarity_q`, and either `connectedness >=
+  high_connectedness` or `similarity_z >= high_similarity_z` (a program far
+  above its size-matched random sets, which large programs reach even when
+  they are too loose for the connectedness cut).
 - **medium** — `similarity_q < similarity_q`, but not high.
 
 `excess_similarity` and `excess_connectedness` (each minus its value in the
@@ -340,6 +361,7 @@ run_bmi_analysis <- function(label, coloc_groups) {
     similarity_q_threshold = similarity_q_threshold,
     high_similarity_q = high_similarity_q,
     high_min_connectedness = high_connectedness,
+  high_min_similarity_z = high_similarity_z,
     min_effective_traits = min_effective_traits,
     n_null = n_null,
     alpha_membership = alpha_membership,
@@ -432,14 +454,16 @@ for (run_id in names(runs)) {
         connectedness = round(connectedness, 3),
         excess_connectedness = round(excess_connectedness, 3),
         similarity_q = signif(similarity_q, 3),
+        similarity_z = round(similarity_z, 1),
         factor_pve_pct = round(100 * factor_pve, 2),
         replication = round(replication, 2),
         parent_program
       ),
     caption = paste0(
-      "Run ", r$label, ": programs by confidence tier. factor_pve_pct is the % ",
-      "of matrix variance the factor explains; similarity_q, factor_pve_pct and ",
-      "replication are reported, not used for the tier."
+      "Run ", r$label, ": programs by confidence tier. The tier uses ",
+      "similarity_q, connectedness or similarity_z, and effective_n_traits; ",
+      "excess_*, factor_pve_pct (the % of matrix variance the factor explains) ",
+      "and replication are reported, not used for the tier."
     )
   ))
 }

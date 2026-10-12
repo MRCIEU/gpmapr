@@ -30,6 +30,8 @@ params:
   redundancy_threshold: 0.9
   cores: 5
   associations: "coloc"
+  remove_duplicates: true
+  ebmf_missing_se: null
 ---
 
 
@@ -278,7 +280,7 @@ genome-wide threshold that Suzuki et al. used.
 ## Part 3: Univariate analysis
 
 The steps are the same as in
-[the univariate analysis investigation](investigation-univariate-analysis.html),
+[the univariate analysis investigation](univariate-analysis-bmi.html),
 except that T2D proxy traits are removed first (see below):
 
 1. Build a pleiotropy matrix of z-scores (`beta / se`) for every background
@@ -325,8 +327,10 @@ similarity_n_perm <- as.integer(ebmf_settings$similarity_n_perm)
 similarity_q_threshold <- as.numeric(ebmf_settings$similarity_q)
 high_similarity_q <- as.numeric(ebmf_settings$high_similarity_q)
 high_connectedness <- as.numeric(ebmf_settings$high_connectedness)
+high_similarity_z <- as.numeric(ebmf_settings$high_similarity_z)
 min_effective_traits <- as.numeric(ebmf_settings$min_effective_traits)
 ebmf_greedy_Kmax <- as.integer(ebmf_settings$ebmf_greedy_Kmax)
+ebmf_missing_se <- as.numeric(ebmf_settings$ebmf_missing_se)
 associations <- params$associations
 include_situated_gene <- isTRUE(params$include_situated_gene)
 min_mean_internal <- as.numeric(params$min_mean_internal)
@@ -359,16 +363,19 @@ knitr::kable(
     ebmf_lfsr_threshold = ebmf_lfsr_threshold,
     ebmf_magnitude_threshold = ebmf_magnitude_threshold,
     ebmf_greedy_Kmax = ebmf_greedy_Kmax,
+    ebmf_missing_se = ebmf_missing_se,
     min_module_size = min_module_size,
     similarity_threshold = similarity_threshold,
     similarity_n_perm = similarity_n_perm,
     similarity_q = similarity_q_threshold,
     high_similarity_q = high_similarity_q,
     high_connectedness = high_connectedness,
+    high_similarity_z = high_similarity_z,
     min_effective_traits = min_effective_traits,
     n_rep = n_rep,
     frac_traits = frac_traits,
     redundancy_threshold = redundancy_threshold,
+    remove_duplicates = isTRUE(params$remove_duplicates),
     stringsAsFactors = FALSE
   ),
   caption = "Active run parameters",
@@ -456,6 +463,16 @@ target$coloc_groups <- target$coloc_groups |>
   dplyr::filter(!as.character(trait_id) %in% t2d_proxy_traits$trait_id)
 ```
 
+```{r duplicate-traits, include=FALSE}
+# Traits GPMap marks as duplicates of another trait (trait_duplicates(), e.g. a
+# second import of the same GWAS) are dropped, keeping the parent.
+if (isTRUE(params$remove_duplicates)) {
+  target$coloc_groups <- remove_duplicate_traits(
+    target$coloc_groups, trait_duplicates(), keep_trait_ids = target_guid
+  )
+}
+```
+
 ### Fit
 
 ```{r fit}
@@ -476,6 +493,7 @@ ebmf_result <- run_univariate_clustering(
   ebmf_greedy_Kmax = ebmf_greedy_Kmax,
   ebmf_prior = ebmf_prior,
   ebmf_backfit = ebmf_backfit,
+  ebmf_missing_se = ebmf_missing_se,
   min_module_size = min_module_size,
   min_mean_internal = min_mean_internal,
   min_connectedness = min_connectedness
@@ -521,8 +539,10 @@ pair).
   program is defined as multi-trait: a factor carried by one trait is just
   that trait's hits, which noise produces too, so it needs a closer look
   rather than being discarded.
-- **high** — `similarity_q < high_similarity_q` and `connectedness >=
-  high_connectedness`.
+- **high** — `similarity_q < high_similarity_q`, and either `connectedness >=
+  high_connectedness` or `similarity_z >= high_similarity_z` (a program far
+  above its size-matched random sets, which large programs reach even when
+  they are too loose for the connectedness cut).
 - **medium** — `similarity_q < similarity_q`, but not high.
 
 The columns:
@@ -535,6 +555,12 @@ The columns:
   of member SNPs, and the BH-adjusted share of random groups of the same number
   of T2D SNPs that are at least as similar. A significance test, so larger
   programs pass more easily.
+- **similarity_z**: how many standard deviations of those random groups the
+  program's mean `S` sits above them. It comes from the same random groups as
+  `similarity_q` but has no floor, so it keeps ranking programs that beat every
+  random group; at `high_similarity_z` or above it makes a program high in place
+  of connectedness. See
+  [SNP biological clustering](univariate-overview.html#what-similarity_z-measures).
 - **connectedness**: the share of member pairs with `S >= similarity_threshold`.
 - **excess_similarity** and **excess_connectedness** (reported): each of the
   above minus its value in the random groups; effect sizes that do not grow
@@ -558,6 +584,7 @@ program_summary <- summarise_ebmf_programs(
   similarity_q_threshold = similarity_q_threshold,
   high_similarity_q = high_similarity_q,
   high_min_connectedness = high_connectedness,
+  high_min_similarity_z = high_similarity_z,
   min_effective_traits = min_effective_traits,
   n_null = n_null,
   alpha_membership = alpha_membership,
@@ -587,6 +614,7 @@ print(kable_confidence(
       connectedness = round(connectedness, 3),
       excess_connectedness = round(excess_connectedness, 3),
       similarity_q = signif(similarity_q, 2),
+      similarity_z = round(similarity_z, 1),
       factor_pve_pct = round(100 * factor_pve, 2),
       replication = round(replication, 2),
       parent_program
@@ -1742,8 +1770,9 @@ similarity (4d). The calls are:
 
 - **clear:** the SNV counts favour the cluster (q ≤ 0.05) *and* the trait
   profile is closest to it or to a cluster it cannot be told apart from;
-- **partial:** only one of the two supports the cluster, or the program sits
-  between two similar clusters;
+- **partial:** only one of the two supports the cluster, the program sits
+  between two similar clusters, or the SNV preference only just passes
+  (q close to 0.05) on a handful of SNPs, where a re-render could flip it;
 - **none:** no consistent match.
 
 Three pairs of clusters have similar profiles over the traits GPMap has (4d):
@@ -1758,54 +1787,36 @@ program has changed, so the text cannot silently go stale.
 ```{r manual-matches, results = "asis"}
 manual_matches <- dplyr::tribble(
   ~program, ~suzuki_cluster, ~call, ~reading,
-  "1", "Obesity", "clear",
-  "Largest program. Most of its matched SNVs are Obesity (SEC16B, TFAP2B, GNPDA2, BDNF, FTO) and its profile is closest to Obesity. Its most specific traits (education, intelligence, apolipoprotein B) are not Suzuki traits.",
-  "49", "Obesity", "clear",
-  "A compact BMI core: BMI, body size at age 10 and impedance. Most of its SNPs are also in P1, including SEC16B, GNPDA2 and TFAP2B.",
-  "44", "Obesity", "clear",
-  "Obesity SNVs and an Obesity profile, with C-reactive protein as its most specific trait: an inflammation-flavoured obesity program.",
-  "11", "Beta cell +PI / Beta cell -PI", "clear",
-  "The only beta-cell program. HbA1c is its most specific glycaemic trait, it carries CDC123/CAMK1D, CDKN2A/B and KCNJ11/ABCC8, and its SNVs lean to Beta cell -PI while its profile is closest to Beta cell +PI. The two clusters are not separable here, as expected.",
-  "6", "Lipodystrophy / Metabolic syndrome", "clear",
-  "GRB14/COBLL1, INSR and ARL15; SHBG, heel bone density and lean mass. Lipodystrophy SNVs are the most over-represented and Metabolic syndrome SNVs the most numerous; the profile is closest to Lipodystrophy.",
-  "2", "Lipodystrophy", "clear",
-  "A lipid (VLDL, triglyceride) program at the insulin-resistance loci (INSR, GRB14/COBLL1, ANKRD55, CMIP). P33 and P36 sit inside it.",
-  "33", "Lipodystrophy / Metabolic syndrome", "partial",
-  "Sub-program of P2 with 4 SNPs: triglycerides and HDL. Too few SNPs for the SNV counts; the profile matches Lipodystrophy.",
-  "36", "Lipodystrophy / Metabolic syndrome", "partial",
-  "Sub-program of P33 with 3 SNPs. Too few SNPs for the SNV counts; the profile matches Lipodystrophy.",
-  "54", "Lipodystrophy / Metabolic syndrome", "partial",
-  "HDL and triglycerides with KLF14; the profile matches Lipodystrophy but its 6 SNPs show no cluster preference.",
-  "40", "none", "none",
-  "Three SNPs in the MHC region with immune pathways; not a Suzuki-like program.",
-  "22", "Obesity / Body fat", "partial",
-  "CRP and limb fat percentage; the profile is closest to Obesity, but the SNV counts show no preference.",
-  "50", "Beta cell +PI / Beta cell -PI", "partial",
-  "MTNR1B, a fasting-glucose locus, with triglycerides and GGT. Its profile is closest to Beta cell +PI, but the SNV preference is not significant.",
-  "16", "Obesity", "clear",
-  "Obesity SNVs (SEC16B, TFAP2B, GNPDA2, PCSK1) and an Obesity profile; shares many SNPs with P1.",
-  "4", "Obesity", "clear",
-  "Second large Obesity program (education, sitting height, triglycerides); shares many SNPs with P1.",
-  "13", "none", "none",
-  "Mixed: alcohol intake, LDL and pulse pressure. The profile sits between Lipodystrophy and Metabolic syndrome, but the SNVs show no preference.",
-  "31", "Lipodystrophy / Metabolic syndrome", "clear",
-  "Blood pressure and impedance at GRB14/COBLL1, EBF1 and CYTL1; Lipodystrophy SNVs over-represented and a Lipodystrophy profile.",
-  "10", "Metabolic syndrome / Lipodystrophy", "clear",
-  "Red-cell traits and triglycerides at INSR, ABO and GRB14/COBLL1; Metabolic syndrome SNVs over-represented, Lipodystrophy profile.",
-  "26", "none", "none",
-  "Six SNPs, HDL and triglycerides; no SNV preference and no clear profile.",
-  "35", "Metabolic syndrome / Lipodystrophy", "clear",
-  "Platelet and red-cell traits with SHBG; Metabolic syndrome SNVs over-represented, Lipodystrophy profile.",
-  "24", "Metabolic syndrome", "clear",
-  "Lean mass and heel bone density; the strongest Metabolic syndrome SNV enrichment, and its profile is closest to Metabolic syndrome.",
-  "53", "Lipodystrophy / Metabolic syndrome", "partial",
-  "HDL cholesterol; a Lipodystrophy profile but no significant SNV preference.",
-  "17", "Lipodystrophy / Metabolic syndrome", "partial",
-  "Three SNPs, triglycerides; a Lipodystrophy profile, too few SNPs for the SNV counts.",
-  "45", "none", "none",
-  "Lung function and lean mass; no SNV preference, and the profile is only weakly Obesity-like.",
-  "47", "Lipodystrophy / Metabolic syndrome", "clear",
-  "IGF-1, AST and red-cell traits at PNPLA3 and INS/IGF2; Lipodystrophy SNVs over-represented, Metabolic syndrome profile."
+  "2", "Obesity", "clear",
+  "Largest program (59 SNPs). Most of its matched SNVs are Obesity (SEC16B, GNPDA2, TFAP2B, NRXN3, BDNF, FTO) and its profile is the closest Obesity match (0.93). Its most specific traits (apolipoprotein B, blood urea nitrogen, body size at age 10) are mostly not Suzuki traits.",
+  "15", "Beta cell +PI / Beta cell -PI", "clear",
+  "The only beta-cell program. HbA1c and fasting glucose are its most specific traits; it carries MTNR1B, GLIS3 and ZBED3 (Beta cell +PI) and ARAP1 and CDC123/CAMK1D (Beta cell -PI). Its SNVs and profile lean to Beta cell +PI, but the two clusters are not separated, as expected.",
+  "43", "Obesity", "clear",
+  "A compact BMI core: BMI, impedance and body size at age 10. Obesity SNVs and an Obesity profile; shares SEC16B, GNPDA2, TFAP2B and ANAPC4 with P2.",
+  "1", "Lipodystrophy", "clear",
+  "Lipoprotein-composition traits (VLDL and LDL lipid ratios) at the insulin-resistance loci INSR, GRB14/COBLL1, ANKRD55, CMIP and KLF14. Lipodystrophy SNVs are strongly over-represented (8.7-fold) and the profile matches Lipodystrophy; cholesterol metabolism is enriched. P30 and P44 sit inside it.",
+  "30", "Lipodystrophy", "clear",
+  "Sub-program of P1 with 6 SNPs: HDL, triglycerides and apolipoprotein A1 at CMIP, KLF14 and GRB14/COBLL1. Lipodystrophy SNVs over-represented and a Lipodystrophy profile.",
+  "44", "Lipodystrophy", "partial",
+  "Sub-program of P1 with 4 SNPs: triglycerides, HDL and blood pressure at GRB14/COBLL1, ANKRD55 and KLF14. The profile matches Lipodystrophy; the SNV preference only just passes (q = 0.048) on 4 SNPs.",
+  "12", "Lipodystrophy / Metabolic syndrome", "clear",
+  "Red-cell traits (mean corpuscular haemoglobin), triglycerides and SHBG at INSR, ARL15, EBF1, GRB14/COBLL1 and KLF14. Lipodystrophy SNVs are the most over-represented and Metabolic syndrome SNVs second; the profile cannot split the two. High through similarity_z (8.1) rather than connectedness.",
+  "8", "Lipodystrophy / Metabolic syndrome", "clear",
+  "Lean mass (trunk and arm fat-free mass) at GRB14/COBLL1, ARL15, INSR, SLC22A3 and CYTL1. Lipodystrophy SNVs over-represented with Metabolic syndrome close behind; Lipodystrophy profile.",
+  "13", "Lipodystrophy", "partial",
+  "HDL lipid composition and SHBG at INSR, GRB14/COBLL1 and ANGPTL4, with plasma and cholesterol-metabolism enrichment. The profile matches Lipodystrophy; the SNV preference only just passes (q = 0.047) on 6 SNPs.",
+  "21", "none", "none",
+  "Three SNPs in the MHC region (HLA-DQ/DR) with T-cell signalling pathways; no matched Suzuki SNV, and not a Suzuki-like program.",
+  "4", "Obesity", "partial",
+  "A broad program (53 SNPs; alcohol intake, triglycerides, sitting height) at Obesity loci including PCSK1 and SEC16B. Its profile is Obesity-like (0.87), but its SNVs span six clusters and the Obesity preference is not significant (q = 0.08).",
+  "14", "none", "none",
+  "Mixed: pulse pressure and impedance, with TCF7L2, KCNJ11/ABCC8, ADH1B and KLF14. Its SNVs span six clusters with no preference, and its profile is tied between Lipodystrophy and Metabolic syndrome (0.72 each).",
+  "11", "Lipodystrophy / Metabolic syndrome", "clear",
+  "VLDL free cholesterol and height at ANKRD55, DNM3, GRB14/COBLL1, FAM13A, CMIP and CYTL1. Lipodystrophy SNVs over-represented and Metabolic syndrome second; Lipodystrophy profile. Medium only because it is loose (connectedness 0.28).",
+  "28", "none", "none",
+  "Six SNPs (HMBS, FAM13A, PDE3A) with kidney cortex and brain amygdala tissue hits. No SNV preference, and its closest profile, Residual glycaemic (0.66), is barely ahead of Obesity (0.62).",
+  "6", "Lipodystrophy", "partial",
+  "Four SNPs: triglycerides, LDL and blood pressure at GRB14/COBLL1 and KLF14. The profile matches Lipodystrophy; the SNV preference only just passes (q = 0.049) on 2 matched SNVs."
 )
 
 # Check each call against the current results: the program must still be high
@@ -1853,33 +1864,38 @@ print(kable_confidence(
 
 **Against the expectations.**
 
-- **Obesity is recovered clearly and repeatedly** (P1, P49, P44, P16, P4).
-  P1, P4 and P16 share many SNPs, and P49 is a BMI core that sits mostly
-  inside P1.
-- **Lipodystrophy and Metabolic syndrome are recovered together.** Many
-  programs sit at the insulin-resistance loci (GRB14/COBLL1, INSR, ANKRD55,
-  CMIP, KLF14). The SNV counts pull some towards Lipodystrophy (P2, P6, P31,
-  P47) and others towards Metabolic syndrome (P10, P24, P35). The trait
-  profiles cannot separate the two, because Suzuki's own profiles are close
-  over these traits.
-- **Beta cell: one joint program (P11), as expected.** It carries markers of
-  both beta-cell clusters, and neither the SNVs nor the profile split them.
+- **Obesity is recovered clearly** (P2, P43). P43 is a compact BMI core that
+  shares its main loci with P2. P4 is a broader, Obesity-like program whose SNV
+  preference is not significant.
+- **Lipodystrophy and Metabolic syndrome are recovered together, and lean to
+  Lipodystrophy.** Most programs sit at the insulin-resistance loci
+  (GRB14/COBLL1, INSR, ANKRD55, CMIP, KLF14): P1 with its sub-programs P30 and
+  P44, P12, P8, P11, P13 and P6. Lipodystrophy is the top SNV cluster in every
+  one of them; Metabolic syndrome is second in P12, P8 and P11, and no program
+  prefers it. The trait profiles cannot separate the two, because Suzuki's own
+  profiles are close over these traits.
+- **Beta cell: one joint program (P15), as expected.** It carries markers of
+  both beta-cell clusters and leans to Beta cell +PI; KCNJ11/ABCC8 lands in
+  the mixed program P14 instead.
 - **Body fat merges into Obesity, as expected.** No program prefers Body fat
-  SNVs; they are spread over the Obesity programs.
+  SNVs.
 - **Residual glycaemic, the largest cluster, has no program of its own.** Its
-  SNVs are spread across programs (4c), which fits its role as a catch-all.
+  SNVs are spread across programs (4c); P28's profile is closest to it, but
+  only barely, and its SNVs show no preference.
 - **Liver/lipid metabolism is not recovered**, as expected with 3 signals.
-- **Tissues give little support to the expectations.** Only four high or
-  medium programs have a loading-based tissue hit (4e). P35 (Metabolic
-  syndrome / Lipodystrophy) is enriched in liver, P22 and P17 in plasma, and
-  P26 (no match) in kidney cortex and brain amygdala. No Lipodystrophy-like
-  program is enriched in adipose, and no Obesity program in brain.
+- **Tissues give little support to the expectations.** Only two high or
+  medium programs have a loading-based tissue hit (4e): P13 (Lipodystrophy) in
+  plasma, and P28 (no match) in kidney cortex and brain amygdala. No
+  Lipodystrophy-like program is enriched in adipose, and no Obesity program in
+  brain. Cholesterol metabolism is enriched in P1 and P13.
+- **One non-Suzuki program:** P21, three MHC-region SNPs with T-cell
+  signalling pathways.
 
 ## Part 5: Candidate trait pairs for a multi-trait analysis
 
 This part is documentation only; nothing here is run. Each pair runs the
 upload against one partner trait in
-[the multi-trait investigation](investigation-multitrait-programs.html). The
+[the multi-trait investigation](multitrait-analysis.html). The
 Suzuki clusters predict which shared programs the pair should show and in which
 direction:
 
@@ -1911,11 +1927,11 @@ as one of its traits. A first run would look like this:
 
 ```{r multitrait-example, eval = FALSE, echo = TRUE}
 rmarkdown::render(
-  "vignettes/investigation-multitrait-programs.Rmd",
+  "vignettes/multitrait-analysis.Rmd",
   params = list(
     api = "production",
     trait_ids = c("c6d2e20f-6ece-d093-78ee-37534547c466", 1992)
   ),
-  output_file = "investigation-multitrait-programs-t2dggi-bmi.html"
+  output_file = "multitrait-analysis-t2dggi-bmi.html"
 )
 ```

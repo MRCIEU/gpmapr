@@ -456,7 +456,7 @@ all before cross-trait comparison begins.
 Everything in [SNP biological clustering](univariate-overview.html#variables-to-consider)
 applies per trait before this pipeline ever runs, and matters twice over here:
 `ebmf_lfsr_threshold`, `ebmf_magnitude_threshold`, `min_module_size`,
-`similarity_q`, `high_similarity_q`, `high_connectedness` and
+`similarity_q`, `high_similarity_q`, `high_connectedness`, `high_similarity_z` and
 `min_effective_traits` together decide
 each program's confidence tier (and therefore whether it is eligible for
 cross-trait comparison at all), while `trait_subset`, `include_trans`, `min_snp_signals`,
