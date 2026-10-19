@@ -6,27 +6,17 @@
 \usage{
 run_ebmf(
   beta_matrix,
-  se_matrix,
-  se_mode = c("unit", "matrix"),
   missing_se = 1,
   greedy_Kmax = 50L,
   backfit = TRUE,
   ebnm_fn = NULL,
-  var_type = NULL,
   verbose = 1L
 )
 }
 \arguments{
-\item{beta_matrix}{Features x SNPs matrix of signed z-scores, typically
-\code{build_ebmf_matrix()$beta_matrix}. Rows and columns that are entirely
-missing or zero are removed before fitting.}
-
-\item{se_matrix}{Features x SNPs matrix of standard errors aligned with
-\code{beta_matrix}. Used to mark missing cells when \code{se_mode = "unit"}
-and passed as flashier \code{S} when \code{se_mode = "matrix"}.}
-
-\item{se_mode}{\code{"unit"} (default): observed cells get \code{S = 1}.
-\code{"matrix"}: observed cells get their \code{se_matrix} value.}
+\item{beta_matrix}{Features x SNPs matrix of signed z-scores, \code{NA} where
+unobserved, typically \code{run_univariate_clustering()$ebmf_input}. Rows
+and columns that are entirely missing or zero are removed before fitting.}
 
 \item{missing_se}{Standard error of an unobserved cell, which is fit as an
 observed 0. \code{1} (default) treats it as confidently zero; a larger
@@ -42,12 +32,6 @@ updated after the greedy phase until convergence.}
 \item{ebnm_fn}{EBNM function for priors on loadings and factors. Defaults to
 \code{ebnm::ebnm_point_normal} (point-normal prior). Pass a list of two
 functions to use different priors for loadings (features) and factors (SNPs).}
-
-\item{var_type}{Residual variance structure. Defaults to \code{NULL} when
-\code{se_mode = "unit"} (S accounts for residual variance) and \code{1L}
-(per-row) when \code{se_mode = "matrix"}. Use \code{0} for constant,
-\code{1} for per-row, \code{2} for per-column, or \code{c(1, 2)} for
-Kronecker.}
 
 \item{verbose}{Verbosity: 0 = silent, 1 = summary, 2 = ELBO updates,
 3 = per-iteration.}
@@ -69,9 +53,10 @@ Fit an Empirical Bayes Matrix Factorization model using
 loadings (\eqn{L}, feature contributions), with sparse priors estimated
 from the data.
 
-Known per-observation standard errors are passed to flashier via \code{S}.
-For z-score matrices, \code{se_mode = "unit"} (default) is recommended:
-observed cells get \code{S = 1}. An unobserved cell (no colocalising
-association) is fit as an observed 0 with standard error
-\code{missing_se}, so the pattern of observed cells informs the fit.
+Observed cells are z-scores, so each enters with standard error 1. An
+unobserved (\code{NA}) cell, meaning no colocalising association, is fit as an
+observed 0 with standard error \code{missing_se}, so the pattern of observed
+cells informs the fit. Because \code{S} carries the noise, no residual
+variance is estimated.
 }
+\keyword{internal}

@@ -1,162 +1,25 @@
-#' @title Baseline Top Associated Traits
-#' @description Rank complex-trait columns by mean absolute effect across a set
-#' of SNPs. Use as a verification baseline when pathway enrichment is empty or
-#' weak: do SNP groups recover distinct trait drivers?
-#' @param trait_matrix SNPs x traits numeric matrix (e.g. oriented trait matrix
-#'   from EBMF / verification helpers).
-#' @param snp_ids Optional SNP ids to include. Defaults to all rows.
-#' @param trait_info Optional dataframe with `feature_id`/`trait_id` and
-#'   `feature_name`/`trait_name` columns for labels.
-#' @param coloc_groups Optional coloc-group dataframe used to attach
-#'   `trait_category` labels (and for category summaries).
-#' @param exclude_trait_ids Optional trait ids to drop (e.g. the target trait).
-#' @param top_n Maximum traits to return. Defaults to 20.
-#' @param min_snps_with_signal Drop traits observed in fewer than this many SNPs
-#'   in the summarised set. Defaults to 5.
-#' @param n_categories Number of leading trait categories to report (by summed
-#'   `abs_mean_z`). Defaults to 2.
-#' @return A list with:
-#'   \itemize{
-#'     \item traits: ranked trait dataframe (includes `trait_category` when available)
-#'     \item categories: top trait categories for the SNP set
-#'   }
-#' @export
-summarise_baseline_traits <- function(trait_matrix,
-                                      snp_ids = NULL,
-                                      trait_info = NULL,
-                                      coloc_groups = NULL,
-                                      exclude_trait_ids = NULL,
-                                      top_n = 20L,
-                                      min_snps_with_signal = 5L,
-                                      n_categories = 2L) {
-  traits <- .summarise_traits_for_snps(
-    trait_matrix = trait_matrix,
-    snp_ids = snp_ids,
-    group = "baseline",
-    trait_info = trait_info,
-    coloc_groups = coloc_groups,
-    exclude_trait_ids = exclude_trait_ids,
-    top_n = NULL,
-    min_snps_with_signal = min_snps_with_signal
-  )
-  categories <- .top_trait_categories(traits, n = n_categories)
-  traits <- utils::head(traits, top_n)
-  return(list(
-    traits = traits,
-    categories = categories,
-    top_categories = .category_label(categories)
-  ))
-}
-
-
-#' @title Top Associated Traits Per SNP Group
-#' @description For each SNP group of size at least `min_group_size`, rank trait
-#' columns by mean absolute effect among member SNPs and report the leading
-#' trait categories. Prefer \code{summarise_module_specific_traits()} when
-#' common trait categories dominate magnitude rankings.
-#' @inheritParams summarise_baseline_traits
-#' @param groups Named vector (`names` = SNP ids) or dataframe with `snp_id`
-#'   plus `group` / `cluster` / `program`.
-#' @param min_group_size Only summarise groups with at least this many SNPs.
-#' @param top_n Maximum traits per group. Defaults to 10.
-#' @param min_snps_with_signal Drop traits observed in fewer than this many SNPs
-#'   within the group. Defaults to 3.
-#' @param n_categories Number of leading trait categories per group. Defaults to 2.
-#' @return A list with `by_group` (per-group trait tables and categories) and
-#'   `summary` (top trait and top categories per group).
-#' @export
-summarise_snp_group_traits <- function(trait_matrix,
-                                       groups,
-                                       trait_info = NULL,
-                                       coloc_groups = NULL,
-                                       exclude_trait_ids = NULL,
-                                       min_group_size = 5L,
-                                       top_n = 10L,
-                                       min_snps_with_signal = 3L,
-                                       n_categories = 2L) {
-  group_df <- .normalize_snp_groups(groups)
-  group_sizes <- table(group_df$group)
-  large_groups <- names(group_sizes)[group_sizes >= min_group_size]
-
-  empty_summary <- data.frame(
-    group = character(0),
-    n_snps = integer(0),
-    n_traits_ranked = integer(0),
-    top_trait = character(0),
-    top_abs_mean_z = numeric(0),
-    top_trait_categories = character(0),
-    stringsAsFactors = FALSE
-  )
-
-  if (length(large_groups) == 0) {
-    return(list(
-      by_group = list(),
-      summary = empty_summary,
-      min_group_size = as.integer(min_group_size)
-    ))
-  }
-
-  by_group <- lapply(large_groups, function(grp) {
-    snp_ids <- group_df$snp_id[group_df$group == grp]
-    traits_all <- .summarise_traits_for_snps(
-      trait_matrix = trait_matrix,
-      snp_ids = snp_ids,
-      group = grp,
-      trait_info = trait_info,
-      coloc_groups = coloc_groups,
-      exclude_trait_ids = exclude_trait_ids,
-      top_n = NULL,
-      min_snps_with_signal = min_snps_with_signal
-    )
-    categories <- .top_trait_categories(traits_all, n = n_categories)
-    list(
-      group = grp,
-      n_snps = length(unique(snp_ids)),
-      traits = utils::head(traits_all, top_n),
-      categories = categories,
-      top_categories = .category_label(categories)
-    )
-  })
-
-  summary_df <- dplyr::bind_rows(lapply(by_group, function(x) {
-    top_trait <- if (nrow(x$traits) > 0) {
-      x$traits$trait_name[1]
-    } else {
-      NA_character_
-    }
-    data.frame(
-      group = x$group,
-      n_snps = x$n_snps,
-      n_traits_ranked = nrow(x$traits),
-      top_trait = top_trait,
-      top_abs_mean_z = if (nrow(x$traits) > 0) x$traits$abs_mean_z[1] else NA_real_,
-      top_trait_categories = x$top_categories,
-      stringsAsFactors = FALSE
-    )
-  }))
-
-  return(list(
-    by_group = by_group,
-    summary = summary_df,
-    min_group_size = as.integer(min_group_size)
-  ))
-}
-
-
 #' @title Module-Specific Trait Drivers
 #' @description For each SNP group of size at least `min_group_size`, rank traits by
 #' how much stronger their mean absolute effect is inside the module than in the
 #' remaining SNPs:
 #' \deqn{\mathrm{specificity} = \bar{|z|}_{\mathrm{module}} /
 #' (\bar{|z|}_{\mathrm{rest}} + \varepsilon)}.
-#' Trait categories are ranked by the same module-vs-rest contrast so common
-#' categories (e.g. Physiological Measures) do not dominate unless they are
-#' specifically elevated in the module.
 #'
-#' Every large module always returns up to `top_n` traits (and category labels
-#' derived from them). `min_specificity` is only a soft flag
-#' (`passes_min_specificity`); it does not drop rows.
-#' @inheritParams summarise_snp_group_traits
+#' Every large module always returns up to `top_n` traits. `min_specificity` is
+#' only a soft flag (`passes_min_specificity`); it does not drop rows.
+#' @param trait_matrix SNPs x traits numeric matrix (e.g.
+#'   `run_univariate_clustering()$trait_matrix`).
+#' @param groups Named vector (`names` = SNP ids) or dataframe with `snp_id`
+#'   plus `group` / `cluster` / `program`.
+#' @param trait_info Optional dataframe with `feature_id`/`trait_id` and
+#'   `feature_name`/`trait_name` columns for labels.
+#' @param coloc_groups Optional coloc-group dataframe used to attach
+#'   `trait_category` labels.
+#' @param exclude_trait_ids Optional trait ids to drop (e.g. the target trait).
+#' @param min_group_size Only summarise groups with at least this many SNPs.
+#' @param top_n Maximum traits per group. Defaults to 10.
+#' @param min_snps_with_signal Drop traits observed in fewer than this many SNPs
+#'   within the group. Defaults to 3.
 #' @param specificity_eps Pseudocount in the specificity denominator. Defaults
 #'   to 0.1.
 #' @param min_rest_snps_with_signal Minimum number of SNPs outside the module
@@ -167,8 +30,11 @@ summarise_snp_group_traits <- function(trait_matrix,
 #' @param min_specificity Soft threshold used to set
 #'   `passes_min_specificity` on ranked traits (default 1.25). Does not filter
 #'   the returned table.
-#' @return A list with `by_group` and `summary` (same shape as
-#'   `summarise_snp_group_traits()`, plus specificity columns).
+#' @return A list with `by_group`, one entry per large group with `group`,
+#'   `n_snps`, `n_rest_snps`, `traits` (the top `top_n` traits with
+#'   `abs_mean_z`, `abs_mean_z_rest`, `specificity`, `abs_mean_z_delta` and
+#'   `passes_min_specificity`) and `n_traits_passing_min_specificity`, plus the
+#'   settings used.
 #' @export
 summarise_module_specific_traits <- function(trait_matrix,
                                              groups,
@@ -178,7 +44,6 @@ summarise_module_specific_traits <- function(trait_matrix,
                                              min_group_size = 5L,
                                              top_n = 10L,
                                              min_snps_with_signal = 3L,
-                                             n_categories = 2L,
                                              specificity_eps = 0.1,
                                              min_specificity = 1.25,
                                              min_rest_snps_with_signal = 2L) {
@@ -197,25 +62,13 @@ summarise_module_specific_traits <- function(trait_matrix,
   large_groups <- names(group_sizes)[group_sizes >= min_group_size]
   all_snps <- rownames(trait_matrix)
 
-  empty_summary <- data.frame(
-    group = character(0),
-    n_snps = integer(0),
-    n_traits_ranked = integer(0),
-    n_traits_passing_min_specificity = integer(0),
-    top_trait = character(0),
-    top_specificity = numeric(0),
-    top_abs_mean_z = numeric(0),
-    top_trait_categories = character(0),
-    stringsAsFactors = FALSE
-  )
-
   if (length(large_groups) == 0) {
     return(list(
       by_group = list(),
-      summary = empty_summary,
       min_group_size = as.integer(min_group_size),
       min_specificity = min_specificity,
-      specificity_eps = specificity_eps
+      specificity_eps = specificity_eps,
+      min_rest_snps_with_signal = as.integer(min_rest_snps_with_signal)
     ))
   }
 
@@ -283,41 +136,17 @@ summarise_module_specific_traits <- function(trait_matrix,
         dplyr::desc(abs_mean_z)
       )
 
-    traits_top <- utils::head(traits_all, top_n)
-    categories <- .top_specific_trait_categories(traits_top, n = n_categories)
     list(
       group = grp,
       n_snps = length(snp_ids),
       n_rest_snps = length(rest_ids),
-      traits = traits_top,
-      categories = categories,
-      top_categories = .category_label(categories),
+      traits = utils::head(traits_all, top_n),
       n_traits_passing_min_specificity = sum(traits_all$passes_min_specificity)
     )
   })
 
-  summary_df <- dplyr::bind_rows(lapply(by_group, function(x) {
-    top_trait <- if (nrow(x$traits) > 0) {
-      x$traits$trait_name[1]
-    } else {
-      NA_character_
-    }
-    data.frame(
-      group = x$group,
-      n_snps = x$n_snps,
-      n_traits_ranked = nrow(x$traits),
-      n_traits_passing_min_specificity = x$n_traits_passing_min_specificity,
-      top_trait = top_trait,
-      top_specificity = if (nrow(x$traits) > 0) x$traits$specificity[1] else NA_real_,
-      top_abs_mean_z = if (nrow(x$traits) > 0) x$traits$abs_mean_z[1] else NA_real_,
-      top_trait_categories = x$top_categories,
-      stringsAsFactors = FALSE
-    )
-  }))
-
   return(list(
     by_group = by_group,
-    summary = summary_df,
     min_group_size = as.integer(min_group_size),
     min_specificity = min_specificity,
     specificity_eps = specificity_eps,
@@ -326,298 +155,51 @@ summarise_module_specific_traits <- function(trait_matrix,
 }
 
 
-#' @title Tissue Enrichment Per SNP Group
-#' @description For each SNP group of size at least `min_group_size`, count
-#' tissues at member SNPs (from `coloc_groups`) and compare observed vs expected
-#' composition against a trait-level baseline by default. Baseline links come
-#' only from SNPs attributed to the analysed trait (`baseline_snp_ids`), not the
-#' full GPMap universe. For `background = "trait"`, each module is compared to
-#' the rest of the trait SNPs (leave-one-out within the trait).
-#' @param groups Named SNP group vector or group dataframe.
-#' @param coloc_groups Coloc-group dataframe with `tissue`.
-#' @param snp_key Column used to match SNPs.
-#' @param min_group_size Only test groups with at least this many SNPs.
-#' @param p_value_threshold FDR threshold used to populate `enriched`. The full
-#'   observed-vs-expected table is always returned in `comparison`.
-#' @param background `"trait"` (default; leave-one-out vs other trait SNPs),
-#'   `"rest"` (leave-one-out vs other large groups), or `"pooled"` (all SNPs in
-#'   large groups, including the tested group).
-#' @param baseline_snp_ids SNP ids defining the trait baseline when
-#'   `background = "trait"`. Defaults to all SNPs in `groups` when `NULL`.
-#' @param bootstrap Compute bootstrap 95% confidence intervals for the fold
-#'   enrichment (`fe_ci_lower`/`fe_ci_upper`). Defaults to `TRUE`.
-#' @param seed RNG seed for the bootstrap FE confidence intervals. Defaults to
-#'   `1L`.
-#' @return A list with `by_group` (each with `tissues`, `comparison`,
-#'   `enriched`), `summary`, and `background` (baseline tissue counts).
-#'   `comparison` adds a bootstrap `fe_ci_lower`/`fe_ci_upper` 95% CI for
-#'   `fold_enrichment` alongside the hypergeometric `fdr`. `enriched` is the
-#'   FDR-only subset.
+#' @title Annotation Enrichment of a SNP Set
+#' @description Test whether a set of SNPs is enriched for a trait category or
+#' a tissue compared with the rest of a trait's SNPs. Each SNP is linked to the
+#' distinct categories (or tissues) of the traits it colocalises with in
+#' `coloc_groups`; tissue links come from rows with a `gene_id` (molecular QTL
+#' studies). For every annotation value seen in the set, a one-sided Fisher
+#' exact test compares the set's links (with vs without the value) against the
+#' background's links, where the background is `background_snp_ids` minus the
+#' set. P-values are BH-adjusted across the values tested.
+#'
+#' Links rather than SNPs are counted, so a SNP colocalising with many traits
+#' contributes several links; links from one SNP, and SNPs in LD, are treated
+#' as independent.
+#' @param snp_ids Variant ids of the SNP set.
+#' @param background_snp_ids Variant ids of the trait's SNPs (the set may be
+#'   included; it is removed before testing).
+#' @param coloc_groups Coloc-group dataframe with `variant_id` and the
+#'   annotation column (`trait_category`, or `tissue` and `gene_id`).
+#' @param annotation `"trait_category"` (default) or `"tissue"`.
+#' @param min_set_size Sets with fewer distinct SNPs return an empty table.
+#'   Defaults to `5`.
+#' @return A dataframe with one row per annotation value seen in the set,
+#'   ordered by `fdr`: the value (in a column named after `annotation`),
+#'   `n_set` and `n_background` (links with the value), `n_set_total` and
+#'   `n_background_total` (all links), `frac_set`, `frac_background`,
+#'   `fold_enrichment` (`frac_set / frac_background`), `p_value` and `fdr`.
 #' @export
-enrich_snp_group_tissues <- function(groups,
-                                     coloc_groups,
-                                     snp_key = c(
-                                       "variant_id",
-                                       "display_snp",
-                                       "coloc_group_id"
-                                     ),
-                                     min_group_size = 5L,
-                                     p_value_threshold = 0.05,
-                                     background = c("trait", "rest", "pooled"),
-                                     baseline_snp_ids = NULL,
-                                     bootstrap = TRUE,
-                                     seed = 1L) {
-  snp_key <- match.arg(snp_key)
-  background <- match.arg(background)
-  group_df <- .normalize_snp_groups(groups)
-  group_sizes <- table(group_df$group)
-  large_groups <- names(group_sizes)[group_sizes >= min_group_size]
-
-  empty_summary <- data.frame(
-    group = character(0),
-    n_snps = integer(0),
-    n_tissue_links = integer(0),
-    n_enriched_tissues = integer(0),
-    top_tissue = character(0),
-    top_enriched_tissue = character(0),
-    stringsAsFactors = FALSE
-  )
-
-  if (length(large_groups) == 0) {
-    return(list(
-      by_group = list(),
-      summary = empty_summary,
-      background = .summarise_tissue_counts(
-        .snp_tissue_links(character(0), coloc_groups, snp_key)
-      ),
-      n_background_links = 0L,
-      background_mode = background,
-      min_group_size = as.integer(min_group_size)
-    ))
+enrich_snp_set <- function(snp_ids,
+                           background_snp_ids,
+                           coloc_groups,
+                           annotation = c("trait_category", "tissue"),
+                           min_set_size = 5L) {
+  annotation <- match.arg(annotation)
+  snp_ids <- unique(as.character(snp_ids))
+  empty <- .link_enrichment_test(character(0), character(0))
+  names(empty)[names(empty) == "value"] <- annotation
+  if (length(snp_ids) < min_set_size) {
+    return(empty)
   }
-
-  pooled_snps <- unique(group_df$snp_id[group_df$group %in% large_groups])
-  if (identical(background, "trait")) {
-    if (is.null(baseline_snp_ids)) {
-      baseline_snp_ids <- unique(group_df$snp_id)
-    }
-    baseline_snp_ids <- unique(as.character(baseline_snp_ids))
-    universe_links <- .snp_tissue_links(
-      baseline_snp_ids,
-      coloc_groups,
-      snp_key
-    )
-  } else {
-    universe_links <- .snp_tissue_links(pooled_snps, coloc_groups, snp_key)
-  }
-  universe_counts <- .summarise_tissue_counts(universe_links)
-
-  by_group <- lapply(seq_along(large_groups), function(ii) {
-    grp <- large_groups[ii]
-    snp_ids <- unique(group_df$snp_id[group_df$group == grp])
-    links <- .snp_tissue_links(snp_ids, coloc_groups, snp_key)
-    counts <- .summarise_tissue_counts(links)
-
-    if (identical(background, "trait")) {
-      bg_snps <- setdiff(baseline_snp_ids, snp_ids)
-      bg_links <- .snp_tissue_links(bg_snps, coloc_groups, snp_key)
-      n_bg_snps <- length(bg_snps)
-    } else if (identical(background, "rest")) {
-      bg_snps <- setdiff(pooled_snps, snp_ids)
-      bg_links <- .snp_tissue_links(bg_snps, coloc_groups, snp_key)
-      n_bg_snps <- length(bg_snps)
-    } else {
-      bg_links <- universe_links
-      n_bg_snps <- length(pooled_snps)
-    }
-
-    comparison <- .hypergeometric_link_enrichment(
-      group_values = links$tissue,
-      universe_values = bg_links$tissue,
-      p_value_threshold = NULL,
-      bootstrap = bootstrap,
-      seed = seed + ii
-    )
-    names(comparison)[names(comparison) == "value"] <- "tissue"
-
-    enriched <- comparison
-    if (!is.null(p_value_threshold) && nrow(enriched) > 0) {
-      enriched <- enriched[!is.na(enriched$fdr) & enriched$fdr <= p_value_threshold, , drop = FALSE]
-    }
-
-    list(
-      group = grp,
-      n_snps = length(snp_ids),
-      n_baseline_snps = n_bg_snps,
-      n_tissue_links = nrow(links),
-      tissues = counts,
-      comparison = comparison,
-      enriched = enriched
-    )
-  })
-
-  summary_df <- dplyr::bind_rows(lapply(by_group, function(x) {
-    top_tissue <- if (nrow(x$tissues) > 0) x$tissues$tissue[1] else NA_character_
-    top_enriched <- if (nrow(x$enriched) > 0) {
-      paste0(
-        x$enriched$tissue[1],
-        " (FDR=", signif(x$enriched$fdr[1], 3),
-        ", FE=", signif(x$enriched$fold_enrichment[1], 3), ")"
-      )
-    } else {
-      NA_character_
-    }
-    data.frame(
-      group = x$group,
-      n_snps = x$n_snps,
-      n_tissue_links = x$n_tissue_links,
-      n_enriched_tissues = nrow(x$enriched),
-      top_tissue = top_tissue,
-      top_enriched_tissue = top_enriched,
-      stringsAsFactors = FALSE
-    )
-  }))
-
-  return(list(
-    by_group = by_group,
-    summary = summary_df,
-    background = universe_counts,
-    n_background_links = nrow(universe_links),
-    background_mode = background,
-    min_group_size = as.integer(min_group_size)
-  ))
-}
-
-
-#' @title Trait-Category Enrichment Per SNP Group
-#' @description For each SNP group, compare trait-category composition in
-#' `coloc_groups` to the rest of a trait-level SNP baseline (expected vs
-#' observed). Uses distinct SNP-category links from coloc results attributed to
-#' the analysed trait SNPs.
-#' @inheritParams enrich_snp_group_tissues
-#' @param baseline_snp_ids SNP ids defining the trait baseline. Defaults to all
-#'   SNPs in `groups` when `NULL`.
-#' @return A list with `by_group` (each with `categories`, `comparison`,
-#'   `enriched`), `summary`, and `background` category counts.
-#' @export
-enrich_snp_group_trait_categories <- function(groups,
-                                              coloc_groups,
-                                              snp_key = c(
-                                                "variant_id",
-                                                "display_snp",
-                                                "coloc_group_id"
-                                              ),
-                                              min_group_size = 5L,
-                                              p_value_threshold = 0.05,
-                                              baseline_snp_ids = NULL,
-                                              bootstrap = TRUE,
-                                              seed = 1L) {
-  snp_key <- match.arg(snp_key)
-  group_df <- .normalize_snp_groups(groups)
-  group_sizes <- table(group_df$group)
-  large_groups <- names(group_sizes)[group_sizes >= min_group_size]
-
-  empty_summary <- data.frame(
-    group = character(0),
-    n_snps = integer(0),
-    n_category_links = integer(0),
-    n_enriched_categories = integer(0),
-    top_category = character(0),
-    top_enriched_category = character(0),
-    stringsAsFactors = FALSE
-  )
-
-  if (is.null(baseline_snp_ids)) {
-    baseline_snp_ids <- unique(group_df$snp_id)
-  }
-  baseline_snp_ids <- unique(as.character(baseline_snp_ids))
-
-  if (length(large_groups) == 0) {
-    return(list(
-      by_group = list(),
-      summary = empty_summary,
-      background = .summarise_category_counts(
-        .snp_category_links(character(0), coloc_groups, snp_key)
-      ),
-      n_background_links = 0L,
-      background_mode = "trait",
-      min_group_size = as.integer(min_group_size)
-    ))
-  }
-
-  universe_links <- .snp_category_links(
-    baseline_snp_ids,
-    coloc_groups,
-    snp_key
-  )
-  universe_counts <- .summarise_category_counts(universe_links)
-
-  by_group <- lapply(seq_along(large_groups), function(ii) {
-    grp <- large_groups[ii]
-    snp_ids <- unique(group_df$snp_id[group_df$group == grp])
-    links <- .snp_category_links(snp_ids, coloc_groups, snp_key)
-    counts <- .summarise_category_counts(links)
-    bg_snps <- setdiff(baseline_snp_ids, snp_ids)
-    bg_links <- .snp_category_links(bg_snps, coloc_groups, snp_key)
-    comparison <- .hypergeometric_link_enrichment(
-      group_values = links$trait_category,
-      universe_values = bg_links$trait_category,
-      p_value_threshold = NULL,
-      bootstrap = bootstrap,
-      seed = seed + ii
-    )
-    names(comparison)[names(comparison) == "value"] <- "trait_category"
-
-    enriched <- comparison
-    if (!is.null(p_value_threshold) && nrow(enriched) > 0) {
-      enriched <- enriched[!is.na(enriched$fdr) & enriched$fdr <= p_value_threshold, , drop = FALSE]
-    }
-
-    list(
-      group = grp,
-      n_snps = length(snp_ids),
-      n_baseline_snps = length(baseline_snp_ids),
-      n_category_links = nrow(links),
-      categories = counts,
-      comparison = comparison,
-      enriched = enriched
-    )
-  })
-
-  summary_df <- dplyr::bind_rows(lapply(by_group, function(x) {
-    top_category <- if (nrow(x$categories) > 0) {
-      x$categories$trait_category[1]
-    } else {
-      NA_character_
-    }
-    top_enriched <- if (nrow(x$enriched) > 0) {
-      paste0(
-        x$enriched$trait_category[1],
-        " (FDR=", signif(x$enriched$fdr[1], 3),
-        ", FE=", signif(x$enriched$fold_enrichment[1], 3), ")"
-      )
-    } else {
-      NA_character_
-    }
-    data.frame(
-      group = x$group,
-      n_snps = x$n_snps,
-      n_category_links = x$n_category_links,
-      n_enriched_categories = nrow(x$enriched),
-      top_category = top_category,
-      top_enriched_category = top_enriched,
-      stringsAsFactors = FALSE
-    )
-  }))
-
-  return(list(
-    by_group = by_group,
-    summary = summary_df,
-    background = universe_counts,
-    n_background_links = nrow(universe_links),
-    background_mode = "trait",
-    min_group_size = as.integer(min_group_size)
-  ))
+  background <- setdiff(unique(as.character(background_snp_ids)), snp_ids)
+  set_links <- .snp_annotation_links(snp_ids, coloc_groups, annotation)
+  background_links <- .snp_annotation_links(background, coloc_groups, annotation)
+  out <- .link_enrichment_test(set_links[[annotation]], background_links[[annotation]])
+  names(out)[names(out) == "value"] <- annotation
+  return(out)
 }
 
 
@@ -686,97 +268,6 @@ enrich_snp_group_trait_categories <- function(groups,
 }
 
 
-.top_trait_categories <- function(traits, n = 2L) {
-  empty <- data.frame(
-    trait_category = character(0),
-    score = numeric(0),
-    n_traits = integer(0),
-    stringsAsFactors = FALSE
-  )
-  if (!is.data.frame(traits) || nrow(traits) == 0) {
-    return(empty)
-  }
-  if (!"trait_category" %in% names(traits)) {
-    return(empty)
-  }
-
-  scored <- traits |>
-    dplyr::filter(
-      !is.na(trait_category),
-      trait_category != "",
-      is.finite(abs_mean_z)
-    )
-  if (nrow(scored) == 0) {
-    return(empty)
-  }
-
-  out <- scored |>
-    dplyr::group_by(trait_category) |>
-    dplyr::summarise(
-      score = sum(abs_mean_z),
-      n_traits = dplyr::n(),
-      .groups = "drop"
-    ) |>
-    dplyr::arrange(dplyr::desc(score), dplyr::desc(n_traits), trait_category)
-
-  return(utils::head(out, n))
-}
-
-
-.top_specific_trait_categories <- function(traits, n = 2L) {
-  empty <- data.frame(
-    trait_category = character(0),
-    score = numeric(0),
-    mean_specificity = numeric(0),
-    n_traits = integer(0),
-    stringsAsFactors = FALSE
-  )
-  if (!is.data.frame(traits) || nrow(traits) == 0) {
-    return(empty)
-  }
-  needed <- c("trait_category", "specificity", "abs_mean_z_delta")
-  if (!all(needed %in% names(traits))) {
-    return(empty)
-  }
-
-  scored <- traits |>
-    dplyr::filter(
-      !is.na(trait_category),
-      trait_category != "",
-      is.finite(specificity),
-      is.finite(abs_mean_z_delta)
-    )
-  if (nrow(scored) == 0) {
-    return(empty)
-  }
-
-  out <- scored |>
-    dplyr::group_by(trait_category) |>
-    dplyr::summarise(
-      score = sum(pmax(abs_mean_z_delta, 0) * specificity),
-      mean_specificity = mean(specificity),
-      n_traits = dplyr::n(),
-      .groups = "drop"
-    ) |>
-    dplyr::arrange(
-      dplyr::desc(score),
-      dplyr::desc(mean_specificity),
-      dplyr::desc(n_traits),
-      trait_category
-    )
-
-  return(utils::head(out, n))
-}
-
-
-.category_label <- function(categories) {
-  if (!is.data.frame(categories) || nrow(categories) == 0) {
-    return(NA_character_)
-  }
-  return(paste(categories$trait_category, collapse = " / "))
-}
-
-
 .join_trait_categories <- function(out, coloc_groups) {
   if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {
     return(out)
@@ -834,461 +325,104 @@ enrich_snp_group_trait_categories <- function(groups,
 }
 
 
-.snp_tissue_links <- function(snp_ids, coloc_groups, snp_key) {
+# Distinct SNP-annotation links: one row per SNP and trait category (or
+# tissue) among the coloc rows at that SNP. Tissue links come only from rows
+# with a gene_id (molecular QTL studies).
+.snp_annotation_links <- function(snp_ids,
+                                  coloc_groups,
+                                  annotation = c("trait_category", "tissue"),
+                                  snp_key = "variant_id") {
+  annotation <- match.arg(annotation)
+  empty <- data.frame(snp_id = character(0), value = character(0), stringsAsFactors = FALSE)
+  names(empty)[2] <- annotation
   if (is.null(snp_ids) || length(snp_ids) == 0) {
-    return(data.frame(
-      snp_id = character(0),
-      tissue = character(0),
-      stringsAsFactors = FALSE
-    ))
+    return(empty)
   }
   if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {
     stop("coloc_groups is required")
   }
-  if (!"tissue" %in% names(coloc_groups)) {
-    stop("coloc_groups must include a tissue column")
-  }
-  if (!snp_key %in% names(coloc_groups)) {
-    stop("coloc_groups must include column: ", snp_key)
-  }
-
-  snp_ids <- unique(as.character(snp_ids))
-  snp_col <- as.character(coloc_groups[[snp_key]])
-  out <- coloc_groups |>
-    dplyr::mutate(snp_id = snp_col) |>
-    dplyr::filter(
-      snp_id %in% snp_ids,
-      !is.na(tissue),
-      tissue != "",
-      !is.na(gene_id)
-    ) |>
-    dplyr::distinct(snp_id, tissue)
-
-  return(out)
-}
-
-
-.snp_category_links <- function(snp_ids, coloc_groups, snp_key) {
-  if (is.null(snp_ids) || length(snp_ids) == 0) {
-    return(data.frame(
-      snp_id = character(0),
-      trait_category = character(0),
-      stringsAsFactors = FALSE
-    ))
-  }
-  if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {
-    stop("coloc_groups is required")
-  }
-  if (!"trait_category" %in% names(coloc_groups)) {
-    stop("coloc_groups must include a trait_category column")
-  }
-  if (!snp_key %in% names(coloc_groups)) {
-    stop("coloc_groups must include column: ", snp_key)
+  needed <- c(snp_key, annotation, if (annotation == "tissue") "gene_id")
+  missing_cols <- setdiff(needed, names(coloc_groups))
+  if (length(missing_cols) > 0) {
+    stop("coloc_groups must include column(s): ", paste(missing_cols, collapse = ", "))
   }
 
   snp_ids <- unique(as.character(snp_ids))
-  snp_col <- as.character(coloc_groups[[snp_key]])
-  out <- coloc_groups |>
-    dplyr::mutate(snp_id = snp_col) |>
-    dplyr::filter(
-      snp_id %in% snp_ids,
-      !is.na(trait_category),
-      trait_category != ""
-    ) |>
-    dplyr::distinct(snp_id, trait_category)
-
-  return(out)
-}
-
-
-.summarise_tissue_counts <- function(links) {
-  if (nrow(links) == 0) {
-    return(data.frame(
-      tissue = character(0),
-      n_links = integer(0),
-      n_snps = integer(0),
-      frac_links = numeric(0),
-      stringsAsFactors = FALSE
-    ))
+  values <- as.character(coloc_groups[[annotation]])
+  keep <- as.character(coloc_groups[[snp_key]]) %in% snp_ids &
+    !is.na(values) & values != ""
+  if (annotation == "tissue") {
+    keep <- keep & !is.na(coloc_groups$gene_id)
   }
-
-  total <- nrow(links)
-  out <- links |>
-    dplyr::group_by(tissue) |>
-    dplyr::summarise(
-      n_links = dplyr::n(),
-      n_snps = dplyr::n_distinct(snp_id),
-      .groups = "drop"
-    ) |>
-    dplyr::mutate(frac_links = n_links / total) |>
-    dplyr::arrange(dplyr::desc(n_links), tissue)
-
-  return(out)
-}
-
-
-.summarise_category_counts <- function(links) {
-  if (nrow(links) == 0) {
-    return(data.frame(
-      trait_category = character(0),
-      n_links = integer(0),
-      n_snps = integer(0),
-      frac_links = numeric(0),
-      stringsAsFactors = FALSE
-    ))
-  }
-
-  total <- nrow(links)
-  out <- links |>
-    dplyr::group_by(trait_category) |>
-    dplyr::summarise(
-      n_links = dplyr::n(),
-      n_snps = dplyr::n_distinct(snp_id),
-      .groups = "drop"
-    ) |>
-    dplyr::mutate(frac_links = n_links / total) |>
-    dplyr::arrange(dplyr::desc(n_links), trait_category)
-
-  return(out)
-}
-
-
-.hypergeometric_link_enrichment <- function(group_values,
-                                            universe_values,
-                                            p_value_threshold = NULL,
-                                            bootstrap = TRUE,
-                                            seed = 1L) {
-  empty <- data.frame(
-    value = character(0),
-    n_group = integer(0),
-    n_universe = integer(0),
-    n_group_total = integer(0),
-    n_universe_total = integer(0),
-    frac_group = numeric(0),
-    frac_universe = numeric(0),
-    fold_enrichment = numeric(0),
-    p_value = numeric(0),
-    fdr = numeric(0),
-    fe_ci_lower = numeric(0),
-    fe_ci_upper = numeric(0),
+  out <- data.frame(
+    snp_id = as.character(coloc_groups[[snp_key]][keep]),
+    value = values[keep],
     stringsAsFactors = FALSE
   )
-  group_values <- as.character(group_values)
-  universe_values <- as.character(universe_values)
-  group_values <- group_values[!is.na(group_values) & group_values != ""]
-  universe_values <- universe_values[
-    !is.na(universe_values) & universe_values != ""
-  ]
-
-  if (length(group_values) == 0 || length(universe_values) == 0) {
-    return(empty)
-  }
-
-  n_group_total <- length(group_values)
-  n_universe_total <- length(universe_values)
-  group_counts <- table(group_values)
-  universe_counts <- table(universe_values)
-  values <- names(group_counts)
-
-  rows <- lapply(values, function(val) {
-    k <- as.integer(group_counts[[val]])
-    k_u <- if (val %in% names(universe_counts)) {
-      as.integer(universe_counts[[val]])
-    } else {
-      0L
-    }
-    frac_group <- k / n_group_total
-    frac_u <- k_u / n_universe_total
-    fold_enrichment <- if (frac_u > 0) frac_group / frac_u else Inf
-    p_value <- if (n_group_total > n_universe_total) {
-      NA_real_
-    } else {
-      stats::phyper(
-        q = k - 1L,
-        m = k_u,
-        n = n_universe_total - k_u,
-        k = n_group_total,
-        lower.tail = FALSE
-      )
-    }
-    data.frame(
-      value = val,
-      n_group = k,
-      n_universe = k_u,
-      n_group_total = n_group_total,
-      n_universe_total = n_universe_total,
-      frac_group = frac_group,
-      frac_universe = frac_u,
-      fold_enrichment = fold_enrichment,
-      p_value = p_value,
-      stringsAsFactors = FALSE
-    )
-  })
-
-  out <- dplyr::bind_rows(rows)
-  if (nrow(out) == 0) {
-    return(empty)
-  }
-  out$fdr <- stats::p.adjust(out$p_value, method = "BH")
-
-  if (bootstrap) {
-    set.seed(seed)
-    ci <- .fe_bootstrap_ci(
-      n_group = out$n_group,
-      n_universe = out$n_universe,
-      n_group_total = out$n_group_total,
-      n_universe_total = out$n_universe_total,
-      B = 1000L
-    )
-    out$fe_ci_lower <- ci$lower
-    out$fe_ci_upper <- ci$upper
-  } else {
-    out$fe_ci_lower <- NA_real_
-    out$fe_ci_upper <- NA_real_
-  }
-
-  if (!is.null(p_value_threshold)) {
-    out <- out[out$fdr <= p_value_threshold, , drop = FALSE]
-  }
-  out <- out[order(
-    out$fdr,
-    -out$fold_enrichment,
-    out$p_value,
-    out$value
-  ), , drop = FALSE]
+  out <- out[!duplicated(out), , drop = FALSE]
+  names(out)[2] <- annotation
   rownames(out) <- NULL
   return(out)
 }
 
 
-# Percentile-bootstrap CI for fold enrichment. The group and universe link
-# counts are drawn as binomials (parametric bootstrap) from the observed
-# proportions, so the CI reflects the small-count uncertainty of the ratio.
-.fe_bootstrap_ci <- function(n_group,
-                             n_universe,
-                             n_group_total,
-                             n_universe_total,
-                             B = 1000L) {
-  n <- length(n_group)
-  lower <- upper <- rep(NA_real_, n)
-  for (i in seq_len(n)) {
-    k <- n_group[i]
-    k_u <- n_universe[i]
-    ng <- n_group_total[i]
-    nu <- n_universe_total[i]
-    if (is.na(k) || is.na(k_u) || ng <= 0 || nu <= 0) next
-    if (k_u <= 0) next
-    if (k == 0) {
-      lower[i] <- 0
-      upper[i] <- 0
-      next
-    }
-    kg <- stats::rbinom(B, size = ng, prob = k / ng)
-    ku_draw <- stats::rbinom(B, size = nu, prob = k_u / nu)
-    fe <- (kg / ng) / (ku_draw / nu)
-    fe <- fe[is.finite(fe)]
-    if (length(fe) == 0) next
-    lower[i] <- unname(stats::quantile(fe, 0.025, na.rm = TRUE))
-    upper[i] <- unname(stats::quantile(fe, 0.975, na.rm = TRUE))
-  }
-  return(list(lower = lower, upper = upper))
-}
-
-
-# Backward-compatible wrapper used by older call sites / tests if needed.
-.hypergeometric_tissue_enrichment <- function(group_links,
-                                              background_links,
-                                              p_value_threshold) {
-  out <- .hypergeometric_link_enrichment(
-    group_values = group_links$tissue,
-    universe_values = background_links$tissue,
-    p_value_threshold = p_value_threshold
+# One-sided Fisher exact test of each annotation value seen in a set's links
+# against a disjoint background's links: set links with / without the value vs
+# background links with / without it. This is the hypergeometric tail with the
+# set and background pooled as the universe. BH across the values tested.
+.link_enrichment_test <- function(set_values, background_values) {
+  empty <- data.frame(
+    value = character(0),
+    n_set = integer(0),
+    n_background = integer(0),
+    n_set_total = integer(0),
+    n_background_total = integer(0),
+    frac_set = numeric(0),
+    frac_background = numeric(0),
+    fold_enrichment = numeric(0),
+    p_value = numeric(0),
+    fdr = numeric(0),
+    stringsAsFactors = FALSE
   )
-  names(out)[names(out) == "value"] <- "tissue"
-  names(out)[names(out) == "n_universe"] <- "n_background"
-  names(out)[names(out) == "n_universe_total"] <- "n_background_total"
+  set_values <- as.character(set_values)
+  background_values <- as.character(background_values)
+  set_values <- set_values[!is.na(set_values) & set_values != ""]
+  background_values <- background_values[!is.na(background_values) & background_values != ""]
+  if (length(set_values) == 0 || length(background_values) == 0) {
+    return(empty)
+  }
+
+  n_set_total <- length(set_values)
+  n_background_total <- length(background_values)
+  set_counts <- table(set_values)
+  background_counts <- table(background_values)
+  values <- names(set_counts)
+  k <- as.integer(set_counts[values])
+  k_b <- as.integer(background_counts[values])
+  k_b[is.na(k_b)] <- 0L
+
+  frac_set <- k / n_set_total
+  frac_background <- k_b / n_background_total
+  out <- data.frame(
+    value = values,
+    n_set = k,
+    n_background = k_b,
+    n_set_total = n_set_total,
+    n_background_total = n_background_total,
+    frac_set = frac_set,
+    frac_background = frac_background,
+    fold_enrichment = ifelse(frac_background > 0, frac_set / frac_background, Inf),
+    p_value = stats::phyper(
+      q = k - 1L,
+      m = k + k_b,
+      n = n_set_total + n_background_total - k - k_b,
+      k = n_set_total,
+      lower.tail = FALSE
+    ),
+    stringsAsFactors = FALSE
+  )
+  out$fdr <- stats::p.adjust(out$p_value, method = "BH")
+  out <- out[order(out$fdr, -out$fold_enrichment, out$p_value, out$value), , drop = FALSE]
+  rownames(out) <- NULL
   return(out)
-}
-
-
-#' @title Pairwise Module-vs-Module Enrichment
-#' @description For each trait-category (or tissue) value, compare every pair of
-#' SNP modules with a two-sided Fisher exact test on link counts, then apply a
-#' global Benjamini-Hochberg correction across all module-pair x value tests.
-#' This complements the module-vs-rest hypergeometric enrichment: instead of
-#' asking whether a module differs from the trait background, it asks which
-#' modules differ from *each other*.
-#' @param groups Named vector (`names` = SNP ids) or dataframe of module
-#'   assignments, as used by `enrich_snp_group_trait_categories()`.
-#' @param coloc_groups A coloc_groups dataframe (from
-#'   `trait(..., include_associations = TRUE)`).
-#' @param value_col Which annotation to compare: `"trait_category"` or
-#'   `"tissue"`.
-#' @param snp_key SNP id column in `coloc_groups`: `"variant_id"`,
-#'   `"display_snp"`, or `"coloc_group_id"`.
-#' @param min_group_size Only compare modules with at least this many SNPs.
-#' @param p_value_threshold FDR threshold for flagging a pairwise difference.
-#'   Defaults to 0.05.
-#' @return A list with:
-#'   \itemize{
-#'     \item summary: one row per module with the number of significant pairwise
-#'       differences, the top differing value, its FDR, and the top differing
-#'       partner module
-#'     \item pairwise: long dataframe of all module-pair x value tests with
-#'       link counts, rates, `p_value`, and the global `fdr`
-#'     \item by_value: per-value counts of significant module pairs
-#'   }
-#' @export
-compare_snp_group_modules <- function(groups,
-                                      coloc_groups,
-                                      value_col = c("trait_category", "tissue"),
-                                      snp_key = c(
-                                        "variant_id",
-                                        "display_snp",
-                                        "coloc_group_id"
-                                      ),
-                                      min_group_size = 5L,
-                                      p_value_threshold = 0.05) {
-  value_col <- match.arg(value_col)
-  snp_key <- match.arg(snp_key)
-  group_df <- .normalize_snp_groups(groups)
-  group_sizes <- table(group_df$group)
-  large_groups <- names(group_sizes)[group_sizes >= min_group_size]
-
-  empty <- list(
-    summary = data.frame(
-      module = character(0),
-      n_pairwise_sig = integer(0),
-      top_pairwise_value = character(0),
-      top_pairwise_fdr = numeric(0),
-      top_pairwise_partner = character(0),
-      stringsAsFactors = FALSE
-    ),
-    pairwise = data.frame(
-      value = character(0),
-      module_a = character(0),
-      module_b = character(0),
-      n_a = integer(0),
-      k_a = integer(0),
-      n_b = integer(0),
-      k_b = integer(0),
-      rate_a = numeric(0),
-      rate_b = numeric(0),
-      p_value = numeric(0),
-      fdr = numeric(0),
-      stringsAsFactors = FALSE
-    ),
-    by_value = data.frame(
-      value = character(0),
-      n_sig_pairs = integer(0),
-      stringsAsFactors = FALSE
-    )
-  )
-  if (length(large_groups) < 2) {
-    return(empty)
-  }
-
-  links_fun <- if (identical(value_col, "tissue")) {
-    .snp_tissue_links
-  } else {
-    .snp_category_links
-  }
-  link_col <- if (identical(value_col, "tissue")) "tissue" else "trait_category"
-
-  links_by_module <- lapply(large_groups, function(grp) {
-    snp_ids <- unique(group_df$snp_id[group_df$group == grp])
-    return(links_fun(snp_ids, coloc_groups, snp_key)[[link_col]])
-  })
-  names(links_by_module) <- large_groups
-
-  all_values <- sort(unique(unlist(links_by_module, use.names = FALSE)))
-  if (length(all_values) == 0) {
-    return(empty)
-  }
-
-  pair_idx <- combn(seq_along(large_groups), 2L, simplify = FALSE)
-  pair_rows <- lapply(pair_idx, function(ij) {
-    i <- ij[1]
-    j <- ij[2]
-    vi <- links_by_module[[i]]
-    vj <- links_by_module[[j]]
-    ni <- length(vi)
-    nj <- length(vj)
-    if (ni == 0 || nj == 0) {
-      return(NULL)
-    }
-    rows <- lapply(all_values, function(v) {
-      ki <- sum(vi == v)
-      kj <- sum(vj == v)
-      tab <- matrix(c(ki, ni - ki, kj, nj - kj), nrow = 2, byrow = TRUE)
-      p_value <- tryCatch(
-        stats::fisher.test(tab, alternative = "two.sided")$p.value,
-        error = function(e) NA_real_
-      )
-      return(data.frame(
-        value = v,
-        module_a = large_groups[i],
-        module_b = large_groups[j],
-        n_a = ni,
-        k_a = ki,
-        n_b = nj,
-        k_b = kj,
-        rate_a = ki / ni,
-        rate_b = kj / nj,
-        p_value = p_value,
-        stringsAsFactors = FALSE
-      ))
-    })
-    return(dplyr::bind_rows(rows))
-  })
-  pairwise <- dplyr::bind_rows(pair_rows)
-  if (nrow(pairwise) == 0) {
-    return(empty)
-  }
-  pairwise$fdr <- stats::p.adjust(pairwise$p_value, method = "BH")
-  sig <- pairwise[
-    !is.na(pairwise$fdr) & pairwise$fdr <= p_value_threshold,
-    ,
-    drop = FALSE
-  ]
-
-  by_value <- if (nrow(sig) > 0) {
-    sig |>
-      dplyr::count(value, name = "n_sig_pairs") |>
-      dplyr::arrange(dplyr::desc(n_sig_pairs), value)
-  } else {
-    empty$by_value
-  }
-
-  summary_df <- if (nrow(sig) > 0) {
-    lapply(large_groups, function(m) {
-      rows <- sig[sig$module_a == m | sig$module_b == m, , drop = FALSE]
-      if (nrow(rows) == 0) {
-        return(NULL)
-      }
-      best <- rows[which.min(rows$fdr), , drop = FALSE]
-      partner <- if (best$module_a == m) best$module_b else best$module_a
-      return(data.frame(
-        module = m,
-        n_pairwise_sig = nrow(rows),
-        top_pairwise_value = best$value,
-        top_pairwise_fdr = best$fdr,
-        top_pairwise_partner = partner,
-        stringsAsFactors = FALSE
-      ))
-    }) |>
-      dplyr::bind_rows() |>
-      dplyr::arrange(dplyr::desc(n_pairwise_sig), top_pairwise_fdr)
-  } else {
-    empty$summary
-  }
-
-  return(list(
-    summary = summary_df,
-    pairwise = pairwise,
-    by_value = by_value,
-    value_col = value_col,
-    min_group_size = as.integer(min_group_size),
-    p_value_threshold = p_value_threshold
-  ))
 }

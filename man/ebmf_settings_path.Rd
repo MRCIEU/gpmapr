@@ -20,3 +20,4 @@ the working directory first, then the usual vignette-relative locations, so
 the same call works from a vignette, from the package root, and from
 \code{tests/testthat}.
 }
+\keyword{internal}

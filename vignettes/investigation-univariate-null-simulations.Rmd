@@ -21,40 +21,10 @@ params:
   background_effect_scale: 0.5
   target_pattern: module
 
-  # EBMF / clustering parameters (inputs to run_univariate_clustering)
-  trait_subset: "phenotypic"
-  min_snp_signals: 2
-  compress_method: asinh
-  compress_scale: 5
-  similarity_threshold: 0.5
-  ebmf_lfsr_threshold: 0.02
-  ebmf_magnitude_threshold: 0.75
-  ebmf_drop_global: true
-  ebmf_prior: point_laplace
-  ebmf_backfit: true
-
-  # Program validation parameters (inputs to summarise_ebmf_programs)
-  min_module_size: 3
-  min_mean_internal: 0.3
-  min_connectedness: 0.25
-  # Confidence tiers from similarity_q and connectedness (min_mean_internal /
-  # min_connectedness above are only recorded by run_univariate_clustering()).
-  similarity_n_perm: 10000
-  similarity_q: 0.05
-  high_similarity_q: 0.01
-  high_connectedness: 0.4
-  high_similarity_z: 6
-  min_effective_traits: 1.5
-  ebmf_greedy_Kmax: 100
-  n_null: 5
-  alpha_membership: 0.05
-  n_candidate_tier: 25
+  # Analysis settings come from vignettes/_ebmf_settings.yml, as for the
+  # real-data vignettes, so the null study tests the settings the analyses use.
+  # Trait-subsample refits per fit (replication); a cost setting.
   n_stability_rep: 5
-  frac_traits: 0.8
-  stability_top_n: 20
-  posterior_stat: median
-  posterior_evidence_cap: 50
-  redundancy_threshold: 0.9
   cores: 5
 
   # Replication settings. n_sim is the Monte Carlo sample size (ADEMP);
@@ -67,7 +37,7 @@ params:
   write_outputs: false
   output_dir: ""
   # quick: fast test mode. Keeps the full null-version grid but caps n_sim at
-  # 3, uses n_null = 1, and disables the stability subsampling. Use for smoke
+  # 3 and disables the stability subsampling. Use for smoke
   # tests only; the reported Monte Carlo SEs will be large.
   quick: true
 vignette: >
@@ -103,7 +73,6 @@ quick <- isTRUE(params$quick)
 if (quick) {
   n_sim <- min(n_sim, 3L)
 }
-n_null <- if (quick) 1L else as.integer(params$n_null)
 n_stability_rep <- if (quick) 0L else as.integer(params$n_stability_rep)
 # A null fit with 600 traits is dominated by EBMF; shrink the row count in quick
 # mode so smoke tests stay fast. This is a size change, not a design change.
@@ -113,43 +82,9 @@ set.seed(params$master_seed)
 # numbers), and passed explicitly so parallel workers never touch the RNG state.
 sim_seeds <- sample.int(.Machine$integer.max, n_sim)
 
-clustering_settings <- list(
-  min_snp_signals = params$min_snp_signals,
-  trait_subset = params$trait_subset,
-  compress_method = params$compress_method,
-  compress_scale = params$compress_scale,
-  ebmf_lfsr_threshold = params$ebmf_lfsr_threshold,
-  ebmf_magnitude_threshold = params$ebmf_magnitude_threshold,
-  ebmf_greedy_Kmax = params$ebmf_greedy_Kmax,
-  ebmf_drop_global = params$ebmf_drop_global,
-  ebmf_prior = params$ebmf_prior,
-  ebmf_backfit = params$ebmf_backfit,
-  min_module_size = params$min_module_size,
-  min_mean_internal = params$min_mean_internal,
-  min_connectedness = params$min_connectedness
-)
-
-validation_settings <- list(
-  edge_threshold = params$similarity_threshold,
-  min_module_size = params$min_module_size,
-  similarity_n_perm = params$similarity_n_perm,
-  similarity_q_threshold = params$similarity_q,
-  high_similarity_q = params$high_similarity_q,
-  high_min_connectedness = params$high_connectedness,
-  high_min_similarity_z = params$high_similarity_z,
-  min_effective_traits = params$min_effective_traits,
-  n_null = n_null,
-  alpha_membership = params$alpha_membership,
-  n_candidate_tier = params$n_candidate_tier,
-  n_rep = n_stability_rep,
-  frac_traits = params$frac_traits,
-  top_n = params$stability_top_n,
-  posterior_stat = params$posterior_stat,
-  posterior_evidence_cap = params$posterior_evidence_cap,
-  redundancy_threshold = params$redundancy_threshold,
-  cores = params$cores,
-  verbose = FALSE
-)
+# Analysis settings: _ebmf_settings.yml.
+ebmf_settings <- resolve_ebmf_settings(params)
+settings_signature <- ebmf_settings_signature(ebmf_settings)
 ```
 
 This vignette evaluates empirical Bayes matrix factorisation (EBMF) programs
@@ -180,9 +115,8 @@ The checks are exactly the same as on the real pipeline:
     high_similarity_z`; `medium` otherwise.
 
   A program counts as `valid` when its tier is high or medium.
-- `excess_similarity` / `excess_connectedness` (effect sizes against the random
-  groups), `factor_pve` and `replication` (trait-subsampling Jaccard overlap)
-  are reported alongside, not used for the tier.
+- `factor_pve` and `replication` (trait-subsampling Jaccard overlap) are
+  reported alongside, not used for the tier.
 
 Under a true null, **any** program of high or medium confidence is a false
 discovery, so the tier shares below are false-discovery rates: they show how
@@ -248,10 +182,9 @@ graph_diag <- tryCatch({
     target_pattern = params$target_pattern,
     seed = params$master_seed
   )
-  probe_res <- do.call(
-    run_univariate_clustering,
-    c(list(trait_object = sim_probe$trait_object), clustering_settings)
-  )
+  probe_res <- run_ebmf_pipeline(
+    sim_probe$trait_object, settings = ebmf_settings, n_rep = 0, verbose = FALSE
+  )$fit
   simulated_graph_diagnostics(
     probe_res$x_matrix,
     target_trait_id = probe_res$parameters$target_trait_id
@@ -329,17 +262,13 @@ settings_to_show <- c(
   "compress_method", "compress_scale", "similarity_threshold",
   "ebmf_lfsr_threshold",
   "ebmf_magnitude_threshold", "ebmf_drop_global", "ebmf_prior",
-  "ebmf_backfit",
-  "min_mean_internal", "min_connectedness",
-  "n_null", "alpha_membership", "n_candidate_tier", "n_stability_rep",
-  "frac_traits", "stability_top_n",
-  "posterior_stat", "posterior_evidence_cap", "redundancy_threshold", "cores",
-  "n_sim"
+  "ebmf_backfit", "n_stability_rep", "frac_traits", "stability_top_n",
+  "cores", "n_sim"
 )
-settings_values <- c(clustering_settings, validation_settings)
-settings_values$similarity_threshold <- params$similarity_threshold
+settings_values <- ebmf_settings
+settings_values$ebmf_drop_global <- TRUE
 settings_values$n_stability_rep <- n_stability_rep
-settings_values$stability_top_n <- validation_settings$top_n
+settings_values$cores <- params$cores
 settings_values$n_sim <- n_sim
 knitr::kable(
   data.frame(
@@ -348,7 +277,10 @@ knitr::kable(
       as.character(settings_values[[nm]])
     }, character(1))
   ),
-  caption = "Fixed EBMF analysis and validation settings (identical across all null versions)"
+  caption = paste0(
+    "Fixed EBMF analysis and validation settings (identical across all null ",
+    "versions). Analysis settings signature: ", settings_signature, "."
+  )
 )
 ```
 
@@ -383,17 +315,17 @@ run_tier_one <- function(spec, rep) {
   # every null version sees the same scenario in replicate `rep`.
   dots$seed <- sim_seeds[[rep]]
   sim <- do.call(simulate_trait, dots)
-  res <- do.call(
-    run_univariate_clustering,
-    c(list(trait_object = sim$trait_object), clustering_settings)
-  )
   # Vary the validation layer's internal randomisation by replicate.
-  vs <- validation_settings
-  vs$seed <- sim_seeds[[rep]]
-  smry <- do.call(
-    summarise_ebmf_programs,
-    c(list(clustering_result = res, s_matrix = res$s_matrix), vs)
+  pipeline <- run_ebmf_pipeline(
+    sim$trait_object,
+    settings = ebmf_settings,
+    n_rep = n_stability_rep,
+    seed = sim_seeds[[rep]],
+    cores = params$cores,
+    verbose = FALSE
   )
+  res <- pipeline$fit
+  smry <- pipeline$summary
   valid_ids <- smry$programs$program[
     as.character(smry$programs$confidence_tier) %in% c("high", "medium")
   ]
@@ -671,27 +603,24 @@ check_table <- function(which_tier) {
       confidence_tier = as.character(confidence_tier),
       effective_n_traits = round(effective_n_traits, 2),
       mean_internal_similarity = round(mean_internal_similarity, 3),
-      excess_similarity = round(excess_similarity, 3),
       similarity_q = signif(similarity_q, 2),
       similarity_z = round(similarity_z, 1),
       connectedness = round(connectedness, 3),
-      excess_connectedness = round(excess_connectedness, 3),
       factor_pve_pct = round(100 * factor_pve, 2),
       replication = round(replication, 3)
     ) |>
     dplyr::select(
       rep, program, confidence_tier, n_snps, n_snps_filtered,
-      effective_n_traits, mean_internal_similarity, excess_similarity,
+      effective_n_traits, mean_internal_similarity,
       similarity_q, similarity_z, connectedness,
-      excess_connectedness,
       factor_pve_pct, replication
     ) |>
     kable_confidence(
       col.names = c(
         "rep", "program", "confidence", "n_snps", "n_snps filtered",
-        "effective traits", "mean internal similarity", "excess similarity",
+        "effective traits", "mean internal similarity",
         "similarity q", "similarity z",
-        "connectedness", "excess connectedness", "factor PVE %", "replication"
+        "connectedness", "factor PVE %", "replication"
       )
     )
 }
@@ -716,14 +645,13 @@ for (nm in names(tier_specs)) {
   null versions is thousands of EBMF fits, and a single null fit is expensive
   because there are 600 trait rows. To iterate quickly, override `params`:
   - `params = list(quick = TRUE)` — smoke test (4 representative versions,
-    `n_sim = 3`, `n_null = 1`, no stability, `n_traits = 100`); about 90 s.
-  - `params = list(n_sim = 5, n_null = 1, n_stability_rep = 0, n_traits = 100)`
+    `n_sim = 3`, no stability, `n_traits = 100`); about 90 s.
+  - `params = list(n_sim = 5, n_stability_rep = 0, n_traits = 100)`
     — full null-version grid with cheap internals and a smaller row count;
     about 1-2 min.
   - `params = list(n_sim = 20)` — full-fidelity settings at reduced repetitions
     (still slow, because of the 600 traits).
-  Lowering `n_null`, `n_stability_rep` and `n_traits` gives the largest
-  speed-up.
+  Lowering `n_stability_rep` and `n_traits` gives the largest speed-up.
 - Under a true null (`K = 0`) any program of high or medium confidence is a
   **false discovery**; the `valid` column is the pipeline-level false-positive
   rate.

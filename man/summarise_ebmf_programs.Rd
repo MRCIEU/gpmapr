@@ -8,22 +8,16 @@ summarise_ebmf_programs(
   clustering_result,
   s_matrix = NULL,
   edge_threshold = 0.2,
-  min_module_size = 5L,
+  min_module_size = 3L,
   similarity_n_perm = 10000L,
   similarity_q_threshold = 0.05,
   high_similarity_q = 0.01,
   high_min_connectedness = 0.4,
   high_min_similarity_z = 6,
   min_effective_traits = 1.5,
-  n_null = 10,
-  alpha_membership = 0.05,
-  n_candidate_tier = 25L,
   n_rep = 10,
   frac_traits = 0.8,
-  top_n = 25L,
-  posterior_stat = c("median", "mean"),
-  posterior_evidence_cap = 50,
-  redundancy_threshold = 0.9,
+  top_n = 20L,
   seed = 1,
   cores = 1,
   verbose = TRUE
@@ -39,7 +33,7 @@ Defaults to \code{clustering_result$s_matrix}, which excludes the target row.}
 connected. Defaults to \code{0.2}.}
 
 \item{min_module_size}{Programs with fewer member SNPs are dropped before any
-other check. Defaults to \code{5}.}
+other check. Defaults to \code{3}.}
 
 \item{similarity_n_perm}{Random same-size SNP sets drawn for the similarity
 test. Defaults to \code{10000}, so that the BH-adjusted q can fall below
@@ -65,15 +59,6 @@ null program that passed \code{high_similarity_q} in 50 null simulations
 whose \code{effective_n_traits} is below this are \code{"single_trait"}. Defaults
 to \code{1.5}.}
 
-\item{n_null}{Number of row-permuted null fits used for membership
-calibration.}
-
-\item{alpha_membership}{Membership FDR level passed to
-\code{calibrate_ebmf_programs()} for \code{core} cell labelling.}
-
-\item{n_candidate_tier}{Per program, how many non-core cells to label as the
-uncertified "candidate" tier.}
-
 \item{n_rep}{Number of trait-subsample refits for \code{replication}. Set to \code{0}
 to skip it.}
 
@@ -81,19 +66,7 @@ to skip it.}
 Defaults to \code{0.8} (hold out 20\% of traits).}
 
 \item{top_n}{Size of each program's top-loading SNP set used for
-replication matching.}
-
-\item{posterior_stat}{Aggregate statistic for the posterior evidence score:
-\code{"median"} or \code{"mean"} of \code{-log10(lfsr)}.}
-
-\item{posterior_evidence_cap}{Upper bound for \code{-log10(lfsr)} when computing
-the posterior evidence score. flashier can return lFSR values that underflow
-towards 0, so \code{-log10(lfsr)} can reach hundreds or \code{Inf}; flooring lFSR at
-\code{10^-posterior_evidence_cap} keeps the score finite and readable while
-preserving the ordering. Defaults to \code{50}.}
-
-\item{redundancy_threshold}{Maximum absolute factor-loading correlation with
-another program before \code{redundant} is flagged.}
+replication matching. Defaults to \code{20}.}
 
 \item{seed}{RNG seed.}
 
@@ -111,11 +84,7 @@ A list with:
 \code{n_snps_filtered}), removed before any check
 \item background: the trait's background similarity over all SNP pairs
 (\code{mean_similarity}, \code{frac_pairs_edge} = share with \code{S >= edge_threshold}, \code{frac_pairs_abs_edge} = share with \verb{|S| >= edge_threshold}, \code{median_shared_traits} per pair)
-\item memberships: calibrated SNP x program posterior from
-\code{calibrate_ebmf_programs()}
 \item assigned: gated assigned memberships of the kept programs
-\item factor_correlation: K x K correlation matrix of SNP loading vectors
-\item null_summary: permutation-null summary
 \item settings: settings used
 }
 }
@@ -173,11 +142,6 @@ ranking programs that beat every random set.
 }
 Reported, not used for the tier:
 \itemize{
-\item \code{excess_similarity} / \code{excess_connectedness} — the member mean
-similarity and connectedness minus their means in the random sets: effect
-sizes that do not grow with program size. \code{similarity_lift} (observed /
-random mean; NA when the random mean is at most 0.01) comes from the same
-random sets.
 \item \code{factor_pve} — the proportion of variance explained by the factor
 (flashier's \code{pve}).
 \item \code{replication} / \code{sd_replication} — mean best Jaccard overlap of the
@@ -188,14 +152,8 @@ program's SNPs lie within 500 kb of the SNPs of a larger program, that
 program is reported as its parent. Nested sub-programs are kept; the
 parent link says where they sit, and \code{order_programs_by_confidence()}
 lists them under it.
-\item \code{posterior_evidence} — aggregate (\code{median} or \code{mean}) of
-\code{-log10(lfsr)} across a program's assigned SNPs.
-\item \code{max_abs_factor_corr} / \code{redundant} — the maximum absolute
-correlation of the program's SNP loading vector (\code{F_pm}) with any other
-program; \code{redundant} flags programs whose maximum correlation exceeds
-\code{redundancy_threshold}.
-\item \code{max_pair_redundancy} / \code{most_redundant_program} — the reciprocal
-SNP-containment score \code{min(shared / n_snps_A, shared / n_snps_B)} and its
-partner program.
+\item \code{posterior_evidence} — median of \code{-log10(lfsr)} across a program's
+assigned SNPs, with lFSR floored at \code{1e-50} because flashier's lFSR can
+underflow towards 0.
 }
 }

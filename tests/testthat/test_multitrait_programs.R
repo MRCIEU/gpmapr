@@ -192,10 +192,10 @@ test_that("an upload's loci are put on the shared id space through its bridge", 
   )
   bridges <- stats::setNames(list(bridge), gpmapr:::.locus_bridge_key(guid, "1992"))
   expect_equal(
-    gpmapr:::.canonical_locus_ids(c("u1", "u2", "u9"), guid, bridges),
+    canonical_locus_ids(c("u1", "u2", "u9"), guid, bridges),
     c("e1", "e2", paste0(guid, ":u9"))
   )
-  expect_equal(gpmapr:::.canonical_locus_ids(c("e1", "e5"), "1992", bridges), c("e1", "e5"))
+  expect_equal(canonical_locus_ids(c("e1", "e5"), "1992", bridges), c("e1", "e5"))
 
   nodes <- data.frame(
     program_id = c(paste0(guid, ":1"), "1992:1"), trait_id = c(guid, "1992"),
@@ -216,34 +216,6 @@ test_that("an upload's loci are put on the shared id space through its bridge", 
   expect_equal(m$n_union_loci, 4L)  # e1, e2, e5, upload-only u9
 })
 
-test_that("family_module_rg pools a family's loci and reads the direction", {
-  pd <- triangle_fixture()
-  res <- compare_program_pairs_loadings(pd, n_perm = 200, seed = 1)
-  fam <- build_program_families(res, program_data = pd)
-  set.seed(3)
-  loci <- paste0("g", 1:30)
-  effect <- stats::rnorm(30, 0, 0.2)
-  cg <- list(
-    t1 = data.frame(coloc_group_id = loci, variant_id = loci, trait_id = "t1",
-                    beta = effect, se = 0.05, stringsAsFactors = FALSE),
-    t2 = data.frame(coloc_group_id = loci, variant_id = loci, trait_id = "t2",
-                    beta = effect + stats::rnorm(30, 0, 0.02), se = 0.05,
-                    stringsAsFactors = FALSE),
-    t3 = data.frame(coloc_group_id = loci, variant_id = loci, trait_id = "t3",
-                    beta = -effect + stats::rnorm(30, 0, 0.02), se = 0.05,
-                    stringsAsFactors = FALSE)
-  )
-  frg <- family_module_rg(fam, pd, cg)
-  fam_id <- fam$nodes$family[fam$nodes$program_id == "t1:1"]
-  frg <- frg[frg$family == fam_id, ]
-  expect_equal(nrow(frg), 3L)
-  dir <- stats::setNames(frg$rg_direction, paste(frg$trait_id_a, frg$trait_id_b))
-  expect_equal(unname(dir["t1 t2"]), "concordant")
-  expect_equal(unname(dir["t1 t3"]), "antagonistic")
-  expect_equal(unname(dir["t2 t3"]), "antagonistic")
-  expect_true(all(frg$n_loci_rg == 12L))
-})
-
 test_that("extract_program_loadings returns loci, profiles and meta", {
   sim <- simulate_trait(
     n_coloc_groups = 40,
@@ -255,19 +227,25 @@ test_that("extract_program_loadings returns loci, profiles and meta", {
     log_se_sd = 0.5,
     seed = 11
   )
+  # Pinned to the settings this test was written against.
   res <- run_univariate_clustering(
     sim$trait_object,
+    include_trans = FALSE,
+    trait_subset = "all",
     min_snp_signals = 2,
-    min_module_size = 3
+    compress_method = "none",
+    ebmf_lfsr_threshold = 0.01,
+    ebmf_magnitude_threshold = 0.25,
+    ebmf_prior = "point_normal"
   )
-  summary <- summarise_ebmf_programs(res, n_null = 3, n_rep = 0, verbose = FALSE)
+  summary <- summarise_ebmf_programs(res, min_module_size = 5, n_rep = 0, verbose = FALSE)
   ex <- extract_program_loadings(res, summary)
   expect_setequal(names(ex), c("loadings", "profiles", "programs"))
   expect_true(all(c(
     "program_id", "trait_id", "trait_name", "program", "snp_id",
-    "coloc_group_id", "chr", "bp", "loading", "abs_loading", "lfsr",
-    "high_confidence"
+    "coloc_group_id", "loading", "abs_loading", "lfsr", "high_confidence"
   ) %in% names(ex$loadings)))
+  expect_false(any(c("chr", "bp") %in% names(ex$loadings)))
   expect_true(all(c(
     "program_id", "trait_id", "trait_name", "program", "feature_trait_id",
     "feature_trait_name", "loading", "lfsr"
@@ -278,6 +256,6 @@ test_that("extract_program_loadings returns loci, profiles and meta", {
   expect_setequal(unique(ex$loadings$program), valid_ids)
   expect_setequal(unique(ex$profiles$program), valid_ids)
   expect_true(all(abs(ex$loadings$loading) == ex$loadings$abs_loading))
-  expect_true(all(ex$programs$n_high_confidence >= 0))
-  expect_true(all(ex$programs$n_features > 0))
+  expect_setequal(names(ex$programs), c("program_id", "trait_id", "trait_name", "program"))
+  expect_setequal(ex$programs$program, valid_ids)
 })

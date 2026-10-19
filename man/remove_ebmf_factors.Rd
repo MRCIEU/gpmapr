@@ -20,3 +20,4 @@ Remaining factors are re-indexed. Prefer
 \code{identify_ebmf_global_factors()} over assuming factor 1 is global.
 An empty \code{kset} returns \code{flash_fit} unchanged.
 }
+\keyword{internal}

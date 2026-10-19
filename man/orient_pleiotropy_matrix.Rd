@@ -7,8 +7,8 @@
 orient_pleiotropy_matrix(x_matrix, target_trait_id, z_target = NULL)
 }
 \arguments{
-\item{x_matrix}{A numeric matrix (traits x SNPs) as returned by
-\code{build_pleiotropy_matrix()$x_matrix}.}
+\item{x_matrix}{A numeric matrix (traits x SNPs), such as
+\code{run_univariate_clustering()$x_matrix}.}
 
 \item{target_trait_id}{Numeric ID of the target trait used to define column signs.}
 
@@ -32,3 +32,4 @@ the target trait. Allele-swapping noise is removed by multiplying each column
 by the sign of the target trait's z-score at that SNP:
 \deqn{X^*_{tj} = \mathrm{sign}(z_j) \cdot X_{tj}}
 }
+\keyword{internal}

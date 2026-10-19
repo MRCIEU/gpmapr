@@ -35,14 +35,13 @@
 #' @return A list with:
 #'   \itemize{
 #'     \item loadings: one row per locus x program with `program_id`, `trait_id`,
-#'       `trait_name`, `program`, `snp_id`, `coloc_group_id`, `chr`, `bp`,
-#'       `loading` (sign-oriented), `abs_loading`, `lfsr`, `high_confidence`
+#'       `trait_name`, `program`, `snp_id`, `coloc_group_id`, `loading`
+#'       (sign-oriented), `abs_loading`, `lfsr`, `high_confidence`
 #'     \item profiles: one row per feature x program with `program_id`,
 #'       `trait_id`, `trait_name`, `program`, `feature_trait_id`,
 #'       `feature_trait_name`, `loading` (sign-oriented), `lfsr`
 #'     \item programs: one row per program with `program_id`, `trait_id`,
-#'       `trait_name`, `program`, `n_snps`, `n_high_confidence`, `n_features`,
-#'       `sign`
+#'       `trait_name` and `program`
 #'   }
 #' @export
 extract_program_loadings <- function(clustering_result,
@@ -101,25 +100,8 @@ extract_program_loadings <- function(clustering_result,
   )
 
   programs_meta <- loadings |>
-    dplyr::group_by(program_id, trait_id, trait_name, program) |>
-    dplyr::summarise(
-      n_snps = dplyr::n(),
-      n_high_confidence = sum(high_confidence),
-      .groups = "drop"
-    ) |>
-    dplyr::left_join(
-      profiles |>
-        dplyr::count(program_id, name = "n_features"),
-      by = "program_id"
-    ) |>
-    dplyr::mutate(
-      n_features = dplyr::coalesce(n_features, 0L),
-      sign = signs[as.character(program)]
-    ) |>
-    dplyr::select(
-      program_id, trait_id, trait_name, program,
-      n_snps, n_high_confidence, n_features, sign
-    )
+    dplyr::distinct(program_id, trait_id, trait_name, program) |>
+    dplyr::arrange(program)
 
   return(list(
     loadings = loadings,
@@ -146,19 +128,11 @@ extract_program_loadings <- function(clustering_result,
   if (!"coloc_group_id" %in% names(info)) {
     info$coloc_group_id <- NA_character_
   }
-  if (!"chr" %in% names(info)) {
-    info$chr <- NA_character_
-  }
-  if (!"bp" %in% names(info)) {
-    info$bp <- NA_real_
-  }
   return(
     info |>
       dplyr::transmute(
         snp_id = as.character(snp_id),
-        coloc_group_id = as.character(coloc_group_id),
-        chr = as.character(chr),
-        bp = as.numeric(bp)
+        coloc_group_id = as.character(coloc_group_id)
       ) |>
       dplyr::distinct(snp_id, .keep_all = TRUE)
   )
@@ -168,8 +142,6 @@ extract_program_loadings <- function(clustering_result,
 .attach_locus_meta <- function(loadings, locus_meta) {
   if (is.null(locus_meta) || nrow(locus_meta) == 0) {
     loadings$coloc_group_id <- NA_character_
-    loadings$chr <- NA_character_
-    loadings$bp <- NA_real_
     return(loadings)
   }
   out <- dplyr::left_join(loadings, locus_meta, by = "snp_id")
@@ -228,9 +200,8 @@ extract_program_loadings <- function(clustering_result,
 }
 
 
-
-.program_locus_sets <- function(loadings, membership = "high_confidence",
-                                top_k = 25L) {
+# Each program's high-confidence loci (coloc_group_ids native to its trait).
+.program_locus_sets <- function(loadings) {
   programs <- unique(as.character(loadings$program_id))
   sets <- lapply(programs, function(pid) {
     sub <- loadings[
@@ -241,14 +212,7 @@ extract_program_loadings <- function(clustering_result,
     if (nrow(sub) == 0) {
       return(character(0))
     }
-    if (identical(membership, "high_confidence")) {
-      keep <- as.logical(sub$high_confidence)
-    } else {
-      w <- .program_weight_factor(sub$lfsr, sub$loading)
-      ord <- order(-w, na.last = TRUE)
-      keep <- rep(FALSE, nrow(sub))
-      keep[utils::head(ord, top_k)] <- TRUE
-    }
+    keep <- as.logical(sub$high_confidence)
     return(unique(as.character(sub$coloc_group_id[keep])))
   })
   names(sets) <- programs
@@ -256,80 +220,37 @@ extract_program_loadings <- function(clustering_result,
 }
 
 
-.locus_universe_by_trait <- function(loadings) {
-  keep <- !is.na(loadings$coloc_group_id)
-  if (!any(keep)) {
-    return(list())
-  }
-  dt <- data.frame(
-    trait_id = as.character(loadings$trait_id[keep]),
-    coloc_group_id = as.character(loadings$coloc_group_id[keep]),
-    stringsAsFactors = FALSE
-  )
-  return(tapply(dt$coloc_group_id, dt$trait_id, function(x) unique(x)))
-}
-
-
-.locus_pair_stats <- function(key, locus_sets, universe_by_trait, bridges = NULL) {
+# How many high-confidence loci two programs share. set_a is native to
+# trait_id_a; it is translated into trait_id_b's space before comparing against
+# set_b (a no-op unless this pair needs LD bridging -- see
+# .needs_locus_bridge()).
+.locus_pair_stats <- function(key, locus_sets, bridges = NULL) {
   set_a <- locus_sets[[key$program_id_a]]
   set_b <- locus_sets[[key$program_id_b]]
-  universe_b <- universe_by_trait[[key$trait_id_b]]
   if (is.null(set_a)) set_a <- character(0)
   if (is.null(set_b)) set_b <- character(0)
-  if (is.null(universe_b)) universe_b <- character(0)
-  n_a <- length(set_a)
-  n_b <- length(set_b)
-
-  # set_a is native to trait_id_a; translate into trait_id_b's space before
-  # comparing against set_b/universe_b, which are already native to trait_id_b
-  # (a no-op unless this pair needs LD bridging -- see .needs_locus_bridge()).
-  # n_a/n_b stay as the untranslated native sizes: a program's own size
-  # shouldn't depend on which partner it's being compared to.
   set_a <- .translate_locus_ids(set_a, key$trait_id_a, key$trait_id_b, bridges)
-
-  shared <- intersect(set_a, set_b)
-  union_size <- length(union(set_a, set_b))
-  n_shared <- length(shared)
-  k <- length(intersect(set_a, universe_b))
-  N <- length(universe_b)
-  p_locus <- if (N > 0 && n_b > 0) {
-    stats::phyper(n_shared - 1, k, N - k, n_b, lower.tail = FALSE)
-  } else {
-    NA_real_
-  }
 
   return(data.frame(
     program_id_a = key$program_id_a,
     program_id_b = key$program_id_b,
     trait_id_a = key$trait_id_a,
     trait_id_b = key$trait_id_b,
-    program_a = as.integer(key$program_a),
-    program_b = as.integer(key$program_b),
-    n_loci_a = n_a,
-    n_loci_b = n_b,
-    n_loci_shared = n_shared,
-    n_loci_union = union_size,
-    jaccard_loci = if (union_size > 0) n_shared / union_size else NA_real_,
-    p_locus = p_locus,
+    n_loci_shared = length(intersect(set_a, set_b)),
     stringsAsFactors = FALSE
   ))
 }
 
 
 .normalise_program_data <- function(program_data) {
-  if (is.data.frame(program_data)) {
-    data_list <- list(list(
-      loadings = program_data,
-      profiles = .empty_program_profiles()
-    ))
-  } else if (is.list(program_data) &&
-               "loadings" %in% names(program_data) &&
-               is.data.frame(program_data$loadings)) {
-    data_list <- list(program_data)
-  } else if (is.list(program_data)) {
-    data_list <- program_data
-  } else {
+  if (!is.list(program_data) || is.data.frame(program_data)) {
     stop("program_data must be an extract_program_loadings() result or a list of them")
+  }
+  data_list <- if ("loadings" %in% names(program_data) &&
+                     is.data.frame(program_data$loadings)) {
+    list(program_data)
+  } else {
+    program_data
   }
 
   loadings <- dplyr::bind_rows(lapply(data_list, function(x) {
@@ -358,13 +279,12 @@ extract_program_loadings <- function(clustering_result,
 #' [compare_program_pairs_loadings()] are edges; programs with no link are left
 #' out (their count is returned as `n_unlinked`).
 #'
-#' By default (`rule = "communities"`) families are the communities of the
-#' link graph found by Louvain modularity optimisation
-#' ([igraph::cluster_louvain()]), with each edge weighted by its profile
-#' congruence `|phi_traits|`. Plain connected components (`rule = "components"`)
-#' chain through any shared partner: on real data a few dozen links between
-#' four traits joined most programs into one component, while their
-#' communities were well separated. Louvain is randomised, so `seed` fixes it.
+#' Families are the communities of the link graph found by Louvain modularity
+#' optimisation ([igraph::cluster_louvain()]), with each edge weighted by its
+#' profile congruence `|phi_traits|`. Plain connected components chain through
+#' any shared partner: on real data a few dozen links between four traits
+#' joined most programs into one component, while their communities were well
+#' separated. Louvain is randomised, so `seed` fixes it.
 #'
 #' With `mutual_best = TRUE` a link is kept only when each of its two programs
 #' is the other's closest partner (highest `|phi_traits|`) among the linked
@@ -376,9 +296,6 @@ extract_program_loadings <- function(clustering_result,
 #' traits (an uploaded GWAS trait's own `coloc_group_id`s are translated through
 #' `result$bridges`, see [compare_program_pairs_loadings()]).
 #' @param result A result from [compare_program_pairs_loadings()].
-#' @param program_info Optional data.frame with `program_id`, `trait_id` and
-#'   `trait_name` (one row per program), used to fill in trait names.
-#' @param rule Family rule: `"communities"` (default) or `"components"`.
 #' @param seed RNG seed for the community detection.
 #' @param program_data Optional extraction result(s) from
 #'   [extract_program_loadings()], needed for the family locus sets.
@@ -400,17 +317,16 @@ extract_program_loadings <- function(clustering_result,
 #'       `n_programs`, `n_traits`, `programs`, `traits` and `snp_ids`
 #'     \item edges: the linked pairs, with the [module_rg()] columns joined on
 #'     \item graph: an `igraph` object (or `NULL` when there are no links)
+#'       whose edges carry `phi_traits`, `direction_profile`, `rg_direction`
+#'       and `weight`, and whose vertices carry `family` and `trait_id`
 #'     \item modularity: modularity of the family partition
 #'     \item n_unlinked: number of programs with no link
 #'   }
 #' @export
 build_program_families <- function(result,
-                                   program_info = NULL,
-                                   rule = c("communities", "components"),
                                    seed = 1,
                                    program_data = NULL,
                                    mutual_best = FALSE) {
-  rule <- match.arg(rule)
   if (!is.list(result) || is.data.frame(result) || is.null(result$pairs) ||
         !"linked" %in% names(result$pairs)) {
     stop("result must come from compare_program_pairs_loadings()")
@@ -438,12 +354,7 @@ build_program_families <- function(result,
     edges$rg_direction <- rep(NA_character_, nrow(edges))
   }
 
-  endpoints <- if (!is.null(result$programs)) {
-    dplyr::distinct(result$programs, program_id, trait_id, trait_name)
-  } else {
-    .normalise_program_info(pairs, NULL)
-  }
-  info <- .merge_program_info(endpoints, program_info)
+  info <- dplyr::distinct(result$programs, program_id, trait_id, trait_name)
   linked_ids <- unique(c(edges$program_id_a, edges$program_id_b))
   n_unlinked <- sum(!info$program_id %in% linked_ids)
 
@@ -468,20 +379,13 @@ build_program_families <- function(result,
     directed = FALSE,
     vertices = data.frame(name = linked_ids, stringsAsFactors = FALSE)
   )
-  for (col in c("phi_traits", "alignment", "tier", "profile_strength",
-                "locus_status", "direction_profile",
-                "concordance_z", "rg", "rg_ci_lower", "rg_ci_upper", "rg_direction")) {
+  for (col in c("phi_traits", "direction_profile", "rg_direction")) {
     graph <- igraph::set_edge_attr(graph, col, value = edges[[col]])
   }
   graph <- igraph::set_edge_attr(graph, "weight", value = abs(edges$phi_traits))
 
-  membership <- if (rule == "communities") {
-    set.seed(seed)
-    igraph::membership(igraph::cluster_louvain(graph))
-  } else {
-    igraph::components(graph, mode = "weak")$membership
-  }
-  membership <- as.integer(membership)
+  set.seed(seed)
+  membership <- as.integer(igraph::membership(igraph::cluster_louvain(graph)))
   # Number families largest first, so family_1 is the biggest.
   sizes <- table(membership)
   rank <- stats::setNames(
@@ -522,82 +426,6 @@ build_program_families <- function(result,
 }
 
 
-#' @title Pooled Effect Correlation Per Family
-#' @description [module_rg()] for whole program families: for every family
-#' from [build_program_families()] and every pair of traits it spans, the two
-#' traits' own effects are correlated across the union of the loci that the
-#' family's programs in those two traits claim (on the loci both traits
-#' carry). Each trait's loading at a locus is taken from whichever of its
-#' family programs loads there most. Pooling gives a direction to trait pairs
-#' whose individual links rest on too few loci for [module_rg()].
-#' @param families A [build_program_families()] result.
-#' @param program_data Extraction result(s) from [extract_program_loadings()].
-#' @param coloc_groups Named list of coloc-group data.frames keyed by trait id,
-#'   as for [module_rg()].
-#' @param bridges Locus bridges, normally `compare_program_pairs_loadings()$bridges`.
-#'   Any missing bridge is built.
-#' @param n_boot,min_loci_rg,seed As in [module_rg()].
-#' @return A data.frame with one row per family x trait pair: `family`,
-#'   `trait_id_a`, `trait_id_b`, `n_programs_a`, `n_programs_b`, `rg`,
-#'   `rg_ci_lower`, `rg_ci_upper`, `n_loci_rg`, `n_allele_mismatch` and
-#'   `rg_direction`.
-#' @export
-family_module_rg <- function(families,
-                             program_data,
-                             coloc_groups,
-                             bridges = NULL,
-                             n_boot = 1000L,
-                             min_loci_rg = 10L,
-                             seed = 1,
-                             ld_proxies_fn = ld_proxies) {
-  nodes <- families$nodes
-  if (is.null(nodes) || nrow(nodes) == 0) {
-    return(.empty_family_rg())
-  }
-  loadings <- .normalise_program_data(program_data)$loadings
-  combos <- dplyr::bind_rows(lapply(split(nodes, nodes$family), function(fam) {
-    traits <- sort(unique(as.character(fam$trait_id)))
-    if (length(traits) < 2) {
-      return(NULL)
-    }
-    tp <- utils::combn(traits, 2)
-    return(data.frame(
-      family = fam$family[1], trait_id_a = tp[1, ], trait_id_b = tp[2, ],
-      stringsAsFactors = FALSE
-    ))
-  }))
-  if (nrow(combos) == 0) {
-    return(.empty_family_rg())
-  }
-  bridges <- .complete_bridges(
-    unique(combos[, c("trait_id_a", "trait_id_b")]), coloc_groups, bridges,
-    ld_proxies_fn = ld_proxies_fn
-  )
-  effects <- .effects_cache(coloc_groups)
-
-  set.seed(seed)
-  rows <- lapply(seq_len(nrow(combos)), function(i) {
-    fam <- nodes[nodes$family == combos$family[i], , drop = FALSE]
-    ta <- combos$trait_id_a[i]
-    tb <- combos$trait_id_b[i]
-    pa <- fam$program_id[fam$trait_id == ta]
-    pb <- fam$program_id[fam$trait_id == tb]
-    est <- .rg_for_programs(
-      loadings, pa, pb, ta, tb, effects, bridges,
-      n_boot = n_boot, min_loci_rg = min_loci_rg
-    )
-    return(data.frame(
-      combos[i, , drop = FALSE],
-      n_programs_a = length(pa), n_programs_b = length(pb),
-      est, stringsAsFactors = FALSE
-    ))
-  })
-  out <- dplyr::bind_rows(rows)
-  rownames(out) <- NULL
-  return(out)
-}
-
-
 # Links that are the closest (highest |phi_traits|) link of both of their
 # programs to the other program's trait.
 .mutual_best_links <- function(edges) {
@@ -615,11 +443,20 @@ family_module_rg <- function(families,
 }
 
 
-# A locus id that is comparable across traits: GPMap's shared coloc_group_id.
-# An uploaded GWAS trait's own ids are translated through any bridge to an
-# existing trait; an upload locus no bridge covers keeps a trait-prefixed id,
-# so it counts towards a union but never matches another trait's locus.
-.canonical_locus_ids <- function(ids, trait_id, bridges = NULL) {
+#' @title Canonical Locus Ids Across Traits
+#' @description Put one trait's locus ids on an id space that is comparable
+#' across traits: GPMap's shared `coloc_group_id`. An uploaded GWAS trait's own
+#' ids are translated through any bridge to an existing trait; an upload locus
+#' no bridge covers keeps a trait-prefixed id (`"<trait_id>:<id>"`), so it
+#' counts towards a union but never matches another trait's locus. Ids of an
+#' existing (non-upload) trait are returned unchanged.
+#' @param ids The trait's own `coloc_group_id`s.
+#' @param trait_id The trait the ids belong to.
+#' @param bridges Locus bridges, normally
+#'   `compare_program_pairs_loadings()$bridges`.
+#' @return A character vector of canonical locus ids, one per element of `ids`.
+#' @export
+canonical_locus_ids <- function(ids, trait_id, bridges = NULL) {
   ids <- as.character(ids)
   trait_id <- as.character(trait_id)
   if (!is_guid(trait_id)) {
@@ -660,7 +497,7 @@ family_module_rg <- function(families,
       family = nodes$family[i],
       program_id = pid,
       trait_id = tid,
-      locus = .canonical_locus_ids(s$coloc_group_id, tid, bridges),
+      locus = canonical_locus_ids(s$coloc_group_id, tid, bridges),
       snp_id = as.character(s$snp_id),
       stringsAsFactors = FALSE
     ))
@@ -740,23 +577,7 @@ family_module_rg <- function(families,
 }
 
 
-.normalise_program_loadings <- function(program_loadings) {
-  if (is.data.frame(program_loadings)) {
-    loadings <- program_loadings
-  } else if (is.list(program_loadings) && "loadings" %in% names(program_loadings) &&
-               is.data.frame(program_loadings$loadings)) {
-    loadings <- program_loadings$loadings
-  } else if (is.list(program_loadings)) {
-    loadings <- dplyr::bind_rows(lapply(program_loadings, function(x) {
-      if (is.data.frame(x)) {
-        return(x)
-      }
-      return(x$loadings)
-    }))
-  } else {
-    stop("program_loadings must be a data.frame or a list of extraction results")
-  }
-
+.normalise_program_loadings <- function(loadings) {
   required <- c("program_id", "trait_id", "program", "snp_id", "loading", "high_confidence")
   missing <- setdiff(required, names(loadings))
   if (length(missing) > 0) {
@@ -811,56 +632,6 @@ family_module_rg <- function(families,
 }
 
 
-.normalise_program_info <- function(pairs, program_info) {
-  if (!is.null(program_info)) {
-    info <- as.data.frame(program_info, stringsAsFactors = FALSE)
-    if (!"trait_name" %in% names(info)) {
-      info$trait_name <- NA_character_
-    }
-    return(dplyr::distinct(info, program_id, trait_id, trait_name))
-  }
-  if (nrow(pairs) == 0) {
-    return(data.frame(
-      program_id = character(0), trait_id = character(0),
-      trait_name = character(0), stringsAsFactors = FALSE
-    ))
-  }
-  from_a <- data.frame(
-    program_id = pairs$program_id_a, trait_id = pairs$trait_id_a,
-    trait_name = NA_character_, stringsAsFactors = FALSE
-  )
-  from_b <- data.frame(
-    program_id = pairs$program_id_b, trait_id = pairs$trait_id_b,
-    trait_name = NA_character_, stringsAsFactors = FALSE
-  )
-  return(dplyr::distinct(
-    dplyr::bind_rows(from_a, from_b),
-    program_id, trait_id, trait_name
-  ))
-}
-
-
-.merge_program_info <- function(endpoints, program_info) {
-  if (is.null(program_info)) {
-    return(endpoints)
-  }
-  info <- as.data.frame(program_info, stringsAsFactors = FALSE)
-  if (!"trait_name" %in% names(info)) {
-    info$trait_name <- NA_character_
-  }
-  info <- dplyr::distinct(info, program_id, trait_id, trait_name)
-  extra <- info[!info$program_id %in% endpoints$program_id, , drop = FALSE]
-  out <- dplyr::bind_rows(endpoints, extra)
-  names_from_info <- dplyr::select(info, program_id, trait_name_info = trait_name)
-  return(out |>
-    dplyr::left_join(names_from_info, by = "program_id") |>
-    dplyr::mutate(
-      trait_name = dplyr::coalesce(trait_name, trait_name_info)
-    ) |>
-    dplyr::select(-trait_name_info))
-}
-
-
 .program_pair_keys <- function(loadings) {
   programs <- dplyr::distinct(loadings, program_id, trait_id, program)
   if (nrow(programs) < 2) {
@@ -872,43 +643,19 @@ family_module_rg <- function(families,
     program_id_b = programs$program_id[idx[2, ]],
     trait_id_a = programs$trait_id[idx[1, ]],
     trait_id_b = programs$trait_id[idx[2, ]],
-    program_a = programs$program[idx[1, ]],
-    program_b = programs$program[idx[2, ]],
     stringsAsFactors = FALSE
   )
   return(keys[keys$trait_id_a != keys$trait_id_b, , drop = FALSE])
 }
 
 
-# Confidence weight for one program at one SNP: (1 - lFSR) x |loading|.
-# Missing lFSR is treated as full confidence (weight falls back to magnitude).
-.program_weight_factor <- function(lfsr, loading) {
-  return(.confidence_factor(lfsr) * abs(loading))
-}
-
-
-# Confidence weight of a loading from its lFSR, in [0, 1]. The default,
-# "two_sided", is (1 - 2 lfsr)_+: 0 for a coin-flip sign (lfsr = 0.5), 1 for a
-# certain one. "one_sided" is 1 - lfsr, which still gives a coin flip half
-# weight. Set with options(gpmapr.lfsr_weight = ...). Missing lFSR is treated
-# as full confidence.
+# Confidence weight of a loading from its lFSR, in [0, 1]: (1 - 2 lfsr)_+, so 0
+# for a coin-flip sign (lfsr = 0.5) and 1 for a certain one. Missing lFSR is
+# treated as full confidence.
 .confidence_factor <- function(lfsr) {
-  conf <- if (identical(.lfsr_weight_method(), "one_sided")) {
-    1 - lfsr
-  } else {
-    1 - 2 * lfsr
-  }
+  conf <- 1 - 2 * lfsr
   conf[is.na(conf)] <- 1
   return(pmin(pmax(conf, 0), 1))
-}
-
-
-.lfsr_weight_method <- function() {
-  method <- getOption("gpmapr.lfsr_weight", "two_sided")
-  if (!method %in% c("two_sided", "one_sided")) {
-    stop("options(gpmapr.lfsr_weight) must be \"two_sided\" or \"one_sided\"")
-  }
-  return(method)
 }
 
 
@@ -988,8 +735,6 @@ family_module_rg <- function(families,
     program = integer(0),
     snp_id = character(0),
     coloc_group_id = character(0),
-    chr = character(0),
-    bp = numeric(0),
     loading = numeric(0),
     abs_loading = numeric(0),
     lfsr = numeric(0),
@@ -1020,10 +765,6 @@ family_module_rg <- function(families,
     trait_id = character(0),
     trait_name = character(0),
     program = integer(0),
-    n_snps = integer(0),
-    n_high_confidence = integer(0),
-    n_features = integer(0),
-    sign = numeric(0),
     stringsAsFactors = FALSE
   ))
 }
@@ -1035,8 +776,6 @@ family_module_rg <- function(families,
     program_id_b = character(0),
     trait_id_a = character(0),
     trait_id_b = character(0),
-    program_a = integer(0),
-    program_b = integer(0),
     stringsAsFactors = FALSE
   ))
 }
@@ -1048,15 +787,7 @@ family_module_rg <- function(families,
     program_id_b = character(0),
     trait_id_a = character(0),
     trait_id_b = character(0),
-    program_a = integer(0),
-    program_b = integer(0),
-    n_loci_a = integer(0),
-    n_loci_b = integer(0),
     n_loci_shared = integer(0),
-    n_loci_union = integer(0),
-    jaccard_loci = numeric(0),
-    p_locus = numeric(0),
-    eligible = logical(0),
     stringsAsFactors = FALSE
   ))
 }
@@ -1091,24 +822,6 @@ family_module_rg <- function(families,
     programs = character(0),
     traits = character(0),
     snp_ids = character(0),
-    stringsAsFactors = FALSE
-  ))
-}
-
-
-.empty_family_rg <- function() {
-  return(data.frame(
-    family = character(0),
-    trait_id_a = character(0),
-    trait_id_b = character(0),
-    n_programs_a = integer(0),
-    n_programs_b = integer(0),
-    rg = numeric(0),
-    rg_ci_lower = numeric(0),
-    rg_ci_upper = numeric(0),
-    n_loci_rg = integer(0),
-    n_allele_mismatch = integer(0),
-    rg_direction = character(0),
     stringsAsFactors = FALSE
   ))
 }

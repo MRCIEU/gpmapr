@@ -10,29 +10,9 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 params:
   api: "local"
-  include_trans: true
-  trait_subset: "phenotypic"
-  min_snp_signals: 2
-  min_module_size: 3
-  compress_method: "asinh"
-  compress_scale: 5
   include_situated_gene: false
-  similarity_threshold: 0.2
-  ebmf_magnitude_threshold: 0.75
-  ebmf_lfsr_threshold: 0.02
-  ebmf_prior: "point_laplace"
-  ebmf_backfit: true
-  n_null: 10
-  alpha_membership: 0.05
-  n_candidate_tier: 25
   n_rep: 3
-  frac_traits: 0.8
-  stability_top_n: 20
-  posterior_stat: "median"
-  posterior_evidence_cap: 50
-  redundancy_threshold: 0.9
   cores: 5
-  associations: "coloc"
   remove_duplicates: true
 ---
 
@@ -93,14 +73,12 @@ tissues and pathways, and Steps 5–7 interpret both runs' programs side by
 side.
 
 ```{r params}
-min_group_size <- 5
-max_snp_fraction <- 0.8
 top_n_traits <- 10L
 min_specificity <- 1.25
 
-# Shared analysis settings come from vignettes/_ebmf_settings.yml so the
+# Analysis settings come only from vignettes/_ebmf_settings.yml, so the
 # simulation, null-simulation, univariate and multi-trait studies cannot drift
-# apart; anything supplied in params (e.g. by the HPC grid scripts) wins.
+# apart. The locals below are for the text.
 ebmf_settings <- resolve_ebmf_settings(params)
 settings_signature <- ebmf_settings_signature(ebmf_settings)
 
@@ -119,62 +97,30 @@ ebmf_magnitude_threshold <- as.numeric(
   ebmf_settings$ebmf_magnitude_threshold
 )
 similarity_n_perm <- as.integer(ebmf_settings$similarity_n_perm)
-similarity_q_threshold <- as.numeric(ebmf_settings$similarity_q)
 high_similarity_q <- as.numeric(ebmf_settings$high_similarity_q)
 high_connectedness <- as.numeric(ebmf_settings$high_connectedness)
 high_similarity_z <- as.numeric(ebmf_settings$high_similarity_z)
 min_effective_traits <- as.numeric(ebmf_settings$min_effective_traits)
-ebmf_greedy_Kmax <- as.integer(ebmf_settings$ebmf_greedy_Kmax)
-associations <- params$associations
-n_null <- as.integer(params$n_null)
-alpha_membership <- as.numeric(params$alpha_membership)
-n_candidate_tier <- as.integer(params$n_candidate_tier)
 n_rep <- as.integer(params$n_rep)
-frac_traits <- as.numeric(params$frac_traits)
-stability_top_n <- as.integer(params$stability_top_n)
-posterior_stat <- params$posterior_stat
-posterior_evidence_cap <- as.numeric(params$posterior_evidence_cap)
-redundancy_threshold <- as.numeric(params$redundancy_threshold)
 cores <- as.integer(params$cores)
 
 knitr::kable(
   data.frame(
-    api = api,
-    gpmap_url = getOption("gpmap_url"),
-    min_snp_signals = min_snp_signals,
-    trait_subset = trait_subset,
-    compress_method = compress_method,
-    compress_scale = compress_scale,
-    include_trans = include_trans,
-    include_situated_gene = include_situated_gene,
-    min_specificity = min_specificity,
-    similarity_threshold = similarity_threshold,
-    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
-    ebmf_prior = ebmf_prior,
-    ebmf_backfit = ebmf_backfit,
-    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
-    n_null = n_null,
-    alpha_membership = alpha_membership,
-    n_candidate_tier = n_candidate_tier,
-    n_rep = n_rep,
-    frac_traits = frac_traits,
-    stability_top_n = stability_top_n,
-    posterior_stat = posterior_stat,
-    posterior_evidence_cap = posterior_evidence_cap,
-    similarity_n_perm = similarity_n_perm,
-    similarity_q = similarity_q_threshold,
-    high_similarity_q = high_similarity_q,
-    high_connectedness = high_connectedness,
-    high_similarity_z = high_similarity_z,
-    min_effective_traits = min_effective_traits,
-    ebmf_greedy_Kmax = ebmf_greedy_Kmax,
-    redundancy_threshold = redundancy_threshold,
-    cores = cores,
-    associations = associations,
-    remove_duplicates = isTRUE(params$remove_duplicates),
+    setting = c(
+      "api", "gpmap_url", "include_situated_gene", "min_specificity", "n_rep",
+      "cores", "remove_duplicates", names(ebmf_settings)
+    ),
+    value = c(
+      api, getOption("gpmap_url"), include_situated_gene, min_specificity,
+      n_rep, cores, isTRUE(params$remove_duplicates),
+      vapply(ebmf_settings, function(x) paste(format(x), collapse = ", "), character(1))
+    ),
     stringsAsFactors = FALSE
   ),
-  caption = "Active run parameters",
+  caption = paste0(
+    "Active run parameters. Analysis settings are from _ebmf_settings.yml ",
+    "(signature: ", settings_signature, ")."
+  ),
   row.names = FALSE
 )
 ```
@@ -327,54 +273,23 @@ compressed trait profiles (missing cells counted as 0, the BMI row left out).
   they are too loose for the connectedness cut).
 - **medium** — `similarity_q < similarity_q`, but not high.
 
-`excess_similarity` and `excess_connectedness` (each minus its value in the
-random groups: effect sizes that do not grow with program size), factor strength
-(`factor_pve`) and trait-subsampling `replication` are reported but do not
-affect the tier. A program whose SNPs are at least 90% contained in a larger
+Factor strength (`factor_pve`) and trait-subsampling `replication` are
+reported but do not affect the tier. A program whose SNPs are at least 90% contained in a larger
 program's loci is listed under it as a child.
 
 ```{r two-runs}
 run_bmi_analysis <- function(label, coloc_groups) {
   set.seed(20240214)
-  fit <- run_univariate_clustering(
+  res <- run_ebmf_pipeline(
     list(trait = list(id = target_trait_id), coloc_groups = coloc_groups),
+    settings = ebmf_settings,
     target_trait_id = target_trait_id,
-    associations = associations,
-    trait_subset = trait_subset,
-    include_trans = include_trans,
-    min_snp_signals = min_snp_signals,
-    max_snp_fraction = max_snp_fraction,
-    compress_method = compress_method,
-    compress_scale = compress_scale,
-    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
-    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
-    ebmf_greedy_Kmax = ebmf_greedy_Kmax,
-    ebmf_prior = ebmf_prior,
-    ebmf_backfit = ebmf_backfit,
-    min_module_size = min_module_size
-  )
-  summary <- summarise_ebmf_programs(
-    fit,
-    edge_threshold = similarity_threshold,
-    min_module_size = min_module_size,
-    similarity_n_perm = similarity_n_perm,
-    similarity_q_threshold = similarity_q_threshold,
-    high_similarity_q = high_similarity_q,
-    high_min_connectedness = high_connectedness,
-  high_min_similarity_z = high_similarity_z,
-    min_effective_traits = min_effective_traits,
-    n_null = n_null,
-    alpha_membership = alpha_membership,
-    n_candidate_tier = n_candidate_tier,
     n_rep = n_rep,
-    frac_traits = frac_traits,
-    top_n = stability_top_n,
-    posterior_stat = posterior_stat,
-    posterior_evidence_cap = posterior_evidence_cap,
-    redundancy_threshold = redundancy_threshold,
     cores = cores,
     verbose = FALSE
   )
+  fit <- res$fit
+  summary <- res$summary
   return(list(
     label = label,
     coloc_groups = fit$coloc_groups,
@@ -418,8 +333,12 @@ comparison <- dplyr::bind_rows(lapply(runs, function(r) {
     n_medium = sum(p$confidence_tier == "medium"),
     n_single_trait = sum(p$confidence_tier == "single_trait"),
     n_low = sum(p$confidence_tier == "low"),
-    median_excess_similarity = round(stats::median(p$excess_similarity, na.rm = TRUE), 3),
-    median_excess_connectedness = round(stats::median(p$excess_connectedness, na.rm = TRUE), 3),
+    median_similarity_above_background = round(
+      stats::median(p$mean_internal_similarity - bg$mean_similarity, na.rm = TRUE), 3
+    ),
+    median_connectedness_above_background = round(
+      stats::median(p$connectedness - bg$frac_pairs_edge, na.rm = TRUE), 3
+    ),
     stringsAsFactors = FALSE
   ))
 }))
@@ -450,9 +369,7 @@ for (run_id in names(runs)) {
         n_snps_filtered,
         effective_n_traits = round(effective_n_traits, 2),
         mean_internal_similarity = round(mean_internal_similarity, 3),
-        excess_similarity = round(excess_similarity, 3),
         connectedness = round(connectedness, 3),
-        excess_connectedness = round(excess_connectedness, 3),
         similarity_q = signif(similarity_q, 3),
         similarity_z = round(similarity_z, 1),
         factor_pve_pct = round(100 * factor_pve, 2),
@@ -462,7 +379,7 @@ for (run_id in names(runs)) {
     caption = paste0(
       "Run ", r$label, ": programs by confidence tier. The tier uses ",
       "similarity_q, connectedness or similarity_z, and effective_n_traits; ",
-      "excess_*, factor_pve_pct (the % of matrix variance the factor explains) ",
+      "factor_pve_pct (the % of matrix variance the factor explains) ",
       "and replication are reported, not used for the tier."
     )
   ))
@@ -947,7 +864,6 @@ module_overview <- function(run_id) {
     exclude_trait_ids = target_trait_id,
     min_group_size = min_module_size,
     top_n = top_n_traits,
-    n_categories = 3L,
     min_specificity = min_specificity
   )
   specific_traits <- dplyr::bind_rows(lapply(group_traits$by_group, function(x) {
@@ -1274,7 +1190,7 @@ bs <- list(
   s_body = mean_similarity_on(body_ids),
   s_all = mean_similarity_on(background_ids),
   s_other = mean_similarity_on(other_ids),
-  excess_a = comparison_a$median_excess_similarity,
+  excess_a = comparison_a$median_similarity_above_background,
   n_low_a = comparison_a$n_low,
   n_programs_a = comparison_a$n_programs,
   n_factors = flash_a$n_factors,
@@ -1396,8 +1312,8 @@ purest form; the body-size traits are forty slightly weaker copies of it.
   all of Run A's traits and `r sprintf("%.3f", bs$s_other)` without them.
   The confidence tier's similarity test compares each program with random
   groups of BMI SNPs, and in Run A those random groups already look alike, so
-  real structure has little room to stand out. Run A's median excess similarity is
-  `r bs$excess_a`, and `r bs$n_low_a` of its `r bs$n_programs_a` programs are
+  real structure has little room to stand out. Run A's programs' median
+  similarity above that background is `r bs$excess_a`, and `r bs$n_low_a` of its `r bs$n_programs_a` programs are
   low.
 - **The factorisation spends itself on body size.** Of Run A's
   `r bs$n_factors` factors, the `r bs$n_body_factors` that put most of their

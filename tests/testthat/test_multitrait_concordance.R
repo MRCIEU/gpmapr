@@ -62,10 +62,8 @@ test_that("a planted concordant module is significant and target-aligned", {
   res <- compare_program_pairs_loadings(list(a, b), n_perm = 200, seed = 1)
 
   expect_equal(nrow(res$pairs), 1L)
-  expect_equal(res$pairs$n_loci_axis, 20L)
-  expect_true(res$pairs$locus_concordance > 0)
-  expect_true(res$pairs$concordance_z > 0)
-  expect_true(res$pairs$eligible)
+  expect_equal(res$pairs$n_loci_shared, 20L)
+  expect_lt(res$pairs$p_concordance, 0.05)
   expect_equal(res$pairs$locus_status, "agree")
   expect_gt(res$pairs$phi_traits, 0.95)
   expect_equal(res$pairs$profile_strength, "strong")
@@ -73,8 +71,12 @@ test_that("a planted concordant module is significant and target-aligned", {
   expect_equal(res$pairs$direction_profile, "concordant")
   expect_true(res$pairs$linked)
   expect_false(any(c("direction", "link_tier", "shared", "r2_loci", "significant",
-                     "loci_ok", "evidence") %in% names(res$pairs)))
-  expect_equal(res$programs$n_links, c(1L, 1L))
+                     "loci_ok", "evidence", "n_loci_a", "n_loci_b", "n_loci_union",
+                     "jaccard_loci", "p_locus", "eligible", "n_loci_axis",
+                     "locus_concordance", "concordance_z", "n_traits_shared",
+                     "program_a", "program_b") %in% names(res$pairs)))
+  expect_setequal(names(res$programs), c("program_id", "trait_id", "trait_name", "program"))
+  expect_equal(names(res$settings), "exclude_features")
 })
 
 
@@ -92,8 +94,7 @@ test_that("shared loci with unrelated profiles are low tier, not a link", {
                     feats, stats::rnorm(10))
   res <- compare_program_pairs_loadings(list(a, b), n_perm = 200, seed = 1)
 
-  expect_true(res$pairs$locus_concordance < 0)
-  expect_true(res$pairs$concordance_z < 0)
+  expect_lt(res$pairs$p_concordance, 0.05)
   expect_equal(res$pairs$locus_status, "agree")
   expect_lt(abs(res$pairs$phi_traits), 0.7)
   expect_equal(res$pairs$profile_strength, "weak")
@@ -126,8 +127,7 @@ test_that("correlated near-zero tails on unclaimed loci do not link", {
     list(a, b), n_perm = 200, seed = 1, min_shared_loci = 0L
   )
 
-  expect_equal(res$pairs$n_loci_axis, 0L)
-  expect_true(is.na(res$pairs$concordance_z))
+  expect_true(is.na(res$pairs$p_concordance))
   expect_equal(res$pairs$locus_status, "too_few_loci")
 })
 
@@ -146,8 +146,7 @@ test_that("two programs claiming exactly the same loci still link", {
                     feats, prof_shared + stats::rnorm(10, 0, 0.05))
   res <- compare_program_pairs_loadings(list(a, b), n_perm = 200, seed = 1)
 
-  expect_equal(res$pairs$n_loci_axis, 10L)
-  expect_gt(res$pairs$concordance_z, 3)
+  expect_lt(res$pairs$p_concordance, 0.01)
   expect_equal(res$pairs$locus_status, "agree")
   expect_true(res$pairs$linked)
 })
@@ -166,8 +165,7 @@ test_that("a pair below min_shared_loci is scored but cannot link", {
 
   gated <- compare_program_pairs_loadings(list(a, b), n_perm = 200, seed = 1)
   expect_equal(gated$pairs$n_loci_shared, 2L)
-  expect_true(gated$pairs$concordance_z > 0)
-  expect_false(gated$pairs$eligible)
+  expect_true(is.finite(gated$pairs$p_concordance))
   expect_equal(gated$pairs$locus_status, "too_few_loci")
   # Still part of the multiple-testing correction: eligibility is not
   # independent of the statistic, so it must not choose the tests corrected.
@@ -211,11 +209,6 @@ test_that("breadth of shared loading is not penalised", {
   broad_row <- res$pairs$program_id_a == "t1:1" & res$pairs$program_id_b == "t2:1"
   spiky_row <- res$pairs$program_id_a == "t1:2" & res$pairs$program_id_b == "t2:2"
 
-  # At comparable per-locus magnitude the raw score tracks how much shared
-  # loading there is, so the broad pair scores far higher.
-  expect_true(
-    res$pairs$locus_concordance[broad_row] > res$pairs$locus_concordance[spiky_row]
-  )
   # The broad pair is detected on its own merits, not squeezed out by the decoy.
   expect_true(res$pairs$p_concordance[broad_row] < 0.05)
   # n_eff_loci reports how much independent support each pair rests on.
@@ -271,37 +264,8 @@ test_that("alignment compares the shared loci; comparability says how much is sh
 })
 
 
-test_that("the lfsr weight is (1 - 2 lfsr)_+ by default, 1 - lfsr as an option", {
-  with_weight <- function(method, code) {
-    old <- options(gpmapr.lfsr_weight = method)
-    on.exit(options(old))
-    return(code)
-  }
+test_that("the lfsr weight is (1 - 2 lfsr)_+", {
   expect_equal(gpmapr:::.confidence_factor(c(0, 0.25, 0.5, 0.8, NA)), c(1, 0.5, 0, 0, 1))
-  expect_equal(
-    with_weight("one_sided", gpmapr:::.confidence_factor(c(0, 0.25, 0.5, NA))),
-    c(1, 0.75, 0.5, 1)
-  )
-  expect_error(with_weight("bogus", gpmapr:::.confidence_factor(0.1)))
-
-  # Unrelated, uncertain tails (lfsr 0.4) dilute alignment less when a
-  # coin-flip-ish sign gets little weight.
-  set.seed(32)
-  n <- 200
-  loci <- paste0("g", seq_len(n))
-  feats <- paste0("f", 1:10)
-  mk <- function(tid) {
-    ll <- ifelse(seq_len(n) <= 20, 1.5, stats::rnorm(n, 0, 0.25))
-    p <- make_program(tid, 1, loci, ll, seq_len(n) <= 20, feats, prof_shared)
-    p$loadings$lfsr <- ifelse(seq_len(n) <= 20, 0.001, 0.4)
-    return(p)
-  }
-  pd <- list(mk("t1"), mk("t2"))
-  two <- compare_program_pairs_loadings(pd, n_perm = 50, seed = 1)$pairs$alignment
-  one <- with_weight(
-    "one_sided", compare_program_pairs_loadings(pd, n_perm = 50, seed = 1)$pairs$alignment
-  )
-  expect_gt(two, one)
 })
 
 
@@ -319,7 +283,6 @@ test_that("profile congruence is signed, and reports how many traits carry it", 
   expect_equal(mirror$phi_traits, -1, tolerance = 1e-8)
   expect_equal(mirror$direction_profile, "antagonistic")
   expect_equal(mirror$tier, "high")
-  expect_equal(same$n_traits_shared, 10L)
 
   # One trait dominates: congruence still high, but n_eff_traits near 1.
   dom <- c(10, rep(0.01, 9))
@@ -346,7 +309,6 @@ test_that("anchor traits and excluded proxies are left out of the profile compar
   res <- compare_program_pairs_loadings(
     list(a, b), n_perm = 50, seed = 1, exclude_features = list(t1 = "px")
   )$pairs
-  expect_equal(res$n_traits_shared, 4L)
   expect_equal(res$phi_traits, 0, tolerance = 1e-8)
 })
 
@@ -384,7 +346,11 @@ test_that("one program can link to several programs in another trait", {
   res <- compare_program_pairs_loadings(program_data, n_perm = 200, seed = 1)
 
   expect_true(all(res$pairs$linked))
-  expect_equal(res$programs$n_links[res$programs$program_id == "t1:1"], 2L)
+  expect_equal(
+    sum(res$pairs$linked &
+          (res$pairs$program_id_a == "t1:1" | res$pairs$program_id_b == "t1:1")),
+    2L
+  )
   expect_true(all(res$pairs$locus_status == "agree"))
 })
 
@@ -448,7 +414,7 @@ test_that("tiers follow profile strength x locus status", {
     alignment = c(0.9, 0.9, 0.1, 0.9, 0.9, 0.9, 0.9, 0.9),
     q_concordance = c(0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.5)
   )
-  out <- gpmapr:::.assign_link_tiers(pairs)
+  out <- assign_link_tiers(pairs)
   expect_equal(
     out$profile_strength,
     c("strong", "strong", "strong", "moderate", "moderate", "moderate", "weak", "weak")
@@ -466,7 +432,7 @@ test_that("tiers follow profile strength x locus status", {
   expect_equal(out$linked, out$tier %in% c("high", "medium"))
 
   # A moderate profile whose loci disagree is no link at all.
-  md <- gpmapr:::.assign_link_tiers(data.frame(
+  md <- assign_link_tiers(data.frame(
     phi_traits = 0.75, n_loci_shared = 10, n_eff_loci = 8,
     alignment = 0.1, q_concordance = 0.01
   ))
@@ -528,16 +494,16 @@ test_that("profile_contributions names the traits carrying phi", {
   expect_equal(res$settings$exclude_features, list(t1 = "px"))
 
   contrib <- profile_contributions(res, list(a, b), top_n = 10)
-  traits <- contrib$traits
-  expect_setequal(traits$feature_trait_id, c("dom", "f2", "f3", "f4"))
-  expect_equal(traits$feature_trait_id[1], "dom")
-  expect_equal(sum(abs(traits$share)), 1, tolerance = 1e-8)
-  expect_lt(traits$share[traits$feature_trait_id == "f4"], 0)
-  expect_equal(nrow(contrib$pairs), 1L)
-  expect_match(contrib$pairs$top_traits, "^dom 84%")
+  expect_equal(nrow(contrib), 1L)
+  expect_setequal(names(contrib), c("program_id_a", "program_id_b", "top_traits"))
+  # dom leads; f4 works against phi; anchors and the excluded proxy are absent.
+  expect_match(contrib$top_traits, "^dom 84%")
+  expect_match(contrib$top_traits, "f4 -[0-9]+%")
+  parts <- strsplit(contrib$top_traits, "; ", fixed = TRUE)[[1]]
+  expect_setequal(sub(" .*$", "", parts), c("dom", "f2", "f3", "f4"))
 
   top1 <- profile_contributions(res, list(a, b), top_n = 1)
-  expect_equal(nrow(top1$traits), 1L)
+  expect_equal(top1$top_traits, "dom 84%")
 })
 
 
@@ -755,20 +721,15 @@ test_that(".shared_locus_axis and .locus_pair_stats bridge a GUID trait's own id
     sort(loci_ex[1:3])
   )
 
-  locus_sets <- gpmapr:::.program_locus_sets(ld, "high_confidence", 25L)
-  universe <- gpmapr:::.locus_universe_by_trait(ld)
+  locus_sets <- gpmapr:::.program_locus_sets(ld)
   key <- data.frame(
     program_id_a = paste0(guid, ":1"), program_id_b = "1992:1",
-    trait_id_a = guid, trait_id_b = "1992", program_a = 1L, program_b = 1L,
-    stringsAsFactors = FALSE
+    trait_id_a = guid, trait_id_b = "1992", stringsAsFactors = FALSE
   )
-  unbridged <- gpmapr:::.locus_pair_stats(key, locus_sets, universe, bridges = NULL)
+  unbridged <- gpmapr:::.locus_pair_stats(key, locus_sets, bridges = NULL)
   expect_equal(unbridged$n_loci_shared, 0L)
-  bridged <- gpmapr:::.locus_pair_stats(key, locus_sets, universe, bridges = bridges)
+  bridged <- gpmapr:::.locus_pair_stats(key, locus_sets, bridges = bridges)
   expect_equal(bridged$n_loci_shared, 3L)
-  # Native sizes are unaffected by the translation.
-  expect_equal(bridged$n_loci_a, 5L)
-  expect_equal(bridged$n_loci_b, 5L)
 })
 
 
@@ -877,7 +838,7 @@ test_that("compare_program_pairs_loadings links a GUID trait via variant_id, no 
 
   expect_equal(nrow(res$pairs), 1L)
   expect_equal(res$pairs$n_loci_shared, 20L)
-  expect_gt(res$pairs$n_loci_axis, 0)
+  expect_true(is.finite(res$pairs$p_concordance))
   expect_true(res$pairs$linked)
   expect_true(gpmapr:::.locus_bridge_key(guid, "1992") %in% names(res$bridges))
   expect_equal(nrow(res$module_rg), 1L)

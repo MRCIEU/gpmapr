@@ -13,7 +13,9 @@ remove_duplicate_traits(
 \arguments{
 \item{data}{A dataframe with a \code{trait_id} column, e.g. \code{trait()$coloc_groups}}
 
-\item{duplicates}{The output of \code{trait_duplicates()}.  Fetched from the API if not supplied.}
+\item{duplicates}{The output of \code{trait_duplicates()}, in either of its shapes: duplicate
+rows with a \code{parent_trait_id}, or \code{duplicate_group} rows where each group's
+\code{is_representative} trait is the parent of the others. Fetched from the API if not supplied.}
 
 \item{keep_trait_ids}{Trait ids that must not be removed}
 }

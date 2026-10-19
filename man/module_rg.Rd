@@ -13,7 +13,6 @@ module_rg(
   min_loci_rg = 10L,
   seed = 1,
   bridges = NULL,
-  min_ld_r = 0.5,
   ld_proxies_fn = ld_proxies
 )
 }
@@ -36,6 +35,11 @@ trait (from the upload's table for a pair involving an uploaded GWAS).}
 \item{min_loci_rg}{Minimum usable loci for an estimate. Defaults to \code{10}.}
 
 \item{seed}{RNG seed for the bootstrap.}
+
+\item{bridges}{Locus bridges, normally
+\code{compare_program_pairs_loadings()$bridges}. Any missing bridge is built.}
+
+\item{ld_proxies_fn}{As in \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}}.}
 }
 \value{
 A data.frame with one row per pair: \code{program_id_a}, \code{program_id_b},
@@ -52,8 +56,8 @@ For linked cross-trait program pairs, correlate the two target
 traits' own SNP effects across the module's loci — a module-level analogue of
 a local genetic correlation, where the stratification unit is a data-driven
 program rather than a genomic window. This is the direction of a link: the
-sign of \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}}'s \code{concordance_z} is not (see its
-documentation).
+sign of \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}}'s locus concordance is not (see
+its documentation).
 
 Loci are the shared loci either program claims as a high-confidence member;
 each locus is weighted by how strongly the module loads on it in both

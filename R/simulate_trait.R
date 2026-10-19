@@ -1183,7 +1183,7 @@ simulate_trait <- function(n_coloc_groups = 100,
 #' pleiotropy matrix; a simulator that does not land near them is not testing
 #' the gates in the regime they are used in.
 #' @param x_matrix Trait-by-SNP matrix of z-scores, with `NA` for unobserved
-#'   cells, as produced by `simulate_trait()` or `build_pleiotropy_matrix()`.
+#'   cells, as produced by `simulate_trait()` or `run_univariate_clustering()$x_matrix`.
 #' @param target_trait_id Row name of the target trait, used for orientation
 #'   and for the target-removed comparison.
 #' @param compress_scale asinh compression scale. Defaults to `5`.

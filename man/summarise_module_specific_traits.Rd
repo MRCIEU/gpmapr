@@ -13,15 +13,14 @@ summarise_module_specific_traits(
   min_group_size = 5L,
   top_n = 10L,
   min_snps_with_signal = 3L,
-  n_categories = 2L,
   specificity_eps = 0.1,
   min_specificity = 1.25,
   min_rest_snps_with_signal = 2L
 )
 }
 \arguments{
-\item{trait_matrix}{SNPs x traits numeric matrix (e.g. oriented trait matrix
-from EBMF / verification helpers).}
+\item{trait_matrix}{SNPs x traits numeric matrix (e.g.
+\code{run_univariate_clustering()$trait_matrix}).}
 
 \item{groups}{Named vector (\code{names} = SNP ids) or dataframe with \code{snp_id}
 plus \code{group} / \code{cluster} / \code{program}.}
@@ -30,7 +29,7 @@ plus \code{group} / \code{cluster} / \code{program}.}
 \code{feature_name}/\code{trait_name} columns for labels.}
 
 \item{coloc_groups}{Optional coloc-group dataframe used to attach
-\code{trait_category} labels (and for category summaries).}
+\code{trait_category} labels.}
 
 \item{exclude_trait_ids}{Optional trait ids to drop (e.g. the target trait).}
 
@@ -40,8 +39,6 @@ plus \code{group} / \code{cluster} / \code{program}.}
 
 \item{min_snps_with_signal}{Drop traits observed in fewer than this many SNPs
 within the group. Defaults to 3.}
-
-\item{n_categories}{Number of leading trait categories per group. Defaults to 2.}
 
 \item{specificity_eps}{Pseudocount in the specificity denominator. Defaults
 to 0.1.}
@@ -57,8 +54,11 @@ the ratio measures sparsity rather than specificity; such traits get \code{NA}.
 Defaults to \code{2}.}
 }
 \value{
-A list with \code{by_group} and \code{summary} (same shape as
-\code{summarise_snp_group_traits()}, plus specificity columns).
+A list with \code{by_group}, one entry per large group with \code{group},
+\code{n_snps}, \code{n_rest_snps}, \code{traits} (the top \code{top_n} traits with
+\code{abs_mean_z}, \code{abs_mean_z_rest}, \code{specificity}, \code{abs_mean_z_delta} and
+\code{passes_min_specificity}) and \code{n_traits_passing_min_specificity}, plus the
+settings used.
 }
 \description{
 For each SNP group of size at least \code{min_group_size}, rank traits by
@@ -66,11 +66,7 @@ how much stronger their mean absolute effect is inside the module than in the
 remaining SNPs:
 \deqn{\mathrm{specificity} = \bar{|z|}_{\mathrm{module}} /
 (\bar{|z|}_{\mathrm{rest}} + \varepsilon)}.
-Trait categories are ranked by the same module-vs-rest contrast so common
-categories (e.g. Physiological Measures) do not dominate unless they are
-specifically elevated in the module.
 
-Every large module always returns up to \code{top_n} traits (and category labels
-derived from them). \code{min_specificity} is only a soft flag
-(\code{passes_min_specificity}); it does not drop rows.
+Every large module always returns up to \code{top_n} traits. \code{min_specificity} is
+only a soft flag (\code{passes_min_specificity}); it does not drop rows.
 }

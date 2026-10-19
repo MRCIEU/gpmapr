@@ -23,7 +23,6 @@ RMD="investigation-univariate-null-simulations.Rmd"
 # ---------------------------------------------------------------------------
 
 N_REPS=5
-N_NULL=5
 N_REP=5
 
 # ---------------------------------------------------------------------------
@@ -97,22 +96,20 @@ render_one() {
 
   rm -f "${RMD%.Rmd}.html"
 
-  Rscript - "$RMD" "$N_REPS" "$N_NULL" "$N_REP" "$@" <<'RSCRIPT'
+  Rscript - "$RMD" "$N_REPS" "$N_REP" "$@" <<'RSCRIPT'
 args <- commandArgs(trailingOnly = TRUE)
 
 rmd <- args[[1]]
 n_reps <- as.integer(args[[2]])
-n_null <- as.integer(args[[3]])
-n_rep <- as.integer(args[[4]])
+n_rep <- as.integer(args[[3]])
 
 # Remaining arguments are name=value pairs.
-overrides <- args[-(1:4)]
+overrides <- args[-(1:3)]
 
 params <- list(
   # The vignettes declare n_sim / n_stability_rep; n_reps / n_rep are the old
   # names and rmarkdown rejects params it has not declared.
   n_sim = n_reps,
-  n_null = n_null,
   n_stability_rep = n_rep,
   quick = FALSE
 )

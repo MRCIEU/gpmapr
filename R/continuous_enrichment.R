@@ -1,6 +1,6 @@
 #' @title Continuous Trait-Category Enrichment From EBMF Loadings
-#' @description Parallel to `enrich_snp_group_trait_categories()`, but without
-#' any hard lFSR/magnitude cutoff: every SNP with a finite EBMF loading
+#' @description The loading-weighted counterpart of [enrich_snp_set()], with
+#' no hard lFSR/magnitude cutoff: every SNP with a finite EBMF loading
 #' contributes to every program's test, weighted by its squared loading,
 #' regressed against each trait category's local 0/1 membership indicator
 #' (`lm(loading^2 ~ category_membership)`), following the approach in
@@ -15,7 +15,7 @@
 #' observations; for formal inference, LD should be accounted for (e.g. SNP
 #' -> gene aggregation, or cluster-robust SEs / permutation using LD blocks).
 #' The enrichment effect estimates are nevertheless useful for comparison
-#' against the hard-cutoff hypergeometric trait-category test.
+#' against the hard-set test of [enrich_snp_set()].
 #' @param clustering_result Result of `run_univariate_clustering()`.
 #' @param coloc_groups Coloc-group dataframe with a `trait_category` column.
 #' @param snp_key Column used to match SNP ids in `coloc_groups`.
@@ -67,8 +67,8 @@ enrich_program_loadings_trait_categories <- function(clustering_result,
 
 
 #' @title Continuous Tissue Enrichment From EBMF Loadings
-#' @description Parallel to `enrich_snp_group_tissues()`, but without any hard
-#' lFSR/magnitude cutoff: every SNP with a finite EBMF loading contributes to
+#' @description The loading-weighted counterpart of [enrich_snp_set()], with
+#' no hard lFSR/magnitude cutoff: every SNP with a finite EBMF loading contributes to
 #' every program's test, weighted by its squared loading, regressed against
 #' each tissue's local 0/1 membership indicator
 #' (`lm(loading^2 ~ tissue_membership)`), following the approach in
@@ -84,7 +84,7 @@ enrich_program_loadings_trait_categories <- function(clustering_result,
 #' observations; for formal inference, LD should be accounted for (e.g. SNP
 #' -> gene aggregation, or cluster-robust SEs / permutation using LD blocks).
 #' The enrichment effect estimates are nevertheless useful for comparison
-#' against the hard-cutoff hypergeometric tissue test.
+#' against the hard-set test of [enrich_snp_set()].
 #' @param clustering_result Result of `run_univariate_clustering()`.
 #' @param coloc_groups Coloc-group dataframe with a `tissue` column.
 #' @param snp_key Column used to match SNP ids in `coloc_groups`.
@@ -222,19 +222,15 @@ enrich_program_loadings_tissues <- function(clustering_result,
 
 
 # SNP x value 0/1 membership matrix (e.g. SNP x tissue, SNP x trait_category),
-# pivoted from the long snp_id/value link tables already used by the
-# hard-cutoff hypergeometric enrichment functions.
+# pivoted from the long snp_id/value link tables also used by
+# enrich_snp_set().
 .snp_category_matrix <- function(snp_ids,
                                  coloc_groups,
                                  snp_key,
                                  value_col = c("tissue", "trait_category")) {
   value_col <- match.arg(value_col)
   snp_ids <- unique(as.character(snp_ids))
-  links <- if (identical(value_col, "tissue")) {
-    .snp_tissue_links(snp_ids, coloc_groups, snp_key)
-  } else {
-    .snp_category_links(snp_ids, coloc_groups, snp_key)
-  }
+  links <- .snp_annotation_links(snp_ids, coloc_groups, value_col, snp_key = snp_key)
 
   values <- sort(unique(links[[value_col]]))
   mat <- matrix(
@@ -249,7 +245,7 @@ enrich_program_loadings_tissues <- function(clustering_result,
 }
 
 
-# Continuous analog of .hypergeometric_link_enrichment(): for each column of
+# Continuous analog of .link_enrichment_test(): for each column of
 # a SNP x value 0/1 membership matrix, test whether squared loading (`y`) is
 # systematically greater for member SNPs via lm(y^2 ~ membership), as in
 # scripts/enrichment_via_loadings_example.r. Returns one row per tested value

@@ -43,40 +43,20 @@ params:
   p_spurious: [0.0, 0.01]
   p_structural_zero: [0.0, 0.1]
 
-  # EBMF / clustering parameters (inputs to run_univariate_clustering)
-  trait_subset: "phenotypic"
-  min_snp_signals: 2
-  compress_method: asinh
-  compress_scale: 5
-  similarity_threshold: 0.2
-  ebmf_lfsr_threshold: 0.02
-  ebmf_magnitude_threshold: 0.3
-  ebmf_drop_global: true
-  ebmf_prior: point_normal
-  ebmf_backfit: true
-
-  # Program validation parameters (inputs to summarise_ebmf_programs)
-  min_module_size: 3
-  min_mean_internal: 0.3
-  min_connectedness: 0.5
-  # Confidence tiers from similarity_q and connectedness (min_mean_internal /
-  # min_connectedness above are only recorded by run_univariate_clustering()).
-  similarity_n_perm: 10000
-  similarity_q: 0.05
-  high_similarity_q: 0.01
-  high_connectedness: 0.4
-  high_similarity_z: 6
-  min_effective_traits: 1.5
-  ebmf_greedy_Kmax: 100
-  n_null: 5
-  alpha_membership: 0.05
-  n_candidate_tier: 25
+  # Analysis settings come from vignettes/_ebmf_settings.yml, as for the
+  # real-data vignettes. The keys swept by the HPC grid
+  # (scripts/run_investigation_simulations_grid.sh) are declared here as null:
+  # a value supplied at render time overrides the file, and null falls back
+  # to it.
+  compress_method: null
+  compress_scale: null
+  similarity_threshold: null
+  ebmf_magnitude_threshold: null
+  ebmf_prior: null
+  min_module_size: null
+  similarity_q: null
+  # Trait-subsample refits per fit (replication); a cost setting.
   n_stability_rep: 1
-  frac_traits: 0.8
-  stability_top_n: 20
-  posterior_stat: median
-  posterior_evidence_cap: 50
-  redundancy_threshold: 0.9
   cores: 5
 
   # Replication settings. n_sim is the Monte Carlo sample size (ADEMP);
@@ -88,7 +68,7 @@ params:
   # defaults to tempdir() when empty.
   write_outputs: false
   output_dir: ""
-  # quick: fast test mode. Caps n_sim at 3, uses n_null = 1, and disables the
+  # quick: fast test mode. Caps n_sim at 3 and disables the
   # stability subsampling -- it trades reporting rigour for speed, not
   # breadth: all input versions (the full generative grid) are always run,
   # under quick or not. Use for exploring how many input parameters move the
@@ -129,7 +109,6 @@ quick <- isTRUE(params$quick)
 if (quick) {
   n_sim <- min(n_sim, 3L)
 }
-n_null <- if (quick) 1L else as.integer(params$n_null)
 n_stability_rep <- if (quick) 0L else as.integer(params$n_stability_rep)
 set.seed(params$master_seed)
 # One seed per replicate, reused across every input version (common random
@@ -142,43 +121,9 @@ if (params$K != length(params$module_sizes)) {
   stop("K must equal length(module_sizes)")
 }
 
-clustering_settings <- list(
-  min_snp_signals = params$min_snp_signals,
-  trait_subset = params$trait_subset,
-  compress_method = params$compress_method,
-  compress_scale = params$compress_scale,
-  ebmf_lfsr_threshold = params$ebmf_lfsr_threshold,
-  ebmf_magnitude_threshold = params$ebmf_magnitude_threshold,
-  ebmf_greedy_Kmax = params$ebmf_greedy_Kmax,
-  ebmf_drop_global = params$ebmf_drop_global,
-  ebmf_prior = params$ebmf_prior,
-  ebmf_backfit = params$ebmf_backfit,
-  min_module_size = params$min_module_size,
-  min_mean_internal = params$min_mean_internal,
-  min_connectedness = params$min_connectedness
-)
-
-validation_settings <- list(
-  edge_threshold = params$similarity_threshold,
-  min_module_size = params$min_module_size,
-  similarity_n_perm = params$similarity_n_perm,
-  similarity_q_threshold = params$similarity_q,
-  high_similarity_q = params$high_similarity_q,
-  high_min_connectedness = params$high_connectedness,
-  high_min_similarity_z = params$high_similarity_z,
-  min_effective_traits = params$min_effective_traits,
-  n_null = n_null,
-  alpha_membership = params$alpha_membership,
-  n_candidate_tier = params$n_candidate_tier,
-  n_rep = n_stability_rep,
-  frac_traits = params$frac_traits,
-  top_n = params$stability_top_n,
-  posterior_stat = params$posterior_stat,
-  posterior_evidence_cap = params$posterior_evidence_cap,
-  redundancy_threshold = params$redundancy_threshold,
-  cores = params$cores,
-  verbose = FALSE
-)
+# Analysis settings: _ebmf_settings.yml, with any grid override from params.
+ebmf_settings <- resolve_ebmf_settings(params)
+settings_signature <- ebmf_settings_signature(ebmf_settings)
 
 simulation_defaults <- list(
   n_coloc_groups = params$n_snps,
@@ -269,9 +214,8 @@ is immediately visible which check failed for each program:
     high_similarity_z`; `medium` otherwise.
 
   A program counts as `valid` when its tier is high or medium.
-- `excess_similarity` / `excess_connectedness` (effect sizes against the random
-  groups), `factor_pve` and `replication` (trait-subsampling Jaccard overlap)
-  are reported alongside, not used for the tier.
+- `factor_pve` and `replication` (trait-subsampling Jaccard overlap) are
+  reported alongside, not used for the tier.
 
 Because the input now has
 realistic marginals, **recovery is expected to be partial and noisy**: the
@@ -310,10 +254,9 @@ graph_diag <- tryCatch({
   sim_probe <- do.call(simulate_trait, c(
     simulation_defaults, list(K = length(params$module_sizes), seed = params$master_seed)
   ))
-  probe_res <- do.call(
-    run_univariate_clustering,
-    c(list(trait_object = sim_probe$trait_object), clustering_settings)
-  )
+  probe_res <- run_ebmf_pipeline(
+    sim_probe$trait_object, settings = ebmf_settings, n_rep = 0, verbose = FALSE
+  )$fit
   simulated_graph_diagnostics(
     probe_res$x_matrix,
     target_trait_id = probe_res$parameters$target_trait_id
@@ -417,11 +360,9 @@ settings_to_show <- c(
   "p_active_background", "background_sparsity_sd", "background_effect_scale",
   "target_pattern",
   "ebmf_lfsr_threshold", "ebmf_magnitude_threshold", "ebmf_prior",
-  "min_mean_internal", "min_connectedness", "n_stability_rep",
-  "frac_traits", "stability_top_n", "n_sim"
+  "n_stability_rep", "frac_traits", "stability_top_n", "n_sim"
 )
-settings_values <- c(clustering_settings, validation_settings)
-settings_values$similarity_threshold <- params$similarity_threshold
+settings_values <- ebmf_settings
 settings_values$n_stability_rep <- n_stability_rep
 settings_values$module_sizes <- params$module_sizes
 settings_values$overlap <- params$overlap
@@ -438,7 +379,6 @@ settings_values$p_active_background <- params$p_active_background[1]
 settings_values$background_sparsity_sd <- params$background_sparsity_sd
 settings_values$background_effect_scale <- params$background_effect_scale
 settings_values$target_pattern <- params$target_pattern
-settings_values$stability_top_n <- validation_settings$top_n
 settings_values$n_sim <- n_sim
 knitr::kable(
   data.frame(
@@ -450,7 +390,12 @@ knitr::kable(
       as.character(settings_values[[nm]])
     }, character(1))
   ),
-  caption = "Baseline EBMF analysis and validation settings (iterated generative parameters are shown at their baseline value; each input version is listed in the tier table below)"
+  caption = paste0(
+    "Baseline EBMF analysis and validation settings (iterated generative ",
+    "parameters are shown at their baseline value; each input version is ",
+    "listed in the tier table below). Analysis settings signature: ",
+    settings_signature, "."
+  )
 )
 ```
 
@@ -577,18 +522,18 @@ run_tier_one <- function(spec, rep) {
   # every input version sees the same simulation scenario in replicate `rep`.
   dots$seed <- sim_seeds[[rep]]
   sim <- do.call(simulate_trait, dots)
-  res <- do.call(
-    run_univariate_clustering,
-    c(list(trait_object = sim$trait_object), clustering_settings)
-  )
   # Vary the validation layer's internal randomisation by replicate too; a fixed
   # seed here would understate method-level Monte Carlo variability.
-  vs <- validation_settings
-  vs$seed <- sim_seeds[[rep]]
-  smry <- do.call(
-    summarise_ebmf_programs,
-    c(list(clustering_result = res, s_matrix = res$s_matrix), vs)
+  pipeline <- run_ebmf_pipeline(
+    sim$trait_object,
+    settings = ebmf_settings,
+    n_rep = n_stability_rep,
+    seed = sim_seeds[[rep]],
+    cores = params$cores,
+    verbose = FALSE
   )
+  res <- pipeline$fit
+  smry <- pipeline$summary
   valid_ids <- smry$programs$program[
     as.character(smry$programs$confidence_tier) %in% c("high", "medium")
   ]
@@ -723,7 +668,7 @@ for (a in axes) {
 }
 
 # All input versions (the full generative grid) are always run, quick or not.
-# `quick` trades reporting rigour for speed (n_sim, n_null, stability, set
+# `quick` trades reporting rigour for speed (n_sim and stability, set
 # above), not breadth -- the point of quick mode is to see how many input
 # parameters move the recovery metrics, cheaply, before committing to a
 # full-depth run.
@@ -945,11 +890,9 @@ check_table <- function(which_tier) {
       confidence_tier = as.character(confidence_tier),
       effective_n_traits = round(effective_n_traits, 2),
       mean_internal_similarity = round(mean_internal_similarity, 3),
-      excess_similarity = round(excess_similarity, 3),
       similarity_q = signif(similarity_q, 2),
       similarity_z = round(similarity_z, 1),
       connectedness = round(connectedness, 3),
-      excess_connectedness = round(excess_connectedness, 3),
       factor_pve_pct = round(100 * factor_pve, 2),
       replication = round(replication, 3),
       matched = paste0("M", matched_module),
@@ -971,18 +914,17 @@ check_table <- function(which_tier) {
     ) |>
     dplyr::select(
       rep, program, confidence_tier, n_snps, n_snps_filtered,
-      effective_n_traits, mean_internal_similarity, excess_similarity,
+      effective_n_traits, mean_internal_similarity,
       similarity_q, similarity_z, connectedness,
-      excess_connectedness,
       factor_pve_pct, replication, matched,
       pct_module_found, pct_module_missed, pct_not_module
     ) |>
     kable_confidence(
       col.names = c(
         "rep", "program", "confidence", "n_snps", "n_snps filtered",
-        "effective traits", "mean internal similarity", "excess similarity",
+        "effective traits", "mean internal similarity",
         "similarity q", "similarity z",
-        "connectedness", "excess connectedness", "factor PVE %", "replication",
+        "connectedness", "factor PVE %", "replication",
         "matched module", "% module found", "% module missed", "% not module"
       )
     )
@@ -1006,19 +948,19 @@ for (nm in names(tier_specs)) {
 
 - **Fast test runs.** A production render is long: `n_sim = 200` over the 23
   input versions is thousands of EBMF fits, and the cost of a single fit is
-  dominated by `summarise_ebmf_programs` (permutation calibration + stability),
+  dominated by `summarise_ebmf_programs` (similarity test + stability refits),
   not by the repetition count alone. `quick` (default `TRUE`) trades reporting
   rigour for speed, not breadth: it always runs the full 23-version grid, but
-  caps `n_sim` at 3, sets `n_null = 1`, and disables stability — about 1 min,
+  caps `n_sim` at 3 and disables stability — about 1 min,
   and enough to see which input parameters move the recovery metrics before
   committing to a full-depth run. To iterate quickly, override `params`:
   - `params = list(quick = TRUE)` (default) — full 23-version grid, cheap
-    internals (`n_sim = 3`, `n_null = 1`, no stability); about 1 min.
+    internals (`n_sim = 3`, no stability); about 1 min.
   - `params = list(quick = FALSE, n_sim = 20)` — full 23-version grid at
-    higher fidelity (real `n_null`/stability) but reduced repetitions.
+    higher fidelity (real stability) but reduced repetitions.
   - `params = list(quick = FALSE)` — the full study (`n_sim = 200`, full
-    `n_null`/stability); long, intended for a production render.
-  Lowering `n_null` and `n_stability_rep` gives the largest speed-up.
+    stability); long, intended for a production render.
+  Lowering `n_stability_rep` gives the largest speed-up.
 - Each input version comes from iterating the generative parameter arrays in
   the `params` block; arrays are iterated in lock-step with their paired
   parameter, and the first element of each array is the baseline.

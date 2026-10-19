@@ -40,3 +40,4 @@ their absolute posterior mean factor loading exceeds
 \code{magnitude_threshold}. SNPs may belong to multiple programs
 (overlapping clusters).
 }
+\keyword{internal}

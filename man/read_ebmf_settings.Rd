@@ -15,3 +15,4 @@ Named list of settings.
 \description{
 Read \verb{_ebmf_settings.yml} without applying any overrides.
 }
+\keyword{internal}

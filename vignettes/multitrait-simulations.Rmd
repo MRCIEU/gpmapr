@@ -271,35 +271,18 @@ versions[[length(versions) + 1L]] <- list(
 # fitted program and each program's status ("valid" = high or medium
 # confidence, else its tier).
 discover_one_trait <- function(trait_object, trait_id) {
-  res <- run_univariate_clustering(
-    trait_object,
-    target_trait_id = as.integer(trait_id),
-    trait_subset = ebmf_settings$trait_subset,
-    min_snp_signals = as.integer(ebmf_settings$min_snp_signals),
-    compress_method = ebmf_settings$compress_method,
-    compress_scale = as.numeric(ebmf_settings$compress_scale),
-    ebmf_lfsr_threshold = as.numeric(ebmf_settings$ebmf_lfsr_threshold),
-    ebmf_magnitude_threshold = as.numeric(ebmf_settings$ebmf_magnitude_threshold),
-    ebmf_greedy_Kmax = as.integer(ebmf_settings$ebmf_greedy_Kmax),
-    ebmf_prior = ebmf_settings$ebmf_prior,
-    ebmf_backfit = isTRUE(ebmf_settings$ebmf_backfit),
-    min_module_size = as.integer(ebmf_settings$min_module_size)
-  )
   # n_rep = 0: replication refits answer none of this study's questions.
-  smry <- summarise_ebmf_programs(
-    res, s_matrix = res$s_matrix,
-    edge_threshold = as.numeric(ebmf_settings$similarity_threshold),
-    min_module_size = as.integer(ebmf_settings$min_module_size),
-    similarity_n_perm = similarity_perm,
-    similarity_q_threshold = as.numeric(ebmf_settings$similarity_q),
-    high_similarity_q = as.numeric(ebmf_settings$high_similarity_q),
-    high_min_connectedness = as.numeric(ebmf_settings$high_connectedness),
-    high_min_similarity_z = as.numeric(ebmf_settings$high_similarity_z),
-    min_effective_traits = as.numeric(ebmf_settings$min_effective_traits),
-    n_null = 2,
+  pipeline <- run_ebmf_pipeline(
+    trait_object,
+    settings = utils::modifyList(
+      ebmf_settings, list(similarity_n_perm = similarity_perm)
+    ),
+    target_trait_id = as.integer(trait_id),
     n_rep = 0,
     verbose = FALSE
   )
+  res <- pipeline$fit
+  smry <- pipeline$summary
   program_tier <- as.character(smry$programs$confidence_tier)
   return(list(
     all = extract_program_loadings(res, smry, valid_only = FALSE),
@@ -393,7 +376,7 @@ run_replicate <- function(spec, seed) {
   status <- dplyr::bind_rows(lapply(fits, function(x) x$status))
   valid_ids <- status$program_id[status$status == "valid"]
   loadings_all <- dplyr::bind_rows(lapply(fits, function(x) x$all$loadings))
-  mapping <- map_programs_to_planted(loadings_all, gt, by = "snps")
+  mapping <- map_programs_to_planted(loadings_all, gt)
 
   direction_of <- stats::setNames(
     gt$correspondence$direction, gt$correspondence$program_label
@@ -568,7 +551,7 @@ retier <- function(pairs, cutoffs) {
   if (nrow(pairs) == 0) {
     return(pairs)
   }
-  return(gpmapr:::.assign_link_tiers(
+  return(assign_link_tiers(
     pairs,
     phi_high = cutoffs$phi_high, phi_low = cutoffs$phi_low,
     min_shared_loci = cutoffs$min_shared_loci,

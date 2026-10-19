@@ -7,13 +7,16 @@
 trait_duplicates()
 }
 \value{
-A dataframe containing the duplicated traits with the following columns:
+A dataframe in one of two shapes, depending on the API version:
 \itemize{
-\item trait_id: the id of the duplicated trait
-\item trait_name: the name of the duplicated trait
-\item parent_trait_id: the id of the trait it duplicates
-\item parent_trait_name: the name of the trait it duplicates
+\item one row per duplicated trait, with \code{trait_id}, \code{trait_name},
+\code{parent_trait_id} and \code{parent_trait_name} (the trait it duplicates)
+\item one row per trait in a duplicate group, with \code{trait_id},
+\code{trait_name}, \code{duplicate_group} and \code{is_representative} (the trait
+the group's other members duplicate), plus \code{match_rules} and the
+proxy-group columns
 }
+\code{\link[=remove_duplicate_traits]{remove_duplicate_traits()}} accepts either.
 }
 \description{
 Get all traits that have been marked as a duplicate of another trait

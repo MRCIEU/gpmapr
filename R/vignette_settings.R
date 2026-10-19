@@ -7,7 +7,7 @@
 #' @param path Optional explicit path to the settings file. When supplied it is
 #'   used directly and must exist.
 #' @return Path to the settings file.
-#' @export
+#' @keywords internal
 ebmf_settings_path <- function(path = NULL) {
   if (!is.null(path)) {
     if (!file.exists(path)) {
@@ -36,7 +36,7 @@ ebmf_settings_path <- function(path = NULL) {
 #' @description Read `_ebmf_settings.yml` without applying any overrides.
 #' @param path Optional explicit path, passed to `ebmf_settings_path()`.
 #' @return Named list of settings.
-#' @export
+#' @keywords internal
 read_ebmf_settings <- function(path = NULL) {
   if (!requireNamespace("yaml", quietly = TRUE)) {
     stop("Package 'yaml' is required to read the EBMF settings file")

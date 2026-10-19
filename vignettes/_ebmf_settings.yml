@@ -1,10 +1,13 @@
 # Canonical EBMF analysis and program-validation settings.
 #
-# Every investigation vignette resolves its shared settings from this file via
-# resolve_ebmf_settings(), so the simulation, null-simulation, univariate and
-# multi-trait studies cannot drift apart. A vignette parameter supplied at
-# render time (e.g. by the scripts/run_investigation_*_grid.sh grids) overrides
-# the value here; anything not supplied falls back to it.
+# Every analysis and simulation vignette resolves its settings from this file
+# via resolve_ebmf_settings() and runs them through run_ebmf_pipeline(), so the
+# simulation, null-simulation, univariate and multi-trait studies cannot drift
+# apart. Vignettes do not set these keys themselves. The simulation vignettes
+# declare the keys their HPC grids sweep (scripts/run_investigation_*_grid.sh)
+# as null params: a value supplied at render time overrides the one here, and
+# null falls back to it. The defaults of run_univariate_clustering() and
+# summarise_ebmf_programs() match this file (checked by a test).
 #
 # Entries marked REVISED BY HPC are provisional: the recalibrated simulation
 # and null studies are expected to replace them once those runs complete.
@@ -56,3 +59,10 @@ high_similarity_z: 6
 # low whatever its traits. Almost every program in the null simulations falls
 # below this.
 min_effective_traits: 1.5
+
+# --- Replication (trait-subsample refits) ---------------------------------
+# Fraction of trait rows kept in each refit, and the size of each program's
+# top-loading SNP set matched across refits. The number of refits (n_rep) is a
+# per-run cost setting and lives in each vignette.
+frac_traits: 0.8
+stability_top_n: 20

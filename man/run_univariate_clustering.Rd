@@ -7,53 +7,38 @@
 run_univariate_clustering(
   trait_object,
   target_trait_id = NULL,
-  associations = c("coloc", "full"),
-  p_threshold = NULL,
-  snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-  include_trans = FALSE,
-  trait_subset = c("all", "phenotypic"),
-  min_snp_signals = 5L,
+  include_trans = TRUE,
+  trait_subset = c("phenotypic", "all"),
+  min_snp_signals = 2L,
   max_snp_fraction = 0.8,
-  compress_method = c("none", "asinh"),
-  compress_scale = 2,
+  compress_method = c("asinh", "none"),
+  compress_scale = 5,
   ebmf_greedy_Kmax = 100L,
-  ebmf_lfsr_threshold = 0.01,
-  ebmf_magnitude_threshold = 0.25,
+  ebmf_lfsr_threshold = 0.02,
+  ebmf_magnitude_threshold = 0.5,
   ebmf_drop_global = TRUE,
-  ebmf_prior = c("point_normal", "point_laplace"),
+  ebmf_prior = c("point_laplace", "point_normal"),
   ebmf_backfit = TRUE,
-  ebmf_missing_se = 1,
-  min_module_size = 1L,
-  min_mean_internal = 0.3,
-  min_connectedness = 0.5
+  ebmf_missing_se = 1
 )
 }
 \arguments{
 \item{trait_object}{A trait result list (from \code{trait()} or a simulation) with
-a \code{coloc_groups} dataframe. For \code{associations = "full"} it must also contain
-\code{full_associations}.}
+a \code{coloc_groups} dataframe.}
 
 \item{target_trait_id}{Target trait id. Defaults to \code{trait_object$trait$id}.}
 
-\item{associations}{Which association set backs the matrix: \code{"coloc"}
-(default; colocalisation rows only) or \code{"full"} (all full associations).}
-
-\item{p_threshold}{Optional p-value threshold for including target SNPs.}
-
-\item{snp_key}{Column used to name SNP columns.}
-
-\item{include_trans}{If \code{FALSE} (default), rows flagged \code{cis_trans == "trans"}
-are removed before matrix construction (requires a \code{cis_trans} column;
-ignored otherwise).}
+\item{include_trans}{If \code{TRUE} (default), rows flagged \code{cis_trans == "trans"} are kept; \code{FALSE} removes them before matrix construction
+(requires a \code{cis_trans} column; ignored otherwise).}
 
 \item{trait_subset}{Which trait rows back the trait x SNP matrix:
-\code{"all"} (default) uses every available background trait, while
-\code{"phenotypic"} keeps only phenotype traits (rows whose \code{feature_type} is
-\code{"phenotypic"} or missing) plus the target trait, dropping molecular /
-gene-annotated rows. Molecular traits are much sparser, so clustering on
-phenotype traits only can recover structure that sparse molecular rows
-dilute. Requires \code{trait_info} with a \code{feature_type} column (present for
-\code{trait()} and simulated objects).}
+\code{"phenotypic"} (default) keeps only phenotype traits (rows whose
+\code{feature_type} is \code{"phenotypic"} or missing) plus the target trait,
+dropping molecular / gene-annotated rows, while \code{"all"} uses every
+available background trait. Molecular traits are much sparser, so
+clustering on phenotype traits only can recover structure that sparse
+molecular rows dilute. \code{"phenotypic"} requires \code{trait_info} with a
+\code{feature_type} column (present for \code{trait()} and simulated objects).}
 
 \item{min_snp_signals}{Minimum non-\code{NA} SNPs per background trait row.}
 
@@ -76,20 +61,14 @@ programs. This guards against the near-null "one giant cluster" failure
 mode.}
 
 \item{ebmf_prior}{Prior family for EBMF loadings/factors:
-\code{"point_normal"} (default) or \code{"point_laplace"} (heavier tails, often
-better when true effects are large relative to noise).}
+\code{"point_laplace"} (default; heavier tails, often better when true effects
+are large relative to noise) or \code{"point_normal"}.}
 
 \item{ebmf_backfit}{If \code{TRUE} (default), cyclically refit all factors after
 the greedy phase. \code{FALSE} is faster but leaves greedy-order artifacts.}
 
 \item{ebmf_missing_se}{Standard error of an unobserved cell (no colocalising
 association), which EBMF fits as an observed 0. See \code{run_ebmf()}.}
-
-\item{min_module_size, min_mean_internal, min_connectedness}{Recorded pipeline
-settings for the downstream program-validation layer and used (for
-\code{min_module_size}) by \code{calibrate_ebmf_programs()}. They do not affect the
-EBMF fit itself; pass them explicitly to \code{summarise_ebmf_programs()} to
-gate programs.}
 }
 \value{
 A list with:
@@ -118,14 +97,16 @@ sparse/ubiquitous trait filter -> orientation -> compression -> SNP cosine
 similarity -> Empirical Bayes Matrix Factorization programs) from a single
 entry point. The function takes a trait object as returned by
 \code{trait(trait_id, include_associations = TRUE)} — or a simulated object with
-the same shape — so no API calls are made when \code{coloc_groups} (and, for
-\code{associations = "full"}, \code{full_associations}) are supplied.
+the same shape — so no API calls are made.
+
+The defaults are the shared analysis settings in
+\verb{vignettes/_ebmf_settings.yml}. To run with a settings list, and to follow
+with \code{\link[=summarise_ebmf_programs]{summarise_ebmf_programs()}}, use \code{\link[=run_ebmf_pipeline]{run_ebmf_pipeline()}}.
 
 The simulated \code{coloc_groups} dataframe must include at least: \code{coloc_group_id},
 \code{variant_id}, \code{display_snp}, \code{chr}, \code{bp}, \code{trait_id}, \code{trait_name}, \code{min_p},
-\code{beta}, and \code{se} (plus \code{snp_key} if not \code{"variant_id"}). Rows where
-\code{trait_id == target_trait_id} define the target SNPs (columns); all other
-rows become background trait profiles. Optional annotation columns
-(\code{gene_id}, \code{gene}, \code{tissue}, \code{trait_category}) enrich downstream
-interpretation functions.
+\code{beta}, and \code{se}. Rows where \code{trait_id == target_trait_id} define the target
+SNPs (columns, named by \code{variant_id}); all other rows become background
+trait profiles. Optional annotation columns (\code{gene_id}, \code{gene}, \code{tissue},
+\code{trait_category}) enrich downstream interpretation functions.
 }

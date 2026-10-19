@@ -37,20 +37,18 @@ test_that(".program_similarity_null separates a planted block from a random set"
   # from the null, so only the separation is asserted for it.
   expect_equal(res$similarity_emp_p[1], 1 / 500)
   expect_lt(res$similarity_emp_p[1], res$similarity_emp_p[2])
-  expect_gt(res$excess_similarity[1], 0.5)
-  expect_gt(res$excess_connectedness[1], 0.5)
-  expect_lt(abs(res$excess_similarity[2]), 0.2)
   expect_gt(res$similarity_z[1], 5)
+  expect_lt(abs(res$similarity_z[2]), 3)
+  expect_false(any(c("excess_similarity", "excess_connectedness", "similarity_lift") %in%
+                     names(res)))
 })
 
-test_that("excess metrics do not grow with program size", {
-  # Two programs drawn from the same tight block, one small and one large, have
-  # the same excess similarity; the larger one only gets a larger z.
+test_that("similarity_z grows with program size within one block", {
+  # Two programs drawn from the same tight block, one small and one large, are
+  # equally alike; the larger one sits further above its random sets.
   s <- make_block_similarity(block = 1:30)
   members <- members_of_sets(list(paste0("snp", 1:4), paste0("snp", 1:30)))
   res <- .program_similarity_null(s, members, n_perm = 499, seed = 1)
-  expect_equal(res$excess_similarity[1], res$excess_similarity[2], tolerance = 0.05)
-  expect_equal(res$excess_connectedness[1], res$excess_connectedness[2], tolerance = 0.05)
   expect_gt(res$similarity_z[2], res$similarity_z[1])
 })
 
@@ -72,7 +70,7 @@ test_that(".program_similarity_null handles tiny programs and SNPs with no profi
   members <- members_of_sets(list("snp1", paste0("snp", 1:3)))
   res <- .program_similarity_null(s, members, n_perm = 99, seed = 1)
   expect_true(is.na(res$similarity_emp_p[1]))
-  expect_true(is.na(res$excess_similarity[1]))
+  expect_true(is.na(res$similarity_z[1]))
   expect_true(is.finite(res$similarity_emp_p[2]))
   expect_equal(nrow(.program_similarity_null(s, list())), 0)
 })
@@ -175,6 +173,42 @@ test_that("resolve_ebmf_settings merges overrides over the shared file", {
   # NULL falls back to the shared value
   expect_equal(resolved$ebmf_prior, defaults$ebmf_prior)
   expect_equal(sort(names(resolved)), sort(names(defaults)))
+})
+
+test_that("pipeline function defaults match the shared settings file", {
+  defaults <- read_ebmf_settings()
+  map <- .ebmf_settings_map()
+  formal_defaults <- function(fn, args) {
+    f <- formals(fn)
+    return(lapply(stats::setNames(args, args), function(a) {
+      value <- eval(f[[a]])
+      # match.arg() choices: the first is the default.
+      return(if (is.character(value)) value[[1]] else value)
+    }))
+  }
+  clustering <- formal_defaults(run_univariate_clustering, unname(map$clustering))
+  validation <- formal_defaults(summarise_ebmf_programs, unname(map$validation))
+  for (key in intersect(names(defaults), names(map$clustering))) {
+    expect_equal(clustering[[map$clustering[[key]]]], defaults[[key]], ignore_attr = TRUE,
+                 label = paste("run_univariate_clustering default for", key))
+  }
+  for (key in intersect(names(defaults), names(map$validation))) {
+    expect_equal(validation[[map$validation[[key]]]], defaults[[key]], ignore_attr = TRUE,
+                 label = paste("summarise_ebmf_programs default for", key))
+  }
+  # Every key in the file is one the pipeline wrapper accepts.
+  expect_true(all(names(defaults) %in% c(names(map$clustering), names(map$validation))))
+})
+
+test_that("run_ebmf_pipeline splits settings and rejects unknown keys", {
+  args <- .ebmf_pipeline_args(list(
+    ebmf_prior = "point_normal", similarity_threshold = 0.3,
+    stability_top_n = 15, ebmf_backfit = NULL
+  ))
+  expect_equal(args$clustering, list(ebmf_prior = "point_normal"))
+  expect_equal(args$validation, list(edge_threshold = 0.3, top_n = 15))
+  expect_error(.ebmf_pipeline_args(list(n_null = 5)), "Unknown EBMF setting")
+  expect_error(.ebmf_pipeline_args(list(1)), "named list")
 })
 
 test_that("ebmf_settings_signature is stable and order-independent", {

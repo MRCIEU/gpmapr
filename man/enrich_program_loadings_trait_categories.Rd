@@ -49,8 +49,8 @@ close to a monotonic function of \code{p}.
 }
 }
 \description{
-Parallel to \code{enrich_snp_group_trait_categories()}, but without
-any hard lFSR/magnitude cutoff: every SNP with a finite EBMF loading
+The loading-weighted counterpart of \code{\link[=enrich_snp_set]{enrich_snp_set()}}, with
+no hard lFSR/magnitude cutoff: every SNP with a finite EBMF loading
 contributes to every program's test, weighted by its squared loading,
 regressed against each trait category's local 0/1 membership indicator
 (\code{lm(loading^2 ~ category_membership)}), following the approach in
@@ -65,5 +65,5 @@ IMPORTANT: as in that script, SNPs are treated as independent
 observations; for formal inference, LD should be accounted for (e.g. SNP
 -> gene aggregation, or cluster-robust SEs / permutation using LD blocks).
 The enrichment effect estimates are nevertheless useful for comparison
-against the hard-cutoff hypergeometric trait-category test.
+against the hard-set test of \code{\link[=enrich_snp_set]{enrich_snp_set()}}.
 }

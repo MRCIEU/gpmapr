@@ -25,14 +25,13 @@ only programs of high or medium confidence (not \code{"low"} or
 A list with:
 \itemize{
 \item loadings: one row per locus x program with \code{program_id}, \code{trait_id},
-\code{trait_name}, \code{program}, \code{snp_id}, \code{coloc_group_id}, \code{chr}, \code{bp},
-\code{loading} (sign-oriented), \code{abs_loading}, \code{lfsr}, \code{high_confidence}
+\code{trait_name}, \code{program}, \code{snp_id}, \code{coloc_group_id}, \code{loading}
+(sign-oriented), \code{abs_loading}, \code{lfsr}, \code{high_confidence}
 \item profiles: one row per feature x program with \code{program_id},
 \code{trait_id}, \code{trait_name}, \code{program}, \code{feature_trait_id},
 \code{feature_trait_name}, \code{loading} (sign-oriented), \code{lfsr}
 \item programs: one row per program with \code{program_id}, \code{trait_id},
-\code{trait_name}, \code{program}, \code{n_snps}, \code{n_high_confidence}, \code{n_features},
-\code{sign}
+\code{trait_name} and \code{program}
 }
 }
 \description{

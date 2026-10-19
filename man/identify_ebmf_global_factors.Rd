@@ -41,3 +41,4 @@ but only when the fit has non-trivial total PVE. Factor 1 is not assumed
 global. Returns an empty integer vector for near-null fits. By default at
 most one factor is suggested (highest PVE share among candidates).
 }
+\keyword{internal}

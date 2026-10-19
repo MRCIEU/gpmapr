@@ -65,8 +65,8 @@ fixed per program, \code{r_squared} is close to a monotonic function of
 }
 }
 \description{
-Parallel to \code{enrich_snp_group_pathways()}, but without a hard
-lFSR/magnitude cutoff: every SNP with a finite EBMF loading contributes to
+The loading-weighted counterpart of \code{\link[=enrich_snp_set_pathways]{enrich_snp_set_pathways()}},
+with no hard lFSR/magnitude cutoff: every SNP with a finite EBMF loading contributes to
 every program's test, weighted by its squared loading, and is regressed
 against each pathway's local 0/1 gene-membership indicator
 (\code{lm(loading^2 ~ pathway_membership)}), following the approach in
@@ -85,5 +85,5 @@ IMPORTANT: as in that script, SNPs are treated as independent
 observations; for formal inference, LD should be accounted for (e.g. SNP
 -> gene aggregation, or cluster-robust SEs / permutation using LD blocks).
 The enrichment effect estimates are nevertheless useful for comparison
-against the hard-cutoff hypergeometric pathway test.
+against the gene-set test of \code{\link[=enrich_snp_set_pathways]{enrich_snp_set_pathways()}}.
 }

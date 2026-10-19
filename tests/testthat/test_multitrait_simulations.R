@@ -225,110 +225,21 @@ test_that("simulate_trait_pair rejects an over-subscribed shared locus pool", {
   )
 })
 
-test_that("map_programs_to_planted maps a dense feature table by loading weight", {
-  # The feature table carries a loading for every study on every program, so a
-  # set overlap would score a perfect match at 8/200 and reject it. The weighted
-  # share must recover it.
+test_that("map_programs_to_planted maps programs on their high-confidence SNPs", {
   sp <- small_pair(locus_overlap = 0.5, profile_overlap = 0.5)
-  drivers <- sp$ground_truth$program_drivers[["9001:shared1"]]
-  all_features <- as.character(c(drivers, 30001:30192))
-  profiles <- data.frame(
-    program_id = "9001:1", trait_id = "9001", trait_name = "t",
-    program = 1L,
-    feature_trait_id = all_features,
-    feature_trait_name = all_features,
-    # All the loading mass sits on the planted drivers.
-    loading = c(rep(1, length(drivers)), rep(0.01, length(all_features) - length(drivers))),
-    lfsr = 0.5, stringsAsFactors = FALSE
-  )
-  mapped <- map_programs_to_planted(profiles, sp$ground_truth, by = "drivers")
-  expect_equal(mapped$planted_label, "shared1")
-  expect_gt(mapped$fold, 3)
-})
-
-test_that("evaluate_multitrait_simulation credits recall once per planted program", {
-  sp <- small_pair(locus_overlap = 0.5, profile_overlap = 0.8)
-  mapping <- data.frame(
-    program_id = c("9001:1", "9001:2", "9002:1"),
-    trait_id = c("9001", "9001", "9002"),
-    planted_label = c("shared1", "shared1", "shared1"),
-    score = 1, fold = 10, stringsAsFactors = FALSE
-  )
-  # One planted program recovered through two links: recall must count it once,
-  # and precision must still see two links.
-  pairs <- data.frame(
-    program_id_a = c("9001:1", "9001:2"),
-    program_id_b = c("9002:1", "9002:1"),
-    linked = TRUE,
-    direction = "concordant",
+  truth <- sp$ground_truth$program_snps[["9001:shared1"]]
+  decoys <- paste0("decoy", seq_along(truth))
+  loadings <- data.frame(
+    program_id = rep(c("9001:1", "9001:2"), each = length(truth) + 2),
+    trait_id = "9001",
+    snp_id = c(truth, "x1", "x2", decoys, "x3", "x4"),
+    # The two extra SNPs of each program are low-confidence and ignored.
+    high_confidence = rep(c(rep(TRUE, length(truth)), FALSE, FALSE), 2),
     stringsAsFactors = FALSE
   )
-  ev <- evaluate_multitrait_simulation(pairs, mapping, sp$ground_truth)
-  expect_equal(ev$n_links, 2L)
-  expect_equal(ev$n_true_positive, 2L)
-  expect_equal(ev$n_recovered_shared, 1L)
-  expect_equal(ev$recall, 1 / 3)
-  expect_equal(ev$precision, 1)
-})
-
-test_that("evaluate_multitrait_simulation counts unmatched links as false positives", {
-  sp <- small_pair(locus_overlap = 0.5, profile_overlap = 0.8)
-  mapping <- data.frame(
-    program_id = c("9001:1", "9002:1"),
-    trait_id = c("9001", "9002"),
-    # Different planted programs: the link is real-looking but wrong.
-    planted_label = c("shared1", "shared2"),
-    score = 1, fold = 10, stringsAsFactors = FALSE
-  )
-  pairs <- data.frame(
-    program_id_a = "9001:1", program_id_b = "9002:1",
-    linked = TRUE, direction = "concordant", stringsAsFactors = FALSE
-  )
-  ev <- evaluate_multitrait_simulation(pairs, mapping, sp$ground_truth)
-  expect_equal(ev$n_true_positive, 0L)
-  expect_equal(ev$n_false_positive, 1L)
-  expect_equal(ev$precision, 0)
-  expect_true(is.na(ev$sign_accuracy))
-})
-
-test_that("sign accuracy is scored against the planted direction", {
-  sp <- small_pair(locus_overlap = 0.5, profile_overlap = 0.8)
-  planted <- sp$ground_truth$correspondence
-  label <- planted$program_label[planted$direction == "antagonistic"][1]
-  mapping <- data.frame(
-    program_id = c("9001:1", "9002:1"), trait_id = c("9001", "9002"),
-    planted_label = label, score = 1, fold = 10, stringsAsFactors = FALSE
-  )
-  right <- data.frame(
-    program_id_a = "9001:1", program_id_b = "9002:1", linked = TRUE,
-    direction = "antagonistic", stringsAsFactors = FALSE
-  )
-  wrong <- right
-  wrong$direction <- "concordant"
-  expect_equal(
-    evaluate_multitrait_simulation(right, mapping, sp$ground_truth)$sign_accuracy, 1
-  )
-  expect_equal(
-    evaluate_multitrait_simulation(wrong, mapping, sp$ground_truth)$sign_accuracy, 0
-  )
-  # No direction call is not a wrong call.
-  undetermined <- right
-  undetermined$direction <- "undetermined"
-  expect_true(is.na(
-    evaluate_multitrait_simulation(undetermined, mapping, sp$ground_truth)$sign_accuracy
-  ))
-  # A pair that is not linked is not a link.
-  unlinked <- right
-  unlinked$linked <- FALSE
-  expect_equal(evaluate_multitrait_simulation(unlinked, mapping, sp$ground_truth)$n_links, 0L)
-})
-
-test_that("evaluate_multitrait_simulation handles an empty link table", {
-  sp <- small_pair(locus_overlap = 0.5, profile_overlap = 0.8)
-  ev <- evaluate_multitrait_simulation(
-    NULL, data.frame(), sp$ground_truth
-  )
-  expect_equal(ev$n_links, 0L)
-  expect_equal(ev$recall, 0)
-  expect_equal(ev$n_planted_shared, 3L)
+  mapped <- map_programs_to_planted(loadings, sp$ground_truth)
+  expect_setequal(names(mapped), c("program_id", "trait_id", "planted_label", "score"))
+  expect_equal(mapped$planted_label[mapped$program_id == "9001:1"], "shared1")
+  expect_equal(mapped$score[mapped$program_id == "9001:1"], 1)
+  expect_true(is.na(mapped$planted_label[mapped$program_id == "9001:2"]))
 })

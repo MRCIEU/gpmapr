@@ -26,13 +26,16 @@ all_traits <- function() {
 
 #' @title Trait duplicates
 #' @description Get all traits that have been marked as a duplicate of another trait
-#' @return A dataframe containing the duplicated traits with the following columns:
+#' @return A dataframe in one of two shapes, depending on the API version:
 #'   \itemize{
-#'     \item trait_id: the id of the duplicated trait
-#'     \item trait_name: the name of the duplicated trait
-#'     \item parent_trait_id: the id of the trait it duplicates
-#'     \item parent_trait_name: the name of the trait it duplicates
+#'     \item one row per duplicated trait, with `trait_id`, `trait_name`,
+#'       `parent_trait_id` and `parent_trait_name` (the trait it duplicates)
+#'     \item one row per trait in a duplicate group, with `trait_id`,
+#'       `trait_name`, `duplicate_group` and `is_representative` (the trait
+#'       the group's other members duplicate), plus `match_rules` and the
+#'       proxy-group columns
 #'   }
+#'   [remove_duplicate_traits()] accepts either.
 #' @export
 trait_duplicates <- function() {
   duplicates <- trait_duplicates_api()
@@ -44,7 +47,9 @@ trait_duplicates <- function() {
 #' A trait in `keep_trait_ids` (e.g. the target trait) is never removed; if it is itself a duplicate,
 #' its parent is removed instead, so only one copy of the measurement remains.
 #' @param data A dataframe with a `trait_id` column, e.g. `trait()$coloc_groups`
-#' @param duplicates The output of `trait_duplicates()`.  Fetched from the API if not supplied.
+#' @param duplicates The output of `trait_duplicates()`, in either of its shapes: duplicate
+#'   rows with a `parent_trait_id`, or `duplicate_group` rows where each group's
+#'   `is_representative` trait is the parent of the others. Fetched from the API if not supplied.
 #' @param keep_trait_ids Trait ids that must not be removed
 #' @return `data` without the duplicate traits' rows
 #' @export
@@ -53,12 +58,44 @@ remove_duplicate_traits <- function(data, duplicates = trait_duplicates(), keep_
     stop("data must be a dataframe with a trait_id column")
   }
   keep_trait_ids <- as.character(keep_trait_ids)
-  duplicate_ids <- as.character(duplicates$trait_id)
-  parent_ids <- as.character(duplicates$parent_trait_id)
+  pairs <- .duplicate_parent_pairs(duplicates)
+  duplicate_ids <- pairs$trait_id
+  parent_ids <- pairs$parent_trait_id
 
   drop_ids <- union(duplicate_ids, parent_ids[duplicate_ids %in% keep_trait_ids])
   drop_ids <- setdiff(drop_ids, keep_trait_ids)
   return(data[!as.character(data$trait_id) %in% drop_ids, , drop = FALSE])
+}
+
+# Duplicate -> parent pairs from either shape of trait_duplicates(): rows that
+# name a parent_trait_id, or duplicate_group rows whose is_representative trait
+# is the parent of every other member of the group.
+.duplicate_parent_pairs <- function(duplicates) {
+  if (all(c("trait_id", "parent_trait_id") %in% names(duplicates))) {
+    return(data.frame(
+      trait_id = as.character(duplicates$trait_id),
+      parent_trait_id = as.character(duplicates$parent_trait_id),
+      stringsAsFactors = FALSE
+    ))
+  }
+  if (!all(c("trait_id", "duplicate_group", "is_representative") %in% names(duplicates))) {
+    stop(
+      "duplicates must have trait_id and parent_trait_id, or trait_id, ",
+      "duplicate_group and is_representative"
+    )
+  }
+  representative <- duplicates$is_representative %in% TRUE
+  parent_of_group <- stats::setNames(
+    as.character(duplicates$trait_id[representative]),
+    as.character(duplicates$duplicate_group[representative])
+  )
+  members <- duplicates[!representative & !is.na(duplicates$duplicate_group), , drop = FALSE]
+  parent <- unname(parent_of_group[as.character(members$duplicate_group)])
+  return(data.frame(
+    trait_id = as.character(members$trait_id[!is.na(parent)]),
+    parent_trait_id = parent[!is.na(parent)],
+    stringsAsFactors = FALSE
+  ))
 }
 
 #' @title Trait

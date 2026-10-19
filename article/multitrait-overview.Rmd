@@ -3,7 +3,7 @@ title: "Multi-trait EBMF program correspondence"
 output:
   rmarkdown::html_vignette:
     includes:
-      in_header: investigation-wide.html
+      in_header: ../vignettes/investigation-wide.html
 vignette: >
   %\VignetteIndexEntry{Multi-trait EBMF program correspondence}
   %\VignetteEngine{knitr::rmarkdown}
@@ -36,11 +36,11 @@ whether they describe the same biology, and their **SNP loadings** (`F_pm`) at
 the loci the two traits share, which says whether the same SNPs carry it.
 
 The runnable implementation is
-[Investigation of multi-trait EBMF program correspondence](multitrait-analysis.html).
+[Investigation of multi-trait EBMF program correspondence](../vignettes/multitrait-analysis.html).
 
 This is not a search for how much biology is shared. A trait's candidate SNP
-set is already restricted to that trait's own genome-wide-significant,
-fine-mapped hits, so two only-moderately-correlated traits will typically share
+set is already restricted to that trait's own fine-mapped, colocalising
+hits, so two only-moderately-correlated traits will typically share
 a small fraction of that universe — that is expected, not a failure of the
 method. The job of this pipeline is to resolve, cleanly and with calibrated
 significance, whatever correspondence *does* exist, and to say honestly
@@ -96,7 +96,7 @@ digraph workflow {
   S2 [label=\"2. Comparable traits and shared loci\\nper trait pair, uploads bridged by LD\"]
   S3 [label=\"3. Measures: phi (same traits?), alignment (same SNPs?)\\nshared / effective loci, q, rg (direction check)\"]
   S4 [label=\"4. profile_strength x locus_status -> tier\\nlinks = high + medium; direction = sign of phi\"]
-  S5 [label=\"5. Families = communities of links\\nfamily-level rg\"]
+  S5 [label=\"5. Families = communities of links\"]
   S1 -> S2 -> S3 -> S4 -> S5
 }
 "
@@ -156,15 +156,13 @@ low-confidence loci continuously.
 `high_confidence` membership also decides whether the loci can be tested at
 all: below `min_shared_loci` (default 3) shared high-confidence loci
 (`n_loci_shared`) a pair's `locus_status` is `too_few_loci` (Step 4).
-`jaccard_loci` and `p_locus` (overlap of the two membership sets) are
-reported alongside.
 
 **Uploaded GWAS.** An uploaded GWAS numbers its coloc groups privately, so its
 `coloc_group_id`s never equal an existing trait's. For any pair involving an
 upload, a **locus bridge** translates the upload's loci onto the partner's:
 first by the upload's own coloc record of that trait
 (`existing_study_extraction_id`), then by exact `variant_id`, then by LD
-(`ld_proxies()`, `|r| >= min_ld_r`). Every locus comparison for that pair —
+(`ld_proxies()`). Every locus comparison for that pair —
 eligibility, the score, `module_rg()` and the family locus sets — uses the
 same bridge.
 
@@ -379,7 +377,6 @@ was looser, but would let rg -- with its sample-overlap bias -- decide links.
 `build_program_families()` builds an undirected graph with every linked
 program as a node and every link as an edge weighted by `|phi_traits|`, and
 takes its **communities** (Louvain modularity, seeded) as the families.
-`rule = "components"` uses plain connected components instead;
 `mutual_best = TRUE` keeps only links where each program is the other's
 closest partner (highest `|phi_traits|`) in the other's trait. A program with
 no link belongs to no family (`n_unlinked`).
@@ -389,22 +386,16 @@ across traits (an upload's loci translated through its bridge):
 `n_core_loci` are claimed by every member and `n_union_loci` by any;
 `family_loci` lists them with their SNPs.
 
-**Family direction.** A single link often rests on too few loci for an rg
-estimate. `family_module_rg()` pools, for each family and each pair of traits
-it spans, the loci claimed by all of that family's programs in those two
-traits (each trait's loading at a locus taken from whichever of its programs
-loads there most), and runs the same estimate.
-
 ### 6. Interpreting families: biological corroboration
 
 For each family, the high-confidence SNPs of its programs in each trait are
 pooled and enriched **separately**, against that trait's own full candidate
 SNP universe (not the tiny module itself, and not the other trait), using the
-existing hard-cutoff enrichment functions
-(`enrich_snp_group_trait_categories()`, `enrich_snp_group_tissues()`, and
-`enrich_snp_group_pathways()` for Reactome and KEGG through the SNPs'
-colocalising QTL genes). FDR here is the ordinary hypergeometric BH
-correction described in
+existing hard-set enrichment functions
+(`enrich_snp_set()` for trait categories and tissues, a one-sided Fisher test
+against the rest of the trait's SNPs, and `enrich_snp_set_pathways()` for
+Reactome and KEGG through the SNPs' colocalising QTL genes). FDR here is the
+ordinary BH correction described in
 [SNP biological clustering](univariate-overview.html) —
 corrected across the categories/tissues tested **for that one SNP set**,
 independently for each trait. It is not pooled across programs the way the
@@ -426,7 +417,7 @@ it lacks biology.
 
 ## Variables to consider
 
-Exposed in the multi-trait vignette today. Parameters fall into two groups:
+Parameters fall into two groups:
 those controlling the **correspondence test** itself, and those inherited
 from the **univariate pipeline** that determine what counts as a program at
 all before cross-trait comparison begins.
@@ -442,14 +433,11 @@ all before cross-trait comparison begins.
 | `fdr_threshold` | `0.05` | A testable pair needs `q_concordance` at or below it for `agree` | Lowering it turns more testable pairs into `disagree`. |
 | `n_perm` | `200`, `1000`, `3000` | Permutation replicates for the locus null | The smallest attainable p-value is `1/(n_perm + 1)`, so with few replicates many strong pairs tie at the same BH floor. |
 | `exclude_features` | duplicate lists per anchor | Traits removed from that anchor's fit and left out of every profile comparison involving it | See "Duplicate traits" in Step 3. |
-| `options(gpmapr.lfsr_weight)` | `"two_sided"` (default), `"one_sided"` | Confidence weight of a loading: \((1 - 2\,\text{lfsr})_+\) or \(1 - \text{lfsr}\) | `"two_sided"` gives a coin-flip sign no weight; `"one_sided"` still gives it half. Applies to the profile, the locus measures and the `rg` weights. |
 | `mutual_best` (in `build_program_families()`) | `FALSE` (default), `TRUE` | Keep only links that are each program's closest link (highest \|φ\|) to the other's trait | `TRUE` gives at most one partner per program per other trait, so families tend to hold one program per trait; programs that split one module lose their weaker links. |
-| `min_ld_r` | `0.5` | Minimum `\|r\|` for the LD tier of an upload's locus bridge | GPMap's proxy table only stores `r^2 >= 0.8`, so values below about `0.89` have no effect. |
-| `rule` (in `build_program_families()`) | `"communities"` (default), `"components"` | How links are grouped into families | Communities (Louvain) keep densely linked groups apart; components join anything reachable through a chain of links. |
 | `seed` (in `build_program_families()`) | `1` | Seed for the community detection | Louvain is randomised; a different seed can move a program on the boundary between two families. |
 | `linked_only` (in `module_rg()`) | `TRUE` (default), `FALSE` | Which pairs get an `rg` estimate | `FALSE` estimates `rg` for every pair supplied, linked or not. |
-| `n_boot` (in `module_rg()`, `family_module_rg()`) | `1000` | Percentile-bootstrap replicates for the `rg` confidence interval | More replicates give a smoother CI estimate; the CI's width is driven mainly by `n_loci_rg`, not `n_boot`, so increasing this rarely changes whether the CI excludes zero. |
-| `min_loci_rg` (in `module_rg()`, `family_module_rg()`) | `10` | Minimum usable loci for an `rg` estimate | Below it the link has no direction estimate; the family-level estimate pools more loci and often clears it where single links do not. |
+| `n_boot` (in `module_rg()`) | `1000` | Percentile-bootstrap replicates for the `rg` confidence interval | More replicates give a smoother CI estimate; the CI's width is driven mainly by `n_loci_rg`, not `n_boot`, so increasing this rarely changes whether the CI excludes zero. |
+| `min_loci_rg` (in `module_rg()`) | `10` | Minimum usable loci for an `rg` estimate | Below it the link has no direction estimate. |
 
 ### Univariate parameters that flow through
 
@@ -469,7 +457,7 @@ partner for it.
 
 The simulation study that checks this pipeline where the answer is known is
 described in
-[Simulation overview](simulations-overview.html#multi-trait-simulations-testing-correspondence).
+[Simulation overview](../vignettes/simulations-overview.html#multi-trait-simulations-testing-correspondence).
 
 ## Structure of Results
 
@@ -482,7 +470,7 @@ direction does it point."
 |---|---|---|
 | **Trait pair** | How much shared candidate architecture exists between these two traits, and how much of it resolves into linked programs? | Size of the shared locus universe (vs. each trait's total), number of valid programs per trait, number of links and their directions |
 | **Link** | Do the two programs describe the same biology, do the same SNPs carry it, and which way does it point? | `tier`, `profile_strength`, `locus_status`, `phi_traits` with `n_eff_traits` / `top_traits`, `alignment`, `comparability`, `n_loci_shared`, `n_eff_loci`, `q_concordance`, `direction_profile`, `rg` with CI and `direction_check` |
-| **Family** | Which programs, across all traits, describe the same biology, and which SNPs hold them together? | Members per trait, `n_core_loci` / `n_union_loci`, `family_loci`, family-level `rg` per trait pair, biological-annotation agreement across the family's traits |
+| **Family** | Which programs, across all traits, describe the same biology, and which SNPs hold them together? | Members per trait, `n_core_loci` / `n_union_loci`, `family_loci`, biological-annotation agreement across the family's traits |
 | **Locus** | Which loci actually carry the shared signal for this pair? | Each program's loading at the shared loci (which dominate — worth checking when `n_eff_loci` is small), each trait's own `beta`/`se` there |
 
 As with the univariate framework, the aim is not a single verdict per program

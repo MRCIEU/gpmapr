@@ -29,7 +29,7 @@ Simulation is one of two checks on the pipeline: the planted ground truth is
 known exactly, so it controls what real data cannot, which SNPs belong to
 which module. The other check, the external benchmark against Suzuki et al.
 (2024), is described in
-[SNP biological clustering](univariate-overview.html#verification-strategy);
+[SNP biological clustering](../article/univariate-overview.html#verification-strategy);
 the two are read together, not as a single pass/fail.
 
 Simulations help with three levels of choice:
@@ -176,9 +176,9 @@ under no planted structure is invention.
 ## Multi-trait simulations: testing correspondence
 
 **The multi-trait analysis**
-([Multi-trait EBMF program correspondence](multitrait-overview.html)).
+([Multi-trait EBMF program correspondence](../article/multitrait-overview.html)).
 Programs are found separately for each target trait, with the single-trait
-pipeline ([SNP biological clustering](univariate-overview.html)), and two traits' programs
+pipeline ([SNP biological clustering](../article/univariate-overview.html)), and two traits' programs
 are linked by the congruence of their trait profiles, graded with the
 alignment of their SNP loadings at the loci the traits share
 (`compare_program_pairs_loadings()`). **The simulation study below was run

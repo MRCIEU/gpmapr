@@ -10,39 +10,11 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 params:
   api: "production"
-  include_trans: true
   trait_ids: ["c6d2e20f-6ece-d093-78ee-37534547c466", "1631", "1630", "1640"]
-  trait_subset: "phenotypic"
-  min_snp_signals: 2
-  min_module_size: 3
-  compress_method: "asinh"
-  compress_scale: 5
-  similarity_threshold: 0.2
-  ebmf_magnitude_threshold: 0.5
-  ebmf_lfsr_threshold: 0.02
-  ebmf_prior: "point_laplace"
-  ebmf_backfit: true
-  min_mean_internal: 0.3
-  min_connectedness: 0.5
-  n_null: 5
-  alpha_membership: 0.05
-  n_candidate_tier: 25
   n_rep: 2
-  frac_traits: 0.8
-  stability_top_n: 20
-  posterior_stat: "median"
-  posterior_evidence_cap: 50
-  redundancy_threshold: 0.9
   cores: 5
   n_perm: 3000
-  fdr_threshold: 0.05
-  phi_high: 0.85
-  phi_low: 0.70
-  min_alignment: 0.5
-  min_eff_loci: 5
-  min_shared_loci: 3
   mutual_best: false
-  associations: "coloc"
   remove_duplicates: true
 ---
 
@@ -142,86 +114,56 @@ Traits are supplied as an array in `params$trait_ids`. We use
 
 ```{r params}
 api <- params$api
-# Resolved from vignettes/_ebmf_settings.yml, the same file the univariate
-# study reads. Previously this vignette carried its own ebmf_magnitude_threshold
-# (0.5 vs 0.75) and include_trans (FALSE vs TRUE), so it factorised a different
-# matrix and its "programs" were not the univariate programs at all -- which is
-# why the two studies did not line up.
+# Analysis settings come only from vignettes/_ebmf_settings.yml, the same file
+# the univariate study reads. Previously this vignette carried its own
+# ebmf_magnitude_threshold (0.5 vs 0.75) and include_trans (FALSE vs TRUE), so
+# it factorised a different matrix and its "programs" were not the univariate
+# programs at all -- which is why the two studies did not line up. The locals
+# below are for the text.
 ebmf_settings <- resolve_ebmf_settings(params)
 settings_signature <- ebmf_settings_signature(ebmf_settings)
 
-trait_subset <- ebmf_settings$trait_subset
-min_module_size <- as.integer(ebmf_settings$min_module_size)
-min_snp_signals <- as.integer(ebmf_settings$min_snp_signals)
-compress_method <- ebmf_settings$compress_method
-compress_scale <- as.numeric(ebmf_settings$compress_scale)
-include_trans <- isTRUE(ebmf_settings$include_trans)
 similarity_threshold <- as.numeric(ebmf_settings$similarity_threshold)
-ebmf_lfsr_threshold <- as.numeric(ebmf_settings$ebmf_lfsr_threshold)
-ebmf_prior <- ebmf_settings$ebmf_prior
-ebmf_backfit <- isTRUE(ebmf_settings$ebmf_backfit)
-ebmf_magnitude_threshold <- as.numeric(ebmf_settings$ebmf_magnitude_threshold)
-ebmf_greedy_Kmax <- as.integer(ebmf_settings$ebmf_greedy_Kmax)
-similarity_n_perm <- as.integer(ebmf_settings$similarity_n_perm)
 similarity_q_threshold <- as.numeric(ebmf_settings$similarity_q)
 high_similarity_q <- as.numeric(ebmf_settings$high_similarity_q)
 high_connectedness <- as.numeric(ebmf_settings$high_connectedness)
 high_similarity_z <- as.numeric(ebmf_settings$high_similarity_z)
 min_effective_traits <- as.numeric(ebmf_settings$min_effective_traits)
-associations <- params$associations
-min_mean_internal <- as.numeric(params$min_mean_internal)
-min_connectedness <- as.numeric(params$min_connectedness)
-n_null <- as.integer(params$n_null)
-alpha_membership <- as.numeric(params$alpha_membership)
-n_candidate_tier <- as.integer(params$n_candidate_tier)
 n_rep <- as.integer(params$n_rep)
-frac_traits <- as.numeric(params$frac_traits)
-stability_top_n <- as.integer(params$stability_top_n)
-posterior_stat <- params$posterior_stat
-posterior_evidence_cap <- as.numeric(params$posterior_evidence_cap)
-redundancy_threshold <- as.numeric(params$redundancy_threshold)
 cores <- as.integer(params$cores)
 n_perm <- as.integer(params$n_perm)
-fdr_threshold <- as.numeric(params$fdr_threshold)
-phi_high <- as.numeric(params$phi_high)
-phi_low <- as.numeric(params$phi_low)
-min_alignment <- as.numeric(params$min_alignment)
-min_eff_loci <- as.numeric(params$min_eff_loci)
-min_shared_loci_link <- as.integer(params$min_shared_loci)
 mutual_best <- isTRUE(params$mutual_best)
+
+# Link cutoffs: the defaults of compare_program_pairs_loadings(), which the
+# multi-trait simulation study calibrates.
+link_defaults <- formals(compare_program_pairs_loadings)
+phi_high <- link_defaults$phi_high
+phi_low <- link_defaults$phi_low
+min_alignment <- link_defaults$min_alignment
+min_eff_loci <- link_defaults$min_eff_loci
+min_shared_loci_link <- as.integer(link_defaults$min_shared_loci)
+fdr_threshold <- link_defaults$fdr_threshold
 
 knitr::kable(
   data.frame(
-    api = api,
-    trait_ids = paste(trait_ids, collapse = ", "),
-    trait_subset = trait_subset,
-    min_snp_signals = min_snp_signals,
-    min_module_size = min_module_size,
-    compress_method = compress_method,
-    compress_scale = compress_scale,
-    include_trans = include_trans,
-    similarity_threshold = similarity_threshold,
-    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
-    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
-    ebmf_prior = ebmf_prior,
-    ebmf_backfit = ebmf_backfit,
-    min_mean_internal = min_mean_internal,
-    min_connectedness = min_connectedness,
-    n_null = n_null,
-    n_rep = n_rep,
-    n_perm = n_perm,
-    fdr_threshold = fdr_threshold,
-    phi_high = phi_high,
-    phi_low = phi_low,
-    min_alignment = min_alignment,
-    min_eff_loci = min_eff_loci,
-    min_shared_loci = min_shared_loci_link,
-    mutual_best = mutual_best,
-    associations = associations,
-    remove_duplicates = isTRUE(params$remove_duplicates),
+    setting = c(
+      "api", "trait_ids", "n_rep", "cores", "n_perm", "mutual_best",
+      "remove_duplicates", "phi_high", "phi_low", "min_alignment",
+      "min_eff_loci", "min_shared_loci", "fdr_threshold", names(ebmf_settings)
+    ),
+    value = c(
+      api, paste(trait_ids, collapse = ", "), n_rep, cores, n_perm,
+      mutual_best, isTRUE(params$remove_duplicates), phi_high, phi_low,
+      min_alignment, min_eff_loci, min_shared_loci_link, fdr_threshold,
+      vapply(ebmf_settings, function(x) paste(format(x), collapse = ", "), character(1))
+    ),
     stringsAsFactors = FALSE
   ),
-  caption = "Active run parameters",
+  caption = paste0(
+    "Active run parameters. Analysis settings are from _ebmf_settings.yml ",
+    "(signature: ", settings_signature, "); link cutoffs are the defaults of ",
+    "compare_program_pairs_loadings()."
+  ),
   row.names = FALSE
 )
 
@@ -394,48 +336,16 @@ run_trait <- function(tid) {
       dplyr::summarise(n_coloc_groups = dplyr::n_distinct(coloc_group_id), .groups = "drop") |>
       dplyr::mutate(anchor_id = tid)
   }
-  res <- run_univariate_clustering(
+  pipeline <- run_ebmf_pipeline(
     obj,
+    settings = ebmf_settings,
     target_trait_id = tid,
-    associations = associations,
-    trait_subset = trait_subset,
-    include_trans = include_trans,
-    min_snp_signals = min_snp_signals,
-    max_snp_fraction = 0.8,
-    compress_method = compress_method,
-    compress_scale = compress_scale,
-    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
-    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
-    ebmf_greedy_Kmax = ebmf_greedy_Kmax,
-    ebmf_prior = ebmf_prior,
-    ebmf_backfit = ebmf_backfit,
-    min_module_size = min_module_size,
-    min_mean_internal = min_mean_internal,
-    min_connectedness = min_connectedness
-  )
-  smry <- summarise_ebmf_programs(
-    res,
-    s_matrix = res$s_matrix,
-    edge_threshold = similarity_threshold,
-    min_module_size = min_module_size,
-    similarity_n_perm = similarity_n_perm,
-    similarity_q_threshold = similarity_q_threshold,
-    high_similarity_q = high_similarity_q,
-    high_min_connectedness = high_connectedness,
-    high_min_similarity_z = high_similarity_z,
-    min_effective_traits = min_effective_traits,
-    n_null = n_null,
-    alpha_membership = alpha_membership,
-    n_candidate_tier = n_candidate_tier,
     n_rep = n_rep,
-    frac_traits = frac_traits,
-    top_n = stability_top_n,
-    posterior_stat = posterior_stat,
-    posterior_evidence_cap = posterior_evidence_cap,
-    redundancy_threshold = redundancy_threshold,
     cores = cores,
     verbose = FALSE
   )
+  res <- pipeline$fit
+  smry <- pipeline$summary
   extracted <- extract_program_loadings(res, smry, valid_only = TRUE)
   list(
     trait_id = tid, fit = res, summary = smry, extraction = extracted,
@@ -462,7 +372,6 @@ program_meta <- dplyr::bind_rows(lapply(trait_results, function(x) {
       trait_name = trait_name_map[[x$trait_id]]
     )
 }))
-program_info <- dplyr::bind_rows(lapply(trait_results, function(x) x$extraction$programs))
 program_loadings <- dplyr::bind_rows(lapply(trait_results, function(x) x$extraction$loadings))
 program_data <- lapply(trait_results, function(x) x$extraction)
 
@@ -588,13 +497,7 @@ run here and its scores are read in Step 3.
 conc_result <- compare_program_pairs_loadings(
   program_data,
   n_perm = n_perm,
-  fdr_threshold = fdr_threshold,
-  min_shared_loci = min_shared_loci_link,
   exclude_features = proxy_trait_ids,
-  phi_high = phi_high,
-  phi_low = phi_low,
-  min_alignment = min_alignment,
-  min_eff_loci = min_eff_loci,
   seed = 1,
   coloc_groups = coloc_by_trait
 )
@@ -605,7 +508,7 @@ canonical_loci <- program_loadings |>
   dplyr::filter(!is.na(coloc_group_id)) |>
   dplyr::distinct(trait_id, trait_name, coloc_group_id, high_confidence) |>
   dplyr::group_by(trait_id) |>
-  dplyr::mutate(locus = gpmapr:::.canonical_locus_ids(
+  dplyr::mutate(locus = canonical_locus_ids(
     coloc_group_id, trait_id[1], conc_result$bridges
   )) |>
   dplyr::ungroup()
@@ -672,7 +575,7 @@ Every cross-trait pair of programs is asked two questions: do the same
 background traits drive both programs (profile congruence, `phi_traits`), and
 do the same SNPs carry them (the locus measures)? What each measure checks is
 explained in
-[Multi-trait EBMF program correspondence](multitrait-overview.html#what-each-measure-checks);
+[Multi-trait EBMF program correspondence](../article/multitrait-overview.html#what-each-measure-checks);
 here they are combined.
 
 `profile_strength` is **strong** when |φ| ≥ `r phi_high`, **moderate** when
@@ -756,7 +659,7 @@ tiered <- conc_pairs[conc_pairs$tier != "none", , drop = FALSE] |>
     by = c("program_id_a", "program_id_b")
   ) |>
   dplyr::left_join(
-    profile_contributions(conc_result, program_data, pairs = conc_pairs[conc_pairs$tier != "none", ])$pairs,
+    profile_contributions(conc_result, program_data, pairs = conc_pairs[conc_pairs$tier != "none", ]),
     by = c("program_id_a", "program_id_b")
   )
 tiered <- tiered[order(
@@ -838,7 +741,6 @@ member and `n_union_loci` by any. Family direction is counted from its links
 ```{r step4-families, results='asis'}
 conc_families <- build_program_families(
   conc_result,
-  program_info = program_info,
   program_data = program_data,
   mutual_best = mutual_best
 )
@@ -925,9 +827,10 @@ congruence (dashed). Programs with no link are not drawn.
 Annotations play no part in forming a link, so agreement here is
 **independent corroboration** rather than a restatement of the same evidence.
 For each family, the high-confidence SNPs of its programs in each trait are
-pooled and enriched separately, against that trait's full candidate universe,
-for trait categories, tissues, and Reactome and KEGG pathways (through the
-SNPs' colocalising QTL genes, `enrich_snp_group_pathways()`). If the traits of
+pooled and enriched separately for trait categories and tissues (one-sided
+Fisher test against the rest of that trait's candidate SNPs,
+`enrich_snp_set()`), and for Reactome and KEGG pathways (through the SNPs'
+colocalising QTL genes, `enrich_snp_set_pathways()`). If the traits of
 one family independently surface the same category, tissue or pathway, the
 family has support beyond the loadings that created it; if they surface
 nothing in common, it rests on the loadings alone.
@@ -943,24 +846,16 @@ snp_set_enrichment <- function(snps, tid, label, what = c("category", "tissue"))
     return("too few high-confidence SNPs")
   }
   baseline <- unique(program_loadings$snp_id[program_loadings$trait_id == tid])
-  groups <- data.frame(snp_id = snps, group = label, stringsAsFactors = FALSE)
-  res <- if (what == "category") {
-    enrich_snp_group_trait_categories(
-      groups = groups, coloc_groups = coloc_by_trait[[tid]],
-      snp_key = "variant_id", min_group_size = 5L, baseline_snp_ids = baseline
-    )
-  } else {
-    enrich_snp_group_tissues(
-      groups = groups, coloc_groups = coloc_by_trait[[tid]],
-      snp_key = "variant_id", min_group_size = 5L, background = "trait",
-      baseline_snp_ids = baseline
-    )
-  }
-  if (length(res$by_group) == 0 || nrow(res$by_group[[1]]$enriched) == 0) {
+  annotation <- if (what == "category") "trait_category" else "tissue"
+  res <- enrich_snp_set(
+    snps, baseline, coloc_by_trait[[tid]], annotation = annotation
+  )
+  enriched <- res[!is.na(res$fdr) & res$fdr <= 0.05, , drop = FALSE]
+  if (nrow(enriched) == 0) {
     return("none")
   }
-  hits <- utils::head(res$by_group[[1]]$enriched, 4)
-  hit_label <- if (what == "category") hits$trait_category else hits$tissue
+  hits <- utils::head(enriched, 4)
+  hit_label <- hits[[annotation]]
   return(paste0(hit_label, " (FDR=", signif(hits$fdr, 2), ")", collapse = "<br>"))
 }
 
@@ -970,18 +865,13 @@ snp_set_pathways <- function(snps, tid, label) {
     return(c(reactome = "too few high-confidence SNPs", kegg = "too few high-confidence SNPs"))
   }
   res <- tryCatch(
-    enrich_snp_group_pathways(
-      groups = data.frame(snp_id = snps, group = label, stringsAsFactors = FALSE),
-      coloc_groups = coloc_by_trait[[tid]],
-      min_group_size = 5L, snp_key = "variant_id",
-      sources = c("KEGG", "Reactome")
-    ),
+    enrich_snp_set_pathways(snps, coloc_by_trait[[tid]]),
     error = function(e) return(NULL)
   )
   if (is.null(res)) {
     return(c(reactome = "unavailable", kegg = "unavailable"))
   }
-  if (nrow(res$summary) == 0) {
+  if (nrow(res$genes) == 0) {
     return(c(reactome = "too few genes", kegg = "too few genes"))
   }
   label_of <- function(x) {
@@ -989,8 +879,8 @@ snp_set_pathways <- function(snps, tid, label) {
     return(if (is.na(x) || !nzchar(x)) "none" else x)
   }
   return(c(
-    reactome = label_of(res$summary$top_enriched_reactome),
-    kegg = label_of(res$summary$top_enriched_kegg)
+    reactome = label_of(res$top_term[["Reactome"]]),
+    kegg = label_of(res$top_term[["KEGG"]])
   ))
 }
 

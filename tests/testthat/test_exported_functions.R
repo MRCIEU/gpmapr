@@ -35,37 +35,6 @@ test_that("trait() returns full_associations when requested", {
   expect_true(all(expected_names %in% names(result$full_associations)))
 })
 
-test_that("build_ebmf_matrix() builds oriented z-score features", {
-  skip_if_not(requireNamespace("flashier", quietly = TRUE))
-  trait_id <- 5020
-  ebmf_data <- build_ebmf_matrix(
-    trait_id = trait_id,
-    snp_key = "variant_id",
-    min_snp_signals = 5L
-  )
-  expect_true(is.matrix(ebmf_data$beta_matrix))
-  expect_true(is.matrix(ebmf_data$se_matrix))
-  expect_identical(dim(ebmf_data$beta_matrix), dim(ebmf_data$se_matrix))
-  expect_gt(nrow(ebmf_data$beta_matrix), 1)
-  expect_gt(ncol(ebmf_data$beta_matrix), 1)
-  expect_true(all(ebmf_data$se_matrix > 0, na.rm = TRUE))
-  expect_true(all(c("trait", "gene") %in% ebmf_data$trait_info$feature_type) ||
-    "trait" %in% ebmf_data$trait_info$feature_type)
-  expect_false("trait_annotations" %in% names(ebmf_data))
-  expect_false("snp_annotations" %in% names(ebmf_data))
-  expect_true(is.matrix(ebmf_data$verification_trait_matrix))
-  expect_equal(
-    rownames(ebmf_data$verification_trait_matrix),
-    colnames(ebmf_data$beta_matrix)
-  )
-  expect_true(!is.null(ebmf_data$prep_summary))
-  expect_equal(ebmf_data$prep_summary$compress_method, "asinh")
-  expect_lt(
-    ebmf_data$prep_summary$max_abs_used,
-    ebmf_data$prep_summary$max_abs_raw
-  )
-})
-
 test_that("compress_effect_matrix() soft-compresses extremes without hard clip", {
   x <- matrix(
     c(1, 5, 1000, -1000),
@@ -262,66 +231,10 @@ test_that("genes_at_snps() maps molecular QTL genes to SNPs", {
   expect_true(all(c("snp_id", "coloc_group_id", "gene_id", "gene") %in% names(out)))
 })
 
-test_that("compare_group_pathways() flags recovered and split pathways", {
-  trait_enrichment <- list(
-    pathways = data.frame(
-      source = c("KEGG", "Reactome"),
-      term_id = c("k1", "r1"),
-      description = c("Path A", "Path B"),
-      overlap = c(3L, 4L),
-      p_value = c(0.01, 0.02),
-      fdr = c(0.03, 0.04),
-      input_genes = c("1, 2", "3, 4"),
-      stringsAsFactors = FALSE
-    )
-  )
-  group_enrichment <- list(
-    by_group = list(
-      list(
-        group = "1",
-        pathways = data.frame(
-          source = c("KEGG", "KEGG"),
-          term_id = c("k1", "k2"),
-          description = c("Path A", "Path C"),
-          overlap = c(2L, 2L),
-          p_value = c(0.01, 0.02),
-          fdr = c(0.03, 0.04),
-          input_genes = c("1", "5"),
-          stringsAsFactors = FALSE
-        )
-      ),
-      list(
-        group = "2",
-        pathways = data.frame(
-          source = "KEGG",
-          term_id = "k1",
-          description = "Path A",
-          overlap = 2L,
-          p_value = 0.01,
-          fdr = 0.03,
-          input_genes = "2",
-          stringsAsFactors = FALSE
-        )
-      )
-    )
-  )
-  cmp <- compare_group_pathways(trait_enrichment, group_enrichment)
-  expect_true("split_across_groups" %in% cmp$pathway_status$status)
-  expect_true("baseline_only" %in% cmp$pathway_status$status)
-  expect_true("group_specific" %in% cmp$pathway_status$status)
-  expect_equal(cmp$group_overlap$n_shared_with_baseline[1], 1L)
-  expect_equal(cmp$group_overlap$n_novel[1], 1L)
-})
-
 test_that("extract_ebmf_clusters defaults to stricter magnitude_threshold", {
   expect_equal(formals(extract_ebmf_clusters)$magnitude_threshold, 0.25)
-  expect_equal(formals(run_ebmf_comparison)$magnitude_threshold, 0.25)
-  expect_null(formals(run_ebmf_comparison)$label_schemes)
-  expect_equal(formals(build_ebmf_matrix)$min_snp_signals, 5L)
-  expect_equal(eval(formals(build_ebmf_matrix)$compress_method), c("asinh", "none"))
-  expect_equal(formals(select_ebmf_comparison_run)$min_total_pve, 0.01)
-  expect_equal(eval(formals(run_ebmf)$se_mode), c("unit", "matrix"))
   expect_equal(formals(run_ebmf)$missing_se, 1)
+  expect_false(any(c("se_matrix", "se_mode", "var_type") %in% names(formals(run_ebmf))))
 })
 
 test_that("EBMF inputs encode unobserved cells as zeros", {
@@ -330,107 +243,31 @@ test_that("EBMF inputs encode unobserved cells as zeros", {
     nrow = 2,
     dimnames = list(c("t1", "t2"), c("s1", "s2", "s3"))
   )
-  se <- matrix(1, 2, 3, dimnames = dimnames(beta))
-  se[is.na(beta)] <- NA_real_
 
-  hard <- gpmapr:::.prepare_ebmf_flash_inputs(beta, se, "unit")
+  hard <- gpmapr:::.prepare_ebmf_flash_inputs(beta)
   expect_equal(hard$data["t2", "s1"], 0)
   expect_false(anyNA(hard$data))
   expect_equal(hard$S, 1)
 
-  # In "matrix" mode the unobserved cells get missing_se, not the filter's 1e6.
-  hard_matrix <- gpmapr:::.prepare_ebmf_flash_inputs(beta, se, "matrix")
-  expect_equal(hard_matrix$data["t2", "s1"], 0)
-  expect_equal(hard_matrix$S["t2", "s1"], 1)
-
-  soft <- gpmapr:::.prepare_ebmf_flash_inputs(beta, se, "unit", missing_se = 2.5)
+  soft <- gpmapr:::.prepare_ebmf_flash_inputs(beta, missing_se = 2.5)
   expect_equal(soft$data["t2", "s1"], 0)
   expect_equal(soft$S["t2", "s1"], 2.5)
   expect_equal(soft$S["t1", "s1"], 1)
 
-  expect_error(run_ebmf(beta, se, missing_se = 0), "missing_se")
+  # A row or column with no observed non-zero value is removed, with a warning.
+  empty_col <- cbind(beta, s4 = c(NA, 0))
+  expect_warning(
+    trimmed <- gpmapr:::.prepare_ebmf_flash_inputs(empty_col),
+    "1 all-zero/all-missing column"
+  )
+  expect_equal(colnames(trimmed$data), c("s1", "s2", "s3"))
+
+  expect_error(run_ebmf(beta, missing_se = 0), "missing_se")
 })
 
 test_that("EBMF refits default to SE 1 for results saved before ebmf_missing_se", {
   expect_equal(gpmapr:::.ebmf_missing_se(list()), 1)
   expect_equal(gpmapr:::.ebmf_missing_se(list(ebmf_missing_se = 2.5)), 2.5)
-})
-
-test_that("filter_perturbation_features() drops sparse columns", {
-  trait_matrix <- matrix(
-    c(1, 2, 3, 3, NA, 4),
-    nrow = 3,
-    dimnames = list(c("s1", "s2", "s3"), c("t1", "t2"))
-  )
-  gene_matrix <- matrix(
-    c(1, 2, 3, NA, NA, 1),
-    nrow = 3,
-    dimnames = list(c("s1", "s2", "s3"), c("g1", "g2"))
-  )
-  out <- filter_perturbation_features(trait_matrix, gene_matrix, min_snps = 3)
-  expect_equal(out$n_traits_kept, 1L)
-  expect_equal(out$n_genes_kept, 1L)
-  expect_equal(colnames(out$trait_matrix), "t1")
-  expect_equal(colnames(out$gene_matrix), "g1")
-})
-
-test_that("orient_perturbation_matrices() flips SNP rows by target sign", {
-  trait_matrix <- matrix(
-    c(1, 2, 3, 4),
-    nrow = 2,
-    dimnames = list(c("s1", "s2"), c("t1", "t2"))
-  )
-  gene_matrix <- matrix(
-    c(5, 6, 7, 8),
-    nrow = 2,
-    dimnames = list(c("s1", "s2"), c("g1", "g2"))
-  )
-  z_target <- c(s1 = 1.5, s2 = -2)
-  out <- orient_perturbation_matrices(trait_matrix, gene_matrix, z_target)
-  expect_equal(out$trait_matrix["s2", ], -trait_matrix["s2", ])
-  expect_equal(out$gene_matrix["s1", ], gene_matrix["s1", ])
-})
-
-test_that("summarise_baseline_traits() ranks by abs mean z", {
-  trait_matrix <- matrix(
-    c(1, 2, NA, 0, 3, 4),
-    nrow = 3,
-    dimnames = list(c("s1", "s2", "s3"), c("t1", "t2"))
-  )
-  out <- summarise_baseline_traits(
-    trait_matrix,
-    top_n = 2,
-    min_snps_with_signal = 1L
-  )
-  expect_true(is.list(out))
-  expect_equal(out$traits$trait_id[1], "t2")
-  expect_true(out$traits$abs_mean_z[1] >= out$traits$abs_mean_z[2])
-})
-
-test_that("summarise_snp_group_traits() reports top trait categories", {
-  trait_matrix <- matrix(
-    c(2, 1, 0, 3, 1, 0, 0, 0, 4),
-    nrow = 3,
-    dimnames = list(c("s1", "s2", "s3"), c("10", "20", "30"))
-  )
-  coloc_groups <- data.frame(
-    trait_id = c(10L, 20L, 30L),
-    trait_category = c("Anthropometric Measures", "Anthropometric Measures", "Metabolic Disease"),
-    stringsAsFactors = FALSE
-  )
-  groups <- c(s1 = 1, s2 = 1, s3 = 1)
-  out <- summarise_snp_group_traits(
-    trait_matrix = trait_matrix,
-    groups = groups,
-    coloc_groups = coloc_groups,
-    min_group_size = 1,
-    top_n = 3,
-    min_snps_with_signal = 1L,
-    n_categories = 2L
-  )
-  expect_true("top_trait_categories" %in% names(out$summary))
-  expect_true(grepl("Anthropometric", out$summary$top_trait_categories[1]))
-  expect_equal(nrow(out$by_group[[1]]$categories) <= 2, TRUE)
 })
 
 test_that("summarise_module_specific_traits() ranks by module-vs-rest", {
@@ -458,7 +295,6 @@ test_that("summarise_module_specific_traits() ranks by module-vs-rest", {
     min_group_size = 1,
     top_n = 3,
     min_snps_with_signal = 1L,
-    n_categories = 1L,
     min_specificity = 1.1
   )
   expect_equal(length(out$by_group), 2L)
@@ -466,11 +302,11 @@ test_that("summarise_module_specific_traits() ranks by module-vs-rest", {
   expect_true("passes_min_specificity" %in% names(out$by_group[[1]]$traits))
   expect_equal(out$by_group[[1]]$traits$trait_id[1], "10")
   expect_equal(out$by_group[[2]]$traits$trait_id[1], "20")
-  expect_true(grepl("Lipids", out$summary$top_trait_categories[1]))
-  expect_true(all(out$summary$n_traits_ranked > 0))
+  expect_equal(out$by_group[[1]]$traits$trait_category[1], "Lipids")
+  expect_true(all(vapply(out$by_group, function(x) nrow(x$traits), integer(1)) > 0))
 })
 
-test_that("summarise_module_specific_traits() returns typed empty summary", {
+test_that("summarise_module_specific_traits() returns no groups below min_group_size", {
   trait_matrix <- matrix(
     c(1, 2, 3),
     nrow = 3,
@@ -485,8 +321,7 @@ test_that("summarise_module_specific_traits() returns typed empty summary", {
     min_snps_with_signal = 1L
   )
   expect_equal(length(out$by_group), 0L)
-  expect_true("group" %in% names(out$summary))
-  expect_equal(nrow(out$summary), 0L)
+  expect_false("summary" %in% names(out))
 
   keep_three <- summarise_module_specific_traits(
     trait_matrix = trait_matrix,
@@ -496,52 +331,42 @@ test_that("summarise_module_specific_traits() returns typed empty summary", {
     min_snps_with_signal = 1L
   )
   expect_equal(length(keep_three$by_group), 1L)
-  expect_equal(keep_three$summary$group[[1]], "1")
+  expect_equal(keep_three$by_group[[1]]$group, "1")
 })
 
 
-test_that("enrich_snp_group_tissues() flags enriched tissues", {
+test_that("enrich_snp_set() tests tissues against the rest of the trait's SNPs", {
   coloc_groups <- data.frame(
     variant_id = c("s1", "s1", "s2", "s2", "s3", "s3", "s4", "s4"),
-    gene_id = 1:8,
+    gene_id = c(1:7, NA),
     tissue = c(
       "Adipose", "Adipose", "Adipose", "Blood",
       "Blood", "Blood", "Blood", "Brain"
     ),
     stringsAsFactors = FALSE
   )
-  groups <- c(s1 = 1, s2 = 1, s3 = 2, s4 = 2)
-  out_rest <- enrich_snp_group_tissues(
-    groups = groups,
-    coloc_groups = coloc_groups,
-    min_group_size = 1,
-    background = "rest"
+  out <- enrich_snp_set(
+    c("s1", "s2"), c("s1", "s2", "s3", "s4"), coloc_groups,
+    annotation = "tissue", min_set_size = 1
   )
-  expect_true(nrow(out_rest$summary) >= 1)
-  expect_true("by_group" %in% names(out_rest))
-  expect_true("background" %in% names(out_rest))
-  expect_equal(out_rest$background_mode, "rest")
-  expect_true(nrow(out_rest$by_group[[1]]$comparison) >= 1)
-  expect_true("frac_group" %in% names(out_rest$by_group[[1]]$comparison))
-  expect_true(
-    "fold_enrichment" %in% names(out_rest$by_group[[1]]$enriched) ||
-      nrow(out_rest$by_group[[1]]$enriched) == 0
-  )
-
-  out_trait <- enrich_snp_group_tissues(
-    groups = groups,
-    coloc_groups = coloc_groups,
-    min_group_size = 1,
-    background = "trait",
-    baseline_snp_ids = names(groups)
-  )
-  expect_equal(out_trait$background_mode, "trait")
-  expect_true(out_trait$n_background_links >= 1)
-  expect_true(nrow(out_trait$by_group[[1]]$comparison) >= 1)
+  expect_true(all(c(
+    "tissue", "n_set", "n_background", "n_set_total", "n_background_total",
+    "frac_set", "frac_background", "fold_enrichment", "p_value", "fdr"
+  ) %in% names(out)))
+  # Distinct SNP-tissue links: the set has Adipose x2 and Blood x1; the
+  # background (s3, s4) has Blood x2, and s4's Brain row has no gene_id so it
+  # is not a tissue link.
+  adipose <- out[out$tissue == "Adipose", ]
+  expect_equal(adipose$n_set, 2L)
+  expect_equal(adipose$n_background, 0L)
+  expect_equal(adipose$n_set_total, 3L)
+  expect_equal(adipose$n_background_total, 2L)
+  expect_false("Brain" %in% out$tissue)
+  expect_equal(out$tissue[1], "Adipose")
 })
 
 
-test_that("enrich_snp_group_trait_categories() uses trait baseline", {
+test_that("enrich_snp_set() removes the set from the background", {
   coloc_groups <- data.frame(
     variant_id = c("s1", "s1", "s2", "s2", "s3", "s3", "s4", "s4"),
     trait_category = c(
@@ -550,26 +375,25 @@ test_that("enrich_snp_group_trait_categories() uses trait baseline", {
     ),
     stringsAsFactors = FALSE
   )
-  groups <- c(s1 = 1, s2 = 1, s3 = 2, s4 = 2)
-  out <- enrich_snp_group_trait_categories(
-    groups = groups,
-    coloc_groups = coloc_groups,
-    min_group_size = 1,
-    baseline_snp_ids = names(groups)
-  )
-  expect_equal(out$background_mode, "trait")
-  expect_true(nrow(out$summary) >= 1)
-  expect_true("trait_category" %in% names(out$background))
-  expect_true(nrow(out$by_group[[1]]$comparison) >= 1)
-  expect_true("frac_universe" %in% names(out$by_group[[1]]$comparison))
-  expect_true(
-    "fold_enrichment" %in% names(out$by_group[[1]]$enriched) ||
-      nrow(out$by_group[[1]]$enriched) == 0
-  )
+  # Passing the set inside the background gives the same result as leaving it
+  # out: the set is always compared with the trait's other SNPs.
+  with_set <- enrich_snp_set(c("s1", "s2"), c("s1", "s2", "s3", "s4"),
+                             coloc_groups, min_set_size = 1)
+  without_set <- enrich_snp_set(c("s1", "s2"), c("s3", "s4"),
+                                coloc_groups, min_set_size = 1)
+  expect_equal(with_set, without_set)
+  expect_true("trait_category" %in% names(with_set))
+  expect_equal(nrow(enrich_snp_set("s1", c("s1", "s2"), coloc_groups)), 0L)
 })
 
 
-test_that("build_pleiotropy_matrix filters to target trait SNPs from shared coloc_groups", {
+# The traits x SNPs matrix run_univariate_clustering() builds before filtering.
+pleiotropy_matrix_for <- function(trait_id, coloc_groups) {
+  locus_data <- gpmapr:::.prepare_pleiotropy_locus_data(trait_id, coloc_groups)
+  return(gpmapr:::.finalize_pleiotropy_from_locus(locus_data, as.character(trait_id)))
+}
+
+test_that("the pleiotropy matrix keeps the target trait's SNPs from shared coloc_groups", {
   coloc_groups <- data.frame(
     trait_id = c(1L, 1L, 1L, 2L, 2L, 99L, 99L),
     trait_name = c("A", "A", "A", "B", "B", "bg", "bg"),
@@ -584,8 +408,8 @@ test_that("build_pleiotropy_matrix filters to target trait SNPs from shared colo
     stringsAsFactors = FALSE
   )
 
-  p1 <- build_pleiotropy_matrix(1L, coloc_groups = coloc_groups)
-  p2 <- build_pleiotropy_matrix(2L, coloc_groups = coloc_groups)
+  p1 <- pleiotropy_matrix_for(1L, coloc_groups)
+  p2 <- pleiotropy_matrix_for(2L, coloc_groups)
   expect_equal(ncol(p1$x_matrix), 3L)
   expect_equal(ncol(p2$x_matrix), 2L)
   expect_true(setequal(colnames(p1$x_matrix), c("v1", "v2", "v3")))
@@ -611,12 +435,12 @@ test_that("univariate input can exclude trans markers", {
 
   cis_only <- coloc_groups |>
     dplyr::filter(is.na(cis_trans) | tolower(cis_trans) != "trans")
-  out <- build_pleiotropy_matrix(1L, coloc_groups = cis_only)
+  out <- pleiotropy_matrix_for(1L, cis_only)
 
   expect_identical(colnames(out$x_matrix), "101")
 })
 
-test_that("snp_similarity_matrix supports pairwise-complete overlap shrinkage", {
+test_that("snp_similarity_matrix treats missing cells as zero effects", {
   x_matrix <- matrix(
     c(
       1, 1, NA,
@@ -628,32 +452,14 @@ test_that("snp_similarity_matrix supports pairwise-complete overlap shrinkage", 
       c("snp1", "snp2")
     )
   )
-
-  zero_fill <- snp_similarity_matrix(x_matrix)
-  pairwise <- snp_similarity_matrix(
-    x_matrix,
-    missing_method = "pairwise_complete"
-  )
-  shrunk <- snp_similarity_matrix(
-    x_matrix,
-    missing_method = "pairwise_complete",
-    overlap_shrinkage = 3
-  )
-  held_out <- snp_similarity_matrix(
-    x_matrix,
-    missing_method = "pairwise_complete",
-    min_overlap = 2L
-  )
-
-  expect_equal(zero_fill$s_matrix["snp1", "snp2"], 0.5)
-  expect_equal(pairwise$s_matrix["snp1", "snp2"], 1)
-  expect_equal(pairwise$overlap_matrix["snp1", "snp2"], 1)
-  expect_equal(shrunk$s_matrix["snp1", "snp2"], 0.25)
-  expect_equal(held_out$s_matrix["snp1", "snp2"], 0)
-  expect_false(held_out$eligible_matrix["snp1", "snp2"])
+  out <- snp_similarity_matrix(x_matrix)
+  expect_equal(out$s_matrix["snp1", "snp2"], 0.5)
+  expect_equal(out$overlap_matrix["snp1", "snp2"], 1)
+  expect_true(out$eligible_matrix["snp1", "snp2"])
+  expect_setequal(names(out), c("s_matrix", "col_norms", "overlap_matrix", "eligible_matrix"))
 })
 
-test_that("enrichment reports bootstrap CI and BH FDR", {
+test_that("enrich_snp_set() is a one-sided Fisher test with BH FDR", {
   coloc_groups <- data.frame(
     variant_id = c("s1", "s1", "s1", "s2", "s2", "s3", "s3", "s4", "s4", "s5", "s6"),
     gene_id = 1:11,
@@ -667,31 +473,25 @@ test_that("enrichment reports bootstrap CI and BH FDR", {
     ),
     stringsAsFactors = FALSE
   )
-  groups <- c(s1 = 1, s2 = 1, s3 = 1, s4 = 2, s5 = 2, s6 = 2)
+  set <- c("s1", "s2", "s3")
+  out <- enrich_snp_set(set, paste0("s", 1:6), coloc_groups, min_set_size = 1)
+  for (i in seq_len(nrow(out))) {
+    tab <- matrix(c(
+      out$n_set[i], out$n_set_total[i] - out$n_set[i],
+      out$n_background[i], out$n_background_total[i] - out$n_background[i]
+    ), nrow = 2)
+    expect_equal(
+      out$p_value[i],
+      stats::fisher.test(tab, alternative = "greater")$p.value
+    )
+  }
+  expect_equal(out$fdr, stats::p.adjust(out$p_value, method = "BH"))
+  expect_false(any(c("fe_ci_lower", "fe_ci_upper") %in% names(out)))
 
-  out <- enrich_snp_group_trait_categories(
-    groups = groups,
-    coloc_groups = coloc_groups,
-    min_group_size = 1,
-    baseline_snp_ids = names(groups),
-    seed = 1L
-  )
-  cmp <- out$by_group[[1]]$comparison
-  expect_true(all(
-    c("fe_ci_lower", "fe_ci_upper", "fdr") %in% names(cmp)
-  ))
-  expect_true("enriched" %in% names(out$by_group[[1]]))
-  expect_true("n_enriched_categories" %in% names(out$summary))
-  expect_true("top_enriched_category" %in% names(out$summary))
-
-  out_tis <- enrich_snp_group_tissues(
-    groups = groups,
-    coloc_groups = coloc_groups,
-    min_group_size = 1,
-    background = "rest",
-    seed = 1L
-  )
-  expect_true("fdr" %in% names(out_tis$by_group[[1]]$comparison))
+  # A set with more links than its background still gets a p-value.
+  big <- enrich_snp_set(paste0("s", 1:5), paste0("s", 1:6), coloc_groups,
+                        min_set_size = 1)
+  expect_true(all(is.finite(big$p_value)))
 })
 
 test_that("genes_at_snps can include situated genes", {
@@ -713,43 +513,7 @@ test_that("genes_at_snps can include situated genes", {
   expect_equal(situated$gene, "GENE42")
 })
 
-test_that("compare_snp_group_modules() returns pairwise tests with global FDR", {
-  coloc_groups <- data.frame(
-    variant_id = c("s1", "s1", "s1", "s2", "s2", "s3", "s3", "s4", "s4", "s5", "s6"),
-    gene_id = 1:11,
-    tissue = c(
-      "Adipose", "Adipose", "Brain", "Adipose", "Blood",
-      "Blood", "Blood", "Blood", "Brain", "Brain", "Brain"
-    ),
-    trait_category = c(
-      "Metabolic", "Metabolic", "Neuro", "Metabolic", "Blood",
-      "Blood", "Blood", "Blood", "Neuro", "Neuro", "Neuro"
-    ),
-    stringsAsFactors = FALSE
-  )
-  groups <- c(s1 = 1, s2 = 1, s3 = 1, s4 = 2, s5 = 2, s6 = 2)
-
-  out <- compare_snp_group_modules(
-    groups = groups,
-    coloc_groups = coloc_groups,
-    value_col = "trait_category",
-    min_group_size = 1
-  )
-  expect_true(all(c("summary", "pairwise", "by_value") %in% names(out)))
-  expect_true(all(c("value", "module_a", "module_b", "p_value", "fdr") %in% names(out$pairwise)))
-  expect_true(all(c("module", "n_pairwise_sig", "top_pairwise_partner") %in% names(out$summary)))
-
-  # no reliable modules to compare -> empty summaries
-  out_empty <- compare_snp_group_modules(
-    groups = c(s1 = 1, s2 = 1, s3 = 1),
-    coloc_groups = coloc_groups,
-    value_col = "tissue",
-    min_group_size = 2
-  )
-  expect_equal(nrow(out_empty$pairwise), 0L)
-})
-
-test_that("enrich_snp_group_pathways() separates Reactome, KEGG and HP hits", {
+test_that("enrich_snp_set_pathways() reports the top term per source", {
   genes <- all_genes()
   gene_ids <- genes[genes$gene %in% c("TREM2", "APOE", "FTO", "MC4R", "LPL"), c("id", "gene")]
   coloc_groups <- data.frame(
@@ -759,71 +523,17 @@ test_that("enrich_snp_group_pathways() separates Reactome, KEGG and HP hits", {
     gene = rep(gene_ids$gene, 2),
     stringsAsFactors = FALSE
   )
-  groups <- c(s1 = 1, s2 = 1, s3 = 1, s4 = 2, s5 = 2)
 
-  out <- enrich_snp_group_pathways(
-    groups = groups,
-    coloc_groups = coloc_groups,
-    min_group_size = 1,
-    sources = c("KEGG", "Reactome", "HP"),
-    minimum_count_in_network = 1
-  )
-  s <- out$summary
-  expect_true(all(
-    c(
-      "n_enriched_pathways", "top_enriched_pathway",
-      "n_enriched_reactome", "top_enriched_reactome",
-      "n_enriched_kegg", "top_enriched_kegg",
-      "n_enriched_phenotypes", "top_enriched_phenotype"
-    ) %in% names(s)
-  ))
-  expect_type(s$n_enriched_phenotypes, "integer")
-  expect_type(s$n_enriched_reactome, "integer")
-  expect_type(s$n_enriched_kegg, "integer")
-  expect_true(all(s$n_enriched_phenotypes >= 0))
-  expect_true(all(is.na(s$top_enriched_phenotype) | grepl("^HP:", s$top_enriched_phenotype)))
-  expect_true(all(is.na(s$top_enriched_reactome) | grepl("^Reactome:", s$top_enriched_reactome)))
-  expect_true(all(is.na(s$top_enriched_kegg) | grepl("^KEGG:", s$top_enriched_kegg)))
-  expect_true(all(is.na(s$top_enriched_pathway) | !grepl("^HP:", s$top_enriched_pathway)))
+  out <- enrich_snp_set_pathways(paste0("s", 1:5), coloc_groups)
+  expect_setequal(names(out), c("n_snps", "genes", "pathways", "top_term"))
+  expect_equal(out$n_snps, 5L)
+  expect_equal(names(out$top_term), c("KEGG", "Reactome"))
+  expect_true(all(out$pathways$source %in% c("KEGG", "Reactome")))
+  expect_true(is.na(out$top_term[["KEGG"]]) || grepl("^KEGG:", out$top_term[["KEGG"]]))
+  expect_true(is.na(out$top_term[["Reactome"]]) || grepl("^Reactome:", out$top_term[["Reactome"]]))
 
-  out2 <- enrich_snp_group_pathways(
-    groups = groups,
-    coloc_groups = coloc_groups,
-    min_group_size = 1,
-    sources = c("KEGG", "Reactome"),
-    minimum_count_in_network = 1
-  )
-  expect_true(all(out2$summary$n_enriched_phenotypes == 0L))
-  expect_true(all(is.na(out2$summary$top_enriched_phenotype)))
-})
-
-test_that("summarise_snp_group_pleiotropy() computes per-group pleiotropy", {
-  vp <- data.frame(
-    variant_id = c("s1", "s2", "s3", "s4", "s5"),
-    distinct_trait_categories = c(1, 3, 2, 5, 1),
-    distinct_protein_coding_genes = c(0, 2, 1, 4, 0),
-    stringsAsFactors = FALSE
-  )
-  groups <- c(s1 = 1, s2 = 1, s3 = 1, s4 = 2, s5 = 2)
-
-  out <- summarise_snp_group_pleiotropy(groups, vp)
-  expect_equal(out$group, c("1", "2"))
-  expect_equal(out$n_snps, c(3L, 2L))
-  expect_equal(out$n_snps_with_pleiotropy, c(3L, 2L))
-  expect_equal(out$mean_trait_category_pleiotropy[1], mean(c(1, 3, 2)))
-  expect_equal(out$median_trait_category_pleiotropy[1], stats::median(c(1, 3, 2)))
-  expect_equal(out$mean_gene_pleiotropy[2], mean(c(4, 0)))
-  expect_equal(out$median_gene_pleiotropy[2], stats::median(c(4, 0)))
-
-  out_min <- summarise_snp_group_pleiotropy(groups, vp, min_group_size = 3)
-  expect_equal(out_min$group, "1")
-
-  # unmatched SNPs are carried but counted via n_snps_with_pleiotropy
-  groups2 <- c(s1 = 1, s2 = 1, s9 = 1)
-  out2 <- summarise_snp_group_pleiotropy(groups2, vp)
-  expect_equal(out2$n_snps, 3L)
-  expect_equal(out2$n_snps_with_pleiotropy, 2L)
-  expect_equal(out2$mean_trait_category_pleiotropy, mean(c(1, 3)))
+  too_small <- enrich_snp_set_pathways(c("s1", "s2"), coloc_groups)
+  expect_equal(nrow(too_small$pathways), 0L)
 })
 
 test_that("search_gpmap() orders results by coloc groups and rare results", {
@@ -836,8 +546,11 @@ test_that("trait_duplicates() returns expected output", {
   result <- trait_duplicates()
   expect_true(is.data.frame(result))
   expect_true(nrow(result) > 0)
-  expected_names <- c("trait_id", "trait_name", "parent_trait_id", "parent_trait_name")
-  expect_true(all(expected_names %in% names(result)))
+  # Older API versions name each duplicate's parent; newer ones list duplicate
+  # groups with a representative. remove_duplicate_traits() reads both.
+  parent_shape <- c("trait_id", "trait_name", "parent_trait_id", "parent_trait_name")
+  group_shape <- c("trait_id", "trait_name", "duplicate_group", "is_representative")
+  expect_true(all(parent_shape %in% names(result)) || all(group_shape %in% names(result)))
 })
 
 test_that("remove_duplicate_traits() drops duplicates and keeps parents", {
@@ -857,6 +570,28 @@ test_that("remove_duplicate_traits() drops duplicates and keeps parents", {
   expect_equal(result$trait_id, c(1, 21, 3, 1))
 
   expect_error(remove_duplicate_traits(data.frame(id = 1), duplicates), "trait_id")
+})
+
+test_that("remove_duplicate_traits() reads duplicate groups with a representative", {
+  # The same duplicates as above, in the duplicate-group shape: each group's
+  # representative is the parent, and trait 3 is in a group of its own.
+  duplicates <- data.frame(
+    trait_id = c(1L, 11L, 12L, 2L, 21L, 3L),
+    trait_name = c("A", "A copy 1", "A copy 2", "B", "B copy", "C"),
+    duplicate_group = c(1L, 1L, 1L, 2L, 2L, 3L),
+    is_representative = c(TRUE, FALSE, FALSE, TRUE, FALSE, TRUE)
+  )
+  data <- data.frame(trait_id = c(1, 11, 12, 2, 21, 3, 1), value = 1:7)
+
+  result <- remove_duplicate_traits(data, duplicates)
+  expect_equal(result$trait_id, c(1, 2, 3, 1))
+  result <- remove_duplicate_traits(data, duplicates, keep_trait_ids = "21")
+  expect_equal(result$trait_id, c(1, 21, 3, 1))
+
+  expect_error(
+    remove_duplicate_traits(data, data.frame(trait_id = 1L, group = 1L)),
+    "duplicate_group"
+  )
 })
 
 test_that("delete_gwas() validates its inputs", {

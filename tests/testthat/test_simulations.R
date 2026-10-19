@@ -55,16 +55,20 @@ test_that("simulation evaluation accepts overlapping EBMF memberships", {
     p_structural_zero = 0.1,
     seed = 13
   )
+  # Pinned to the settings this test was written against.
   res <- run_univariate_clustering(
     sim$trait_object,
+    include_trans = FALSE,
+    trait_subset = "all",
     min_snp_signals = 2,
+    compress_method = "none",
     ebmf_lfsr_threshold = 0.05,
     ebmf_magnitude_threshold = 0.25,
-    min_module_size = 3
+    ebmf_prior = "point_normal"
   )
   summary <- summarise_ebmf_programs(
     res,
-    n_null = 2,
+    min_module_size = 5,
     n_rep = 0,
     verbose = FALSE
   )
@@ -315,7 +319,7 @@ test_that("trait_subset = 'phenotypic' keeps all rows when nothing is molecular"
     p_active_background = 0.1,
     seed = 50
   )
-  res_all <- run_univariate_clustering(sim$trait_object, min_snp_signals = 2)
+  res_all <- run_univariate_clustering(sim$trait_object, trait_subset = "all", min_snp_signals = 2)
   res_ph <- run_univariate_clustering(
     sim$trait_object,
     trait_subset = "phenotypic",

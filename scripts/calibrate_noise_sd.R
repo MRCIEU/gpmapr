@@ -26,6 +26,10 @@ pkg_root <- normalizePath(file.path(dirname(script_path), ".."))
 trait_id <- 1992L                 # BMI
 output_dir <- file.path(pkg_root, "analysis", "noise_calibration")
 min_obs <- 10L                    # min non-missing traits per SNP
+# This calibration's own settings, kept as they were when it was run (they
+# predate vignettes/_ebmf_settings.yml): all trait rows, trans rows dropped.
+trait_subset <- "all"
+include_trans <- FALSE
 min_snp_signals <- 5L
 compress_method <- "asinh"
 compress_scale <- 2
@@ -36,7 +40,6 @@ ebmf_drop_global <- TRUE
 ebmf_prior <- "point_normal"
 ebmf_backfit <- TRUE
 min_module_size <- 3L
-n_null <- 5L
 cores <- 5L
 multipliers <- c(clean = 0.5, moderate = 1.0, noisy = 1.5, very_noisy = 2.0)
 group_order <- c("background", "program", "all")
@@ -60,6 +63,8 @@ obj <- trait(trait_id, include_associations = TRUE)
 
 res <- run_univariate_clustering(
   obj,
+  trait_subset = trait_subset,
+  include_trans = include_trans,
   min_snp_signals = min_snp_signals,
   compress_method = compress_method,
   compress_scale = compress_scale,
@@ -67,8 +72,7 @@ res <- run_univariate_clustering(
   ebmf_magnitude_threshold = ebmf_magnitude_threshold,
   ebmf_drop_global = ebmf_drop_global,
   ebmf_prior = ebmf_prior,
-  ebmf_backfit = ebmf_backfit,
-  min_module_size = min_module_size
+  ebmf_backfit = ebmf_backfit
 )
 
 # Program membership: SNPs gated by lFSR + magnitude (stability skipped, n_rep = 0).
@@ -77,7 +81,6 @@ smry <- summarise_ebmf_programs(
   s_matrix = res$s_matrix,
   edge_threshold = similarity_threshold,
   min_module_size = min_module_size,
-  n_null = n_null,
   n_rep = 0,
   cores = cores,
   verbose = FALSE

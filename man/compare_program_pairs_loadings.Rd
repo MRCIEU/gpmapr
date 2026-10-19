@@ -16,7 +16,6 @@ compare_program_pairs_loadings(
   min_alignment = 0.5,
   min_eff_loci = 5,
   coloc_groups = NULL,
-  min_ld_r = 0.5,
   ld_proxies_fn = ld_proxies
 )
 }
@@ -54,37 +53,34 @@ it \code{locus_status} is \code{too_few_loci}. Defaults to \code{5}.}
 
 \item{coloc_groups}{Optional named list of coloc-group data.frames, keyed by
 trait id. When supplied, \code{\link[=module_rg]{module_rg()}} is run on every linked pair and
-returned as \code{module_rg}. Also required to build the LD locus bridge (see
-\code{min_ld_r}) for any pair involving an uploaded GWAS trait.}
-
-\item{min_ld_r}{For a pair where at least one trait is an uploaded GWAS
-(its own coloc_group_id numbering is private to that upload, not shared
-with other traits -- see \code{.needs_locus_bridge()}), loci are matched first
-by the upload's own coloc record of the other trait
+returned as \code{module_rg}. Also required to build the locus bridge for any
+pair involving an uploaded GWAS trait: its own coloc_group_id numbering is
+private to that upload (see \code{.needs_locus_bridge()}), so loci are matched
+first by the upload's own coloc record of the other trait
 (\code{existing_study_extraction_id}), then by exact \code{variant_id}, then by
-\code{ld_proxies()} LD looked up from both traits' leads. \code{min_ld_r} is the
-minimum \verb{|r|} for that last step. GPMap's proxy table only holds pairs at
-\code{r^2 >= 0.8} (\verb{|r|} about 0.89), so values below that have no effect.
-Defaults to \code{0.5}. Ignored for pairs where neither trait is an upload.}
+\code{ld_proxies()} LD looked up from both traits' leads.}
+
+\item{ld_proxies_fn}{Function used to look up LD proxies for the locus
+bridge. Defaults to \code{\link[=ld_proxies]{ld_proxies()}}; tests substitute a stub.}
 }
 \value{
 A list with:
 \itemize{
-\item pairs: one row per cross-trait program pair with the profile
-columns (\code{phi_traits}, \code{n_traits_shared}, \code{n_eff_traits},
-\code{direction_profile}), the locus columns (\code{n_loci_a}, \code{n_loci_b},
-\code{n_loci_shared}, \code{jaccard_loci}, \code{p_locus}, \code{n_loci_axis},
-\code{locus_concordance}, \code{alignment}, \code{comparability}, \code{n_eff_loci},
-\code{concordance_z}, \code{p_concordance}, \code{q_concordance}, \code{eligible}),
-and \code{profile_strength}, \code{locus_status}, \code{tier} and \code{linked}.
+\item pairs: one row per cross-trait program pair with \code{program_id_a},
+\code{program_id_b}, \code{trait_id_a}, \code{trait_id_b}, the profile columns
+(\code{phi_traits}, \code{n_eff_traits}, \code{direction_profile}), the locus columns
+(\code{n_loci_shared}, \code{alignment}, \code{comparability}, \code{n_eff_loci},
+\code{p_concordance}, \code{q_concordance}), and \code{profile_strength},
+\code{locus_status}, \code{tier} and \code{linked}.
 \item programs: one row per program with \code{program_id}, \code{trait_id},
-\code{trait_name}, \code{program} and \code{n_links}.
+\code{trait_name} and \code{program}.
 \item module_rg: cross-trait effect correlation per linked pair when
 \code{coloc_groups} is supplied, otherwise an empty table.
 \item bridges: the per-trait-pair locus bridges built for uploaded GWAS
 traits (a named list, empty when none were needed), for reuse by
-\code{\link[=build_program_families]{build_program_families()}} and \code{\link[=family_module_rg]{family_module_rg()}}.
-\item settings: settings used, including \code{exclude_features}.
+\code{\link[=build_program_families]{build_program_families()}} and \code{\link[=canonical_locus_ids]{canonical_locus_ids()}}.
+\item settings: a list holding \code{exclude_features}, which
+\code{\link[=profile_contributions]{profile_contributions()}} reads.
 }
 }
 \description{
@@ -106,10 +102,10 @@ positive by construction in its own fit but an ordinary row in the other
 -- and any trait excluded from either fit as a proxy (\code{exclude_features}).
 \code{phi_traits} is signed: each trait's SNPs are oriented to its own risk
 allele, so two programs carrying the same biology in opposite directions
-have mirrored profiles and \eqn{\phi < 0}. \code{n_traits_shared} counts the
-comparable traits and \code{n_eff_traits} how many effectively carry the
-agreement (participation ratio of \eqn{|\tilde l_a \tilde l_b|}); a small
-value means a few traits dominate.}
+have mirrored profiles and \eqn{\phi < 0}. \code{n_eff_traits} counts how
+many comparable traits effectively carry the agreement (participation
+ratio of \eqn{|\tilde l_a \tilde l_b|}); a small value means a few
+traits dominate.}
 \item{Same SNPs? -- locus alignment (\code{alignment}) and comparability
 (\code{comparability}).}{The squared uncentred correlation of the two
 programs' \strong{SNP loadings} (\code{F_pm}, weighted the same way) over the loci
@@ -157,19 +153,17 @@ background traits that carry each pair's \eqn{\phi}.
 its loading-weighted concordance on the shared loci either program claims,
 \eqn{\sum_l \tilde f_a(l) \tilde f_b(l)}, against a two-sided permutation
 null that shuffles the second program's loadings over the loci the two
-traits share (\code{concordance_z}, \code{p_concordance}). \code{q_concordance} is the
+traits share (\code{p_concordance}). \code{q_concordance} is the
 Benjamini-Hochberg adjustment across all scored pairs (eligibility is not
 independent of the statistic, so correcting over eligible pairs alone would
-be anti-conservative). The sign of \code{concordance_z} is not a direction:
+be anti-conservative). The sign of the concordance is not a direction:
 both programs are oriented to their own anchor, so a shared module loads
 positively in both whichever way the traits move. Direction comes from
 the sign of \code{phi_traits}, checked against \code{\link[=module_rg]{module_rg()}}
 (\code{direction_check}); \code{rg} never changes a tier.
 
-\strong{Confidence weights.} \eqn{w(\mathrm{lfsr}) = (1 - 2\,\mathrm{lfsr})_+} by
-default -- 0 for a coin-flip sign, 1 for a certain one -- set by
-\code{options(gpmapr.lfsr_weight = "two_sided")}; \code{"one_sided"} gives
-\eqn{1 - \mathrm{lfsr}}.
+\strong{Confidence weights.} \eqn{w(\mathrm{lfsr}) = (1 - 2\,\mathrm{lfsr})_+}:
+0 for a coin-flip sign, 1 for a certain one.
 
 IMPORTANT: loci are treated as independent observations, and no correction
 is made for sample overlap between the two target traits' GWAS.

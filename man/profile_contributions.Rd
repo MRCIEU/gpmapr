@@ -18,15 +18,9 @@ every pair.}
 \item{top_n}{Number of traits to keep per pair. Defaults to \code{5}.}
 }
 \value{
-A list with:
-\itemize{
-\item traits: one row per pair and kept trait: \code{program_id_a},
-\code{program_id_b}, \code{rank}, \code{feature_trait_id}, \code{feature_trait_name},
-\code{contribution} and \code{share}.
-\item pairs: one row per pair: \code{program_id_a}, \code{program_id_b} and
-\code{top_traits}, the kept traits as one string
+A data.frame with one row per pair: \code{program_id_a}, \code{program_id_b}
+and \code{top_traits}, the kept traits and their signed shares as one string
 (\code{"name 41\%; name 22\%; ..."}).
-}
 }
 \description{
 For each cross-trait program pair, list the background traits

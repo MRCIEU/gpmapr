@@ -180,140 +180,68 @@ genes_at_snps <- function(snp_ids,
 }
 
 
-#' @title Pathway Enrichment For SNP Groups
-#' @description Verification helper: for each SNP grouping (EBMF program, etc.)
-#' with more than `min_group_size` SNPs, collect molecular
-#' QTL genes at those SNPs and test pathway enrichment. Compare the per-group
-#' results to a trait-level baseline to see whether baseline pathways reappear
-#' and whether they split cleanly across groups.
-#' @param groups Either a named vector (`names` = SNP ids, values = group ids)
-#'   or a dataframe with `snp_id` plus a group column (`group`, `cluster`, or
-#'   `program`).
+#' @title Pathway Enrichment of a SNP Set
+#' @description Collect the molecular QTL genes colocalising at a set of SNPs
+#' (via [genes_at_snps()]) and test them for pathway over-representation with
+#' [pathway_enrichment()], one call per source (FDR 0.05, at least two genes
+#' in a pathway). Each gene counts once however many of the set's SNPs it
+#' colocalises at.
+#' @param snp_ids Variant ids of the SNP set.
 #' @param coloc_groups Coloc-group dataframe used to map SNPs to genes.
-#' @param min_group_size Only enrich groups with at least this many SNPs.
-#'   Defaults to 5.
-#' @param snp_key Column used to match SNP ids in `coloc_groups`.
-#' @param include_situated_gene Include situated-gene links in addition to
-#'   ordinary gene links. Defaults to `FALSE`.
-#' @param sources Pathway sources to query, e.g. `c("KEGG", "Reactome")`.
-#'   Reactome and
-#'   KEGG hits are summarised separately (and together as `top_enriched_pathway`
-#'   for backwards compatibility); HP (Human Phenotype Ontology) hits are
-#'   summarised separately as phenotypes.
-#' @param p_value_threshold FDR threshold passed to `pathway_enrichment()`.
-#' @param minimum_count_in_network Minimum overlap passed to `pathway_enrichment()`.
+#' @param sources Pathway sources to query. Defaults to `c("KEGG",
+#'   "Reactome")`.
+#' @param min_set_size Sets with fewer distinct SNPs are not tested (empty
+#'   `pathways`). Defaults to `5`.
 #' @return A list with:
 #'   \itemize{
-#'     \item by_group: list of per-group results (`group`, `n_snps`, `genes`,
-#'       `snp_genes`, `pathways`)
-#'     \item summary: one row per enriched group. `n_enriched_pathways` /
-#'       `top_enriched_pathway` combine the non-HP sources (KEGG + Reactome);
-#'       `n_enriched_reactome` / `top_enriched_reactome` and
-#'       `n_enriched_kegg` / `top_enriched_kegg` report each source separately;
-#'       `n_enriched_phenotypes` / `top_enriched_phenotype` refer to HP terms
-#'       only (NA / 0 when `sources` has no HP).
+#'     \item n_snps: distinct SNPs in the set
+#'     \item genes: the set's genes (`gene_id`, `gene`)
+#'     \item pathways: enriched terms across `sources` (`source`, `term_id`,
+#'       `description`, `overlap`, `p_value`, `fdr`, `input_genes`), ordered by
+#'       `fdr`
+#'     \item top_term: named character vector, one entry per source, with that
+#'       source's most significant term as `"source: description"` (`NA` when
+#'       none)
 #'   }
 #' @export
-enrich_snp_group_pathways <- function(groups,
-                                      coloc_groups,
-                                      min_group_size = 5L,
-                                      snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-                                      sources = c("KEGG", "Reactome"),
-                                      p_value_threshold = 0.05,
-                                      minimum_count_in_network = 2L,
-                                      include_situated_gene = FALSE) {
-  snp_key <- match.arg(snp_key)
+enrich_snp_set_pathways <- function(snp_ids,
+                                    coloc_groups,
+                                    sources = c("KEGG", "Reactome"),
+                                    min_set_size = 5L) {
   if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {
     stop("coloc_groups is required")
   }
-  if (!is.numeric(min_group_size) || min_group_size < 0) {
-    stop("min_group_size must be a non-negative number")
+  if (length(sources) == 0) {
+    stop("sources must name at least one pathway source")
   }
-
-  group_df <- .normalize_snp_groups(groups)
-  group_sizes <- table(group_df$group)
-  large_groups <- names(group_sizes)[group_sizes >= min_group_size]
-
-  empty_summary <- data.frame(
-    group = character(0),
-    n_snps = integer(0),
-    n_genes = integer(0),
-    n_enriched_pathways = integer(0),
-    top_enriched_pathway = character(0),
-    n_enriched_reactome = integer(0),
-    top_enriched_reactome = character(0),
-    n_enriched_kegg = integer(0),
-    top_enriched_kegg = character(0),
-    n_enriched_phenotypes = integer(0),
-    top_enriched_phenotype = character(0),
-    stringsAsFactors = FALSE
-  )
-
-  if (length(large_groups) == 0) {
-    return(list(
-      by_group = list(),
-      summary = empty_summary,
-      min_group_size = as.integer(min_group_size)
-    ))
-  }
-
-  by_group <- lapply(large_groups, function(grp) {
-    snp_ids <- group_df$snp_id[group_df$group == grp]
-    snp_genes <- genes_at_snps(
+  snp_ids <- unique(as.character(snp_ids))
+  genes <- data.frame(gene_id = integer(0), gene = character(0), stringsAsFactors = FALSE)
+  pathways <- .empty_pathway_results()
+  if (length(snp_ids) >= min_set_size) {
+    genes <- genes_at_snps(
       snp_ids = snp_ids,
       coloc_groups = coloc_groups,
-      snp_key = snp_key,
-      include_situated_gene = include_situated_gene
-    )
-    genes <- snp_genes |>
+      snp_key = "variant_id"
+    ) |>
       dplyr::distinct(gene_id, gene) |>
       dplyr::arrange(gene)
-    pathways <- .enrich_pathway_sources(
-      gene_ids = genes$gene_id,
-      sources = sources,
-      p_value_threshold = p_value_threshold,
-      minimum_count_in_network = minimum_count_in_network
-    )
-    list(
-      group = grp,
-      n_snps = length(unique(snp_ids)),
-      genes = genes,
-      snp_genes = snp_genes,
-      pathways = pathways
-    )
-  })
-
-  summary_df <- dplyr::bind_rows(lapply(by_group, function(x) {
-    subsets <- .pathway_source_subsets(x$pathways)
-    data.frame(
-      group = x$group,
-      n_snps = x$n_snps,
-      n_genes = nrow(x$genes),
-      n_enriched_pathways = nrow(subsets$reactome) + nrow(subsets$kegg),
-      top_enriched_pathway = .top_pathway_label(
-        rbind(subsets$reactome, subsets$kegg)
-      ),
-      n_enriched_reactome = nrow(subsets$reactome),
-      top_enriched_reactome = .top_pathway_label(subsets$reactome),
-      n_enriched_kegg = nrow(subsets$kegg),
-      top_enriched_kegg = .top_pathway_label(subsets$kegg),
-      n_enriched_phenotypes = nrow(subsets$phenotype),
-      top_enriched_phenotype = .top_pathway_label(subsets$phenotype),
-      stringsAsFactors = FALSE
-    )
-  }))
-
+    pathways <- .enrich_pathway_sources(genes$gene_id, sources)
+  }
+  top_term <- vapply(sources, function(src) {
+    return(.top_pathway_label(pathways[pathways$source == src, , drop = FALSE]))
+  }, character(1))
   return(list(
-    by_group = by_group,
-    summary = summary_df,
-    min_group_size = as.integer(min_group_size)
+    n_snps = length(snp_ids),
+    genes = genes,
+    pathways = pathways,
+    top_term = top_term
   ))
 }
 
 
 #' @title Continuous Pathway Enrichment From EBMF Loadings
-#' @description Parallel to `enrich_snp_group_pathways()`, but without a hard
-#' lFSR/magnitude cutoff: every SNP with a finite EBMF loading contributes to
+#' @description The loading-weighted counterpart of [enrich_snp_set_pathways()],
+#' with no hard lFSR/magnitude cutoff: every SNP with a finite EBMF loading contributes to
 #' every program's test, weighted by its squared loading, and is regressed
 #' against each pathway's local 0/1 gene-membership indicator
 #' (`lm(loading^2 ~ pathway_membership)`), following the approach in
@@ -332,7 +260,7 @@ enrich_snp_group_pathways <- function(groups,
 #' observations; for formal inference, LD should be accounted for (e.g. SNP
 #' -> gene aggregation, or cluster-robust SEs / permutation using LD blocks).
 #' The enrichment effect estimates are nevertheless useful for comparison
-#' against the hard-cutoff hypergeometric pathway test.
+#' against the gene-set test of [enrich_snp_set_pathways()].
 #' @param clustering_result Result of `run_univariate_clustering()`.
 #' @param coloc_groups Coloc-group dataframe used to map SNPs to genes.
 #' @param mappings Optional pre-fetched `pathway_mappings()` result, reused
@@ -508,133 +436,6 @@ enrich_program_loadings_pathways <- function(clustering_result,
 }
 
 
-#' @title Compare Trait Vs Group Pathway Enrichments
-#' @description Summarise whether baseline trait pathways reappear in SNP-group
-#' enrichments, whether they split across multiple groups, and which pathways
-#' are group-specific.
-#' @param trait_enrichment Trait-level enrichment list with a `pathways`
-#'   dataframe (columns `source`, `term_id`, `description`).
-#' @param group_enrichment Output of `enrich_snp_group_pathways()`.
-#' @return A list with:
-#'   \itemize{
-#'     \item pathway_status: one row per pathway key seen in baseline and/or
-#'       groups (`in_baseline`, `n_groups`, `groups`, `status`)
-#'     \item group_overlap: per-group counts of shared vs novel pathways
-#'   }
-#' @export
-compare_group_pathways <- function(trait_enrichment, group_enrichment) {
-  if (is.null(trait_enrichment$pathways) || is.null(group_enrichment$by_group)) {
-    stop("trait_enrichment and group_enrichment must be enrichment helper outputs")
-  }
-
-  baseline_keys <- .pathway_keys(trait_enrichment$pathways)
-  group_rows <- dplyr::bind_rows(lapply(group_enrichment$by_group, function(x) {
-    if (nrow(x$pathways) == 0) {
-      return(data.frame(
-        group = character(0),
-        pathway_key = character(0),
-        description = character(0),
-        stringsAsFactors = FALSE
-      ))
-    }
-    x$pathways |>
-      dplyr::mutate(
-        group = as.character(x$group),
-        pathway_key = paste(source, term_id, sep = ":")
-      ) |>
-      dplyr::select(group, pathway_key, description)
-  }))
-
-  if (nrow(group_rows) == 0) {
-    group_rows <- data.frame(
-      group = character(0),
-      pathway_key = character(0),
-      description = character(0),
-      stringsAsFactors = FALSE
-    )
-  }
-
-  all_keys <- union(baseline_keys, unique(group_rows$pathway_key))
-  if (length(all_keys) == 0) {
-    return(list(
-      pathway_status = data.frame(
-        pathway_key = character(0),
-        description = character(0),
-        in_baseline = logical(0),
-        n_groups = integer(0),
-        groups = character(0),
-        status = character(0),
-        stringsAsFactors = FALSE
-      ),
-      group_overlap = dplyr::bind_rows(lapply(group_enrichment$by_group, function(x) {
-        data.frame(
-          group = x$group,
-          n_enriched_pathways = 0L,
-          n_shared_with_baseline = 0L,
-          n_novel = 0L,
-          stringsAsFactors = FALSE
-        )
-      }))
-    ))
-  }
-
-  pathway_status <- dplyr::bind_rows(lapply(all_keys, function(key) {
-    groups_hit <- sort(unique(group_rows$group[group_rows$pathway_key == key]))
-    in_baseline <- key %in% baseline_keys
-    n_groups <- length(groups_hit)
-    status <- if (in_baseline && n_groups == 0) {
-      "baseline_only"
-    } else if (in_baseline && n_groups == 1) {
-      "recovered_one_group"
-    } else if (in_baseline && n_groups > 1) {
-      "split_across_groups"
-    } else if (!in_baseline && n_groups == 1) {
-      "group_specific"
-    } else {
-      "group_specific_multi"
-    }
-    desc <- group_rows$description[group_rows$pathway_key == key][1]
-    if (is.na(desc) || identical(desc, character(0))) {
-      bp <- trait_enrichment$pathways
-      if (nrow(bp) > 0) {
-        bp_key <- paste(bp$source, bp$term_id, sep = ":")
-        desc <- bp$description[bp_key == key][1]
-      }
-    }
-    data.frame(
-      pathway_key = key,
-      description = desc,
-      in_baseline = in_baseline,
-      n_groups = n_groups,
-      groups = paste(groups_hit, collapse = ", "),
-      status = status,
-      stringsAsFactors = FALSE
-    )
-  }))
-
-  if (nrow(pathway_status) > 0) {
-    pathway_status <- pathway_status |>
-      dplyr::arrange(status, dplyr::desc(n_groups), pathway_key)
-  }
-
-  group_overlap <- dplyr::bind_rows(lapply(group_enrichment$by_group, function(x) {
-    keys <- .pathway_keys(x$pathways)
-    data.frame(
-      group = x$group,
-      n_enriched_pathways = length(keys),
-      n_shared_with_baseline = sum(keys %in% baseline_keys),
-      n_novel = sum(!keys %in% baseline_keys),
-      stringsAsFactors = FALSE
-    )
-  }))
-
-  return(list(
-    pathway_status = pathway_status,
-    group_overlap = group_overlap
-  ))
-}
-
-
 .normalize_snp_groups <- function(groups) {
   if (is.data.frame(groups)) {
     snp_col <- intersect(c("snp_id", "variant_id"), names(groups))
@@ -664,30 +465,17 @@ compare_group_pathways <- function(trait_enrichment, group_enrichment) {
 }
 
 
-.enrich_pathway_sources <- function(gene_ids,
-                                    sources,
-                                    p_value_threshold,
-                                    minimum_count_in_network) {
+.enrich_pathway_sources <- function(gene_ids, sources) {
   if (length(gene_ids) == 0) {
     return(.empty_pathway_results())
-  }
-
-  if (is.null(sources)) {
-    enrichment <- pathway_enrichment(
-      genes = gene_ids,
-      source = NULL,
-      p_value_threshold = p_value_threshold,
-      minimum_count_in_network = minimum_count_in_network
-    )
-    return(.format_pathway_results(enrichment$results))
   }
 
   rows <- lapply(sources, function(src) {
     enrichment <- pathway_enrichment(
       genes = gene_ids,
       source = src,
-      p_value_threshold = p_value_threshold,
-      minimum_count_in_network = minimum_count_in_network
+      p_value_threshold = 0.05,
+      minimum_count_in_network = 2L
     )
     .format_pathway_results(enrichment$results)
   })
@@ -735,19 +523,6 @@ compare_group_pathways <- function(trait_enrichment, group_enrichment) {
 }
 
 
-.pathway_source_subsets <- function(pathways) {
-  if (is.null(pathways) || nrow(pathways) == 0) {
-    empty <- .empty_pathway_results()
-    return(list(reactome = empty, kegg = empty, phenotype = empty))
-  }
-  list(
-    reactome = pathways[pathways$source == "Reactome", , drop = FALSE],
-    kegg = pathways[pathways$source == "KEGG", , drop = FALSE],
-    phenotype = pathways[pathways$source == "HP", , drop = FALSE]
-  )
-}
-
-
 .top_pathway_label <- function(pathways) {
   if (!is.data.frame(pathways) || nrow(pathways) == 0) {
     return(NA_character_)
@@ -756,16 +531,6 @@ compare_group_pathways <- function(trait_enrichment, group_enrichment) {
 }
 
 
-.pathway_keys <- function(pathways) {
-  if (!is.data.frame(pathways) || nrow(pathways) == 0) {
-    return(character(0))
-  }
-  return(paste(pathways$source, pathways$term_id, sep = ":"))
-}
-
-
-# Gene x pathway 0/1 membership matrix restricted to `gene_ids`, built from a
-# `pathway_mappings()$mappings`-shaped dataframe (gene_id, term_id, ...).
 .gene_pathway_matrix <- function(gene_ids, mappings) {
   gene_ids <- unique(gene_ids)
   pathway_ids <- unique(mappings$term_id)

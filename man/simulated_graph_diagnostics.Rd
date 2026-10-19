@@ -16,7 +16,7 @@ simulated_graph_diagnostics(
 }
 \arguments{
 \item{x_matrix}{Trait-by-SNP matrix of z-scores, with \code{NA} for unobserved
-cells, as produced by \code{simulate_trait()} or \code{build_pleiotropy_matrix()}.}
+cells, as produced by \code{simulate_trait()} or \code{run_univariate_clustering()$x_matrix}.}
 
 \item{target_trait_id}{Row name of the target trait, used for orientation
 and for the target-removed comparison.}

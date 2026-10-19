@@ -6,8 +6,6 @@
 \usage{
 build_program_families(
   result,
-  program_info = NULL,
-  rule = c("communities", "components"),
   seed = 1,
   program_data = NULL,
   mutual_best = FALSE
@@ -15,11 +13,6 @@ build_program_families(
 }
 \arguments{
 \item{result}{A result from \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}}.}
-
-\item{program_info}{Optional data.frame with \code{program_id}, \code{trait_id} and
-\code{trait_name} (one row per program), used to fill in trait names.}
-
-\item{rule}{Family rule: \code{"communities"} (default) or \code{"components"}.}
 
 \item{seed}{RNG seed for the community detection.}
 
@@ -46,6 +39,8 @@ member)
 \code{n_programs}, \code{n_traits}, \code{programs}, \code{traits} and \code{snp_ids}
 \item edges: the linked pairs, with the \code{\link[=module_rg]{module_rg()}} columns joined on
 \item graph: an \code{igraph} object (or \code{NULL} when there are no links)
+whose edges carry \code{phi_traits}, \code{direction_profile}, \code{rg_direction}
+and \code{weight}, and whose vertices carry \code{family} and \code{trait_id}
 \item modularity: modularity of the family partition
 \item n_unlinked: number of programs with no link
 }
@@ -56,13 +51,12 @@ families. Programs are nodes and the \code{linked} pairs from
 \code{\link[=compare_program_pairs_loadings]{compare_program_pairs_loadings()}} are edges; programs with no link are left
 out (their count is returned as \code{n_unlinked}).
 
-By default (\code{rule = "communities"}) families are the communities of the
-link graph found by Louvain modularity optimisation
-(\code{\link[igraph:cluster_louvain]{igraph::cluster_louvain()}}), with each edge weighted by its profile
-congruence \verb{|phi_traits|}. Plain connected components (\code{rule = "components"})
-chain through any shared partner: on real data a few dozen links between
-four traits joined most programs into one component, while their
-communities were well separated. Louvain is randomised, so \code{seed} fixes it.
+Families are the communities of the link graph found by Louvain modularity
+optimisation (\code{\link[igraph:cluster_louvain]{igraph::cluster_louvain()}}), with each edge weighted by its
+profile congruence \verb{|phi_traits|}. Plain connected components chain through
+any shared partner: on real data a few dozen links between four traits
+joined most programs into one component, while their communities were well
+separated. Louvain is randomised, so \code{seed} fixes it.
 
 With \code{mutual_best = TRUE} a link is kept only when each of its two programs
 is the other's closest partner (highest \verb{|phi_traits|}) among the linked

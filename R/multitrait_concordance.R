@@ -17,10 +17,10 @@
 #'   -- and any trait excluded from either fit as a proxy (`exclude_features`).
 #'   `phi_traits` is signed: each trait's SNPs are oriented to its own risk
 #'   allele, so two programs carrying the same biology in opposite directions
-#'   have mirrored profiles and \eqn{\phi < 0}. `n_traits_shared` counts the
-#'   comparable traits and `n_eff_traits` how many effectively carry the
-#'   agreement (participation ratio of \eqn{|\tilde l_a \tilde l_b|}); a small
-#'   value means a few traits dominate.}
+#'   have mirrored profiles and \eqn{\phi < 0}. `n_eff_traits` counts how
+#'   many comparable traits effectively carry the agreement (participation
+#'   ratio of \eqn{|\tilde l_a \tilde l_b|}); a small value means a few
+#'   traits dominate.}
 #'   \item{Same SNPs? -- locus alignment (`alignment`) and comparability
 #'   (`comparability`).}{The squared uncentred correlation of the two
 #'   programs' **SNP loadings** (`F_pm`, weighted the same way) over the loci
@@ -68,19 +68,17 @@
 #' its loading-weighted concordance on the shared loci either program claims,
 #' \eqn{\sum_l \tilde f_a(l) \tilde f_b(l)}, against a two-sided permutation
 #' null that shuffles the second program's loadings over the loci the two
-#' traits share (`concordance_z`, `p_concordance`). `q_concordance` is the
+#' traits share (`p_concordance`). `q_concordance` is the
 #' Benjamini-Hochberg adjustment across all scored pairs (eligibility is not
 #' independent of the statistic, so correcting over eligible pairs alone would
-#' be anti-conservative). The sign of `concordance_z` is not a direction:
+#' be anti-conservative). The sign of the concordance is not a direction:
 #' both programs are oriented to their own anchor, so a shared module loads
 #' positively in both whichever way the traits move. Direction comes from
 #' the sign of `phi_traits`, checked against [module_rg()]
 #' (`direction_check`); `rg` never changes a tier.
 #'
-#' **Confidence weights.** \eqn{w(\mathrm{lfsr}) = (1 - 2\,\mathrm{lfsr})_+} by
-#' default -- 0 for a coin-flip sign, 1 for a certain one -- set by
-#' `options(gpmapr.lfsr_weight = "two_sided")`; `"one_sided"` gives
-#' \eqn{1 - \mathrm{lfsr}}.
+#' **Confidence weights.** \eqn{w(\mathrm{lfsr}) = (1 - 2\,\mathrm{lfsr})_+}:
+#' 0 for a coin-flip sign, 1 for a certain one.
 #'
 #' IMPORTANT: loci are treated as independent observations, and no correction
 #' is made for sample overlap between the two target traits' GWAS.
@@ -108,34 +106,31 @@
 #'   it `locus_status` is `too_few_loci`. Defaults to `5`.
 #' @param coloc_groups Optional named list of coloc-group data.frames, keyed by
 #'   trait id. When supplied, [module_rg()] is run on every linked pair and
-#'   returned as `module_rg`. Also required to build the LD locus bridge (see
-#'   `min_ld_r`) for any pair involving an uploaded GWAS trait.
-#' @param min_ld_r For a pair where at least one trait is an uploaded GWAS
-#'   (its own coloc_group_id numbering is private to that upload, not shared
-#'   with other traits -- see `.needs_locus_bridge()`), loci are matched first
-#'   by the upload's own coloc record of the other trait
+#'   returned as `module_rg`. Also required to build the locus bridge for any
+#'   pair involving an uploaded GWAS trait: its own coloc_group_id numbering is
+#'   private to that upload (see `.needs_locus_bridge()`), so loci are matched
+#'   first by the upload's own coloc record of the other trait
 #'   (`existing_study_extraction_id`), then by exact `variant_id`, then by
-#'   `ld_proxies()` LD looked up from both traits' leads. `min_ld_r` is the
-#'   minimum `|r|` for that last step. GPMap's proxy table only holds pairs at
-#'   `r^2 >= 0.8` (`|r|` about 0.89), so values below that have no effect.
-#'   Defaults to `0.5`. Ignored for pairs where neither trait is an upload.
+#'   `ld_proxies()` LD looked up from both traits' leads.
+#' @param ld_proxies_fn Function used to look up LD proxies for the locus
+#'   bridge. Defaults to [ld_proxies()]; tests substitute a stub.
 #' @return A list with:
 #'   \itemize{
-#'     \item pairs: one row per cross-trait program pair with the profile
-#'       columns (`phi_traits`, `n_traits_shared`, `n_eff_traits`,
-#'       `direction_profile`), the locus columns (`n_loci_a`, `n_loci_b`,
-#'       `n_loci_shared`, `jaccard_loci`, `p_locus`, `n_loci_axis`,
-#'       `locus_concordance`, `alignment`, `comparability`, `n_eff_loci`,
-#'       `concordance_z`, `p_concordance`, `q_concordance`, `eligible`),
-#'       and `profile_strength`, `locus_status`, `tier` and `linked`.
+#'     \item pairs: one row per cross-trait program pair with `program_id_a`,
+#'       `program_id_b`, `trait_id_a`, `trait_id_b`, the profile columns
+#'       (`phi_traits`, `n_eff_traits`, `direction_profile`), the locus columns
+#'       (`n_loci_shared`, `alignment`, `comparability`, `n_eff_loci`,
+#'       `p_concordance`, `q_concordance`), and `profile_strength`,
+#'       `locus_status`, `tier` and `linked`.
 #'     \item programs: one row per program with `program_id`, `trait_id`,
-#'       `trait_name`, `program` and `n_links`.
+#'       `trait_name` and `program`.
 #'     \item module_rg: cross-trait effect correlation per linked pair when
 #'       `coloc_groups` is supplied, otherwise an empty table.
 #'     \item bridges: the per-trait-pair locus bridges built for uploaded GWAS
 #'       traits (a named list, empty when none were needed), for reuse by
-#'       [build_program_families()] and [family_module_rg()].
-#'     \item settings: settings used, including `exclude_features`.
+#'       [build_program_families()] and [canonical_locus_ids()].
+#'     \item settings: a list holding `exclude_features`, which
+#'       [profile_contributions()] reads.
 #'   }
 #' @export
 compare_program_pairs_loadings <- function(program_data,
@@ -149,31 +144,23 @@ compare_program_pairs_loadings <- function(program_data,
                                            min_alignment = 0.5,
                                            min_eff_loci = 5,
                                            coloc_groups = NULL,
-                                           min_ld_r = 0.5,
                                            ld_proxies_fn = ld_proxies) {
   pd <- .normalise_program_data(program_data)
   loadings <- pd$loadings
   keys <- .program_pair_keys(loadings)
 
-  settings <- list(
-    n_perm = as.integer(n_perm),
-    fdr_threshold = fdr_threshold,
-    seed = seed,
-    min_shared_loci = as.integer(min_shared_loci),
-    phi_high = phi_high,
-    phi_low = phi_low,
-    min_alignment = min_alignment,
-    min_eff_loci = min_eff_loci,
-    exclude_features = exclude_features,
-    lfsr_weight = .lfsr_weight_method(),
-    statistic = "profile_congruence + locus_alignment"
-  )
+  settings <- list(exclude_features = exclude_features)
 
-  progs <- dplyr::distinct(loadings, program_id, trait_id, trait_name, program)
+  progs <- dplyr::distinct(loadings, program_id, trait_id, trait_name, program) |>
+    dplyr::mutate(
+      program_id = as.character(program_id),
+      trait_id = as.character(trait_id)
+    ) |>
+    as.data.frame(stringsAsFactors = FALSE)
   if (nrow(keys) == 0) {
     return(list(
       pairs = .empty_concordance_pairs(),
-      programs = .program_link_counts(progs, .empty_concordance_pairs()),
+      programs = progs,
       module_rg = .empty_module_rg(),
       bridges = list(),
       settings = settings
@@ -201,28 +188,21 @@ compare_program_pairs_loadings <- function(program_data,
       }
       bridges[[.locus_bridge_key(ta, tb)]] <- .build_locus_bridge(
         coloc_groups[[ta]], coloc_groups[[tb]], ta, tb,
-        min_r = min_ld_r, ld_proxies_fn = ld_proxies_fn
+        ld_proxies_fn = ld_proxies_fn
       )
     }
   }
 
-  # Locus-overlap columns (n_loci_shared, jaccard_loci, p_locus) describe how
-  # much the two programs' high-confidence memberships overlap; n_loci_shared
-  # decides whether the locus evidence can count at all (`eligible`).
-  locus_sets <- .program_locus_sets(loadings, "high_confidence", 25L)
-  universe_by_trait <- .locus_universe_by_trait(loadings)
+  # n_loci_shared, the overlap of the two programs' high-confidence loci,
+  # decides whether the locus evidence can count at all (see
+  # assign_link_tiers()).
+  locus_sets <- .program_locus_sets(loadings)
   out <- dplyr::bind_rows(lapply(seq_len(nrow(keys)), function(i) {
-    return(.locus_pair_stats(
-      keys[i, , drop = FALSE], locus_sets, universe_by_trait, bridges = bridges
-    ))
+    return(.locus_pair_stats(keys[i, , drop = FALSE], locus_sets, bridges = bridges))
   }))
-  out$eligible <- !is.na(out$n_loci_shared) & out$n_loci_shared >= min_shared_loci
-  out$n_loci_axis <- 0L
-  out$locus_concordance <- NA_real_
   out$alignment <- NA_real_
   out$comparability <- NA_real_
   out$n_eff_loci <- NA_real_
-  out$concordance_z <- NA_real_
   out$p_concordance <- NA_real_
 
   energy <- .program_energy(loadings)
@@ -258,7 +238,7 @@ compare_program_pairs_loadings <- function(program_data,
   }
 
   out <- .profile_congruence(out, pd$profiles, exclude_features)
-  out <- .assign_link_tiers(
+  out <- assign_link_tiers(
     out,
     phi_high = phi_high, phi_low = phi_low,
     min_shared_loci = min_shared_loci, min_eff_loci = min_eff_loci,
@@ -273,14 +253,13 @@ compare_program_pairs_loadings <- function(program_data,
       coloc_groups = coloc_groups,
       seed = seed,
       bridges = bridges,
-      min_ld_r = min_ld_r,
       ld_proxies_fn = ld_proxies_fn
     )
   }
 
   return(list(
     pairs = out,
-    programs = .program_link_counts(progs, out),
+    programs = progs,
     module_rg = rg,
     bridges = bridges,
     settings = settings
@@ -288,18 +267,29 @@ compare_program_pairs_loadings <- function(program_data,
 }
 
 
-# Profile strength, locus status, tier and link of every pair.
-#
-# profile_strength: strong (|phi| >= phi_high), moderate (phi_low <= |phi| <
-# phi_high) or weak.
-# locus_status: too_few_loci when the pair shares fewer than min_shared_loci
-# high-confidence loci or fewer than min_eff_loci loci effectively carry the
-# locus score -- the loci cannot settle the question either way; otherwise
-# agree when alignment >= min_alignment and q_concordance <= fdr_threshold,
-# and disagree when the loci were testable and fail either.
-.assign_link_tiers <- function(out, phi_high = 0.85, phi_low = 0.70,
-                               min_shared_loci = 3L, min_eff_loci = 5,
-                               min_alignment = 0.5, fdr_threshold = 0.05) {
+#' @title Assign Link Tiers to Program Pairs
+#' @description Apply the tier rule of [compare_program_pairs_loadings()] to a
+#' table of scored program pairs, so stored pairs can be re-tiered at other
+#' cutoffs without refitting or rescoring.
+#'
+#' `profile_strength` is `strong` (\eqn{|\phi| \ge} `phi_high`), `moderate`
+#' (`phi_low` \eqn{\le |\phi| <} `phi_high`) or `weak`. `locus_status` is
+#' `too_few_loci` when the pair shares fewer than `min_shared_loci`
+#' high-confidence loci or fewer than `min_eff_loci` loci effectively carry
+#' the locus score; otherwise `agree` when `alignment >= min_alignment` and
+#' `q_concordance <= fdr_threshold`, and `disagree` when either fails. The tier
+#' combines the two as documented in [compare_program_pairs_loadings()].
+#' @param out A `pairs` table from [compare_program_pairs_loadings()] (needs
+#'   `phi_traits`, `n_loci_shared`, `n_eff_loci`, `alignment` and
+#'   `q_concordance`).
+#' @param phi_high,phi_low,min_shared_loci,min_eff_loci,min_alignment,fdr_threshold
+#'   Cutoffs, as in [compare_program_pairs_loadings()].
+#' @return `out` with `profile_strength`, `locus_status`, `tier` and `linked`
+#'   (re)set.
+#' @export
+assign_link_tiers <- function(out, phi_high = 0.85, phi_low = 0.70,
+                              min_shared_loci = 3L, min_eff_loci = 5,
+                              min_alignment = 0.5, fdr_threshold = 0.05) {
   phi <- abs(out$phi_traits)
   phi[!is.finite(phi)] <- 0
   out$profile_strength <- dplyr::case_when(
@@ -339,7 +329,6 @@ compare_program_pairs_loadings <- function(program_data,
 # carry, leaving out both anchor traits and any trait excluded from either fit.
 .profile_congruence <- function(out, profiles, exclude_features = NULL) {
   out$phi_traits <- NA_real_
-  out$n_traits_shared <- 0L
   out$n_eff_traits <- NA_real_
   out$direction_profile <- NA_character_
   if (is.null(profiles) || nrow(profiles) == 0 || nrow(out) == 0) {
@@ -357,7 +346,6 @@ compare_program_pairs_loadings <- function(program_data,
     pa <- profiles[as.character(profiles$trait_id) == ta, , drop = FALSE]
     pb <- profiles[as.character(profiles$trait_id) == tb, , drop = FALSE]
     feats <- .comparable_features(pa, pb, ta, tb, exclude_features)
-    out$n_traits_shared[rows] <- length(feats)
     if (length(feats) < 2) {
       next
     }
@@ -417,32 +405,17 @@ compare_program_pairs_loadings <- function(program_data,
 #' @param pairs Optional subset of `result$pairs` to describe. Defaults to
 #'   every pair.
 #' @param top_n Number of traits to keep per pair. Defaults to `5`.
-#' @return A list with:
-#'   \itemize{
-#'     \item traits: one row per pair and kept trait: `program_id_a`,
-#'       `program_id_b`, `rank`, `feature_trait_id`, `feature_trait_name`,
-#'       `contribution` and `share`.
-#'     \item pairs: one row per pair: `program_id_a`, `program_id_b` and
-#'       `top_traits`, the kept traits as one string
-#'       (`"name 41%; name 22%; ..."`).
-#'   }
+#' @return A data.frame with one row per pair: `program_id_a`, `program_id_b`
+#'   and `top_traits`, the kept traits and their signed shares as one string
+#'   (`"name 41%; name 22%; ..."`).
 #' @export
 profile_contributions <- function(result, program_data, pairs = NULL, top_n = 5L) {
   if (is.null(pairs)) {
     pairs <- result$pairs
   }
-  empty_traits <- data.frame(
+  empty <- data.frame(
     program_id_a = character(0), program_id_b = character(0),
-    rank = integer(0), feature_trait_id = character(0),
-    feature_trait_name = character(0), contribution = numeric(0),
-    share = numeric(0), stringsAsFactors = FALSE
-  )
-  empty <- list(
-    traits = empty_traits,
-    pairs = data.frame(
-      program_id_a = character(0), program_id_b = character(0),
-      top_traits = character(0), stringsAsFactors = FALSE
-    )
+    top_traits = character(0), stringsAsFactors = FALSE
   )
   profiles <- .normalise_program_data(program_data)$profiles
   if (is.null(pairs) || nrow(pairs) == 0 || is.null(profiles) || nrow(profiles) == 0) {
@@ -487,10 +460,7 @@ profile_contributions <- function(result, program_data, pairs = NULL, top_n = 5L
       keep <- keep[contrib[keep] != 0]
       rows[[length(rows) + 1]] <- data.frame(
         program_id_a = pid_a, program_id_b = pid_b,
-        rank = seq_along(keep),
-        feature_trait_id = feats[keep],
         feature_trait_name = unname(feature_names[feats[keep]]),
-        contribution = unname(contrib[keep]),
         share = unname(direction * contrib[keep] / total),
         stringsAsFactors = FALSE
       )
@@ -499,8 +469,7 @@ profile_contributions <- function(result, program_data, pairs = NULL, top_n = 5L
   if (length(rows) == 0) {
     return(empty)
   }
-  traits <- dplyr::bind_rows(rows)
-  summary <- traits |>
+  out <- dplyr::bind_rows(rows) |>
     dplyr::group_by(program_id_a, program_id_b) |>
     dplyr::summarise(
       top_traits = paste0(
@@ -510,7 +479,7 @@ profile_contributions <- function(result, program_data, pairs = NULL, top_n = 5L
       .groups = "drop"
     ) |>
     as.data.frame(stringsAsFactors = FALSE)
-  return(list(traits = traits, pairs = summary))
+  return(out)
 }
 
 
@@ -531,26 +500,13 @@ profile_contributions <- function(result, program_data, pairs = NULL, top_n = 5L
 }
 
 
-# One row per program with how many links it takes part in.
-.program_link_counts <- function(progs, pairs) {
-  linked <- if ("linked" %in% names(pairs)) pairs[pairs$linked, , drop = FALSE] else pairs[0, ]
-  ends <- c(as.character(linked$program_id_a), as.character(linked$program_id_b))
-  counts <- table(factor(ends, levels = as.character(progs$program_id)))
-  out <- as.data.frame(progs, stringsAsFactors = FALSE)
-  out$program_id <- as.character(out$program_id)
-  out$trait_id <- as.character(out$trait_id)
-  out$n_links <- as.integer(counts[out$program_id])
-  return(out)
-}
-
-
 #' @title Module-Restricted Cross-Trait Effect Correlation
 #' @description For linked cross-trait program pairs, correlate the two target
 #' traits' own SNP effects across the module's loci — a module-level analogue of
 #' a local genetic correlation, where the stratification unit is a data-driven
 #' program rather than a genomic window. This is the direction of a link: the
-#' sign of [compare_program_pairs_loadings()]'s `concordance_z` is not (see its
-#' documentation).
+#' sign of [compare_program_pairs_loadings()]'s locus concordance is not (see
+#' its documentation).
 #'
 #' Loci are the shared loci either program claims as a high-confidence member;
 #' each locus is weighted by how strongly the module loads on it in both
@@ -598,6 +554,9 @@ profile_contributions <- function(result, program_data, pairs = NULL, top_n = 5L
 #' @param n_boot Percentile-bootstrap replicates over loci. Defaults to `1000`.
 #' @param min_loci_rg Minimum usable loci for an estimate. Defaults to `10`.
 #' @param seed RNG seed for the bootstrap.
+#' @param bridges Locus bridges, normally
+#'   `compare_program_pairs_loadings()$bridges`. Any missing bridge is built.
+#' @param ld_proxies_fn As in [compare_program_pairs_loadings()].
 #' @return A data.frame with one row per pair: `program_id_a`, `program_id_b`,
 #'   `trait_id_a`, `trait_id_b`, `rg`, `rg_ci_lower`, `rg_ci_upper`,
 #'   `n_loci_rg`, `n_allele_mismatch`, and `rg_direction`. When the pairs
@@ -615,7 +574,6 @@ module_rg <- function(result,
                       min_loci_rg = 10L,
                       seed = 1,
                       bridges = NULL,
-                      min_ld_r = 0.5,
                       ld_proxies_fn = ld_proxies) {
   pairs <- if (is.data.frame(result)) result else result$pairs
   if (is.null(pairs) || nrow(pairs) == 0) {
@@ -634,7 +592,7 @@ module_rg <- function(result,
   loadings <- .normalise_program_data(program_data)$loadings
   bridges <- .complete_bridges(
     unique(pairs[, c("trait_id_a", "trait_id_b")]), coloc_groups, bridges,
-    min_ld_r = min_ld_r, ld_proxies_fn = ld_proxies_fn
+    ld_proxies_fn = ld_proxies_fn
   )
   effects <- .effects_cache(coloc_groups)
 
@@ -689,7 +647,7 @@ module_rg <- function(result,
 # Callers that already built bridges (compare_program_pairs_loadings()) pass
 # them in so this is not redone.
 .complete_bridges <- function(trait_pairs, coloc_groups, bridges = NULL,
-                              min_ld_r = 0.5, ld_proxies_fn = ld_proxies) {
+                              ld_proxies_fn = ld_proxies) {
   if (is.null(bridges)) {
     bridges <- list()
   }
@@ -705,7 +663,7 @@ module_rg <- function(result,
     }
     bridges[[key]] <- .build_locus_bridge(
       coloc_groups[[ta]], coloc_groups[[tb]], ta, tb,
-      min_r = min_ld_r, ld_proxies_fn = ld_proxies_fn
+      ld_proxies_fn = ld_proxies_fn
     )
   }
   return(bridges)
@@ -728,9 +686,8 @@ module_rg <- function(result,
 }
 
 
-# rg for one pair of program sets (one program each for a link, several for a
-# family): the loci the programs claim on the shared axis, each trait's
-# loading at a locus taken from whichever of its programs loads there most.
+# rg for one linked pair of programs: the loci the two programs claim on the
+# shared axis.
 .rg_for_programs <- function(loadings, programs_a, programs_b, ta, tb, effects,
                              bridges = NULL, n_boot = 1000L, min_loci_rg = 10L) {
   loci <- .module_locus_axis(loadings, programs_a, programs_b, ta, tb, bridges = bridges)
@@ -741,8 +698,8 @@ module_rg <- function(result,
   # programs and effects need the reverse translation, kept positional
   # (loci_a[i] <-> loci[i]) so everything stays aligned to loci's positions.
   loci_a <- .translate_locus_ids_positional(loci, tb, ta, bridges)
-  va <- .programs_locus_vector(loadings, programs_a, loci, lookup_loci = loci_a)
-  vb <- .programs_locus_vector(loadings, programs_b, loci)
+  va <- .program_locus_vector(loadings, programs_a, loci, lookup_loci = loci_a)
+  vb <- .program_locus_vector(loadings, programs_b, loci)
   return(.rg_over_loci(
     loci_a, loci, ta, tb, va, vb, effects,
     n_boot = n_boot, min_loci_rg = min_loci_rg
@@ -820,7 +777,7 @@ module_rg <- function(result,
 
 
 # The rg estimate over one positional locus axis, given each side's per-locus
-# loading and confidence (va, vb from .programs_locus_vector()).
+# loading and confidence (va, vb from .program_locus_vector()).
 .rg_over_loci <- function(loci_a, loci_b, ta, tb, va, vb, effects,
                           n_boot = 1000L, min_loci_rg = 10L) {
   out <- .empty_rg_estimate()
@@ -1317,24 +1274,6 @@ module_rg <- function(result,
 }
 
 
-# Loading and confidence at each locus for a set of programs from one trait:
-# at each locus, the program with the largest |loading| there. With a single
-# program this is .program_locus_vector().
-.programs_locus_vector <- function(loadings, program_ids, loci, lookup_loci = loci) {
-  vs <- lapply(program_ids, function(pid) {
-    return(.program_locus_vector(loadings, pid, loci, lookup_loci = lookup_loci))
-  })
-  if (length(vs) == 1) {
-    return(vs[[1]])
-  }
-  loading <- do.call(cbind, lapply(vs, function(v) v$loading))
-  weight <- do.call(cbind, lapply(vs, function(v) v$weight))
-  pick <- max.col(abs(loading), ties.method = "first")
-  idx <- cbind(seq_along(loci), pick)
-  return(list(loading = loading[idx], weight = weight[idx]))
-}
-
-
 # loci x programs loading and confidence matrices for one trait.
 .program_locus_matrix <- function(loadings, trait_id, loci, program_ids,
                                   lookup_loci = loci) {
@@ -1368,7 +1307,6 @@ module_rg <- function(result,
   # programs need the positional reverse translation to look themselves up
   # in their own (native) loadings. A no-op when the pair needs no bridging.
   loci <- .shared_locus_axis(loadings, t_a, t_b, bridges = bridges)
-  out$n_loci_axis[rows] <- length(loci)
   if (length(loci) < 2) {
     return(out)
   }
@@ -1398,7 +1336,6 @@ module_rg <- function(result,
     ib <- b_idx[k]
     if (is.na(ia) || is.na(ib)) next
     axis <- claimed_a[, ia] | claimed_b[, ib]
-    out$n_loci_axis[rows[k]] <- sum(axis)
     if (sum(axis) < 2) next
 
     av <- aw[axis, ia]
@@ -1410,9 +1347,7 @@ module_rg <- function(result,
 
     perm <- replicate(n_perm, sample.int(nrow(bw)))[axis, , drop = FALSE]
     nv <- colSums(av * matrix(bw[perm, ib], nrow = sum(axis)))
-    null_sd <- stats::sd(nv)
 
-    out$locus_concordance[rows[k]] <- obs
     # Alignment: agreement of the two programs' loadings over every locus both
     # traits carry (no magnitude cutoff). Comparability: how much of each
     # program's loading lies on those loci at all.
@@ -1432,11 +1367,6 @@ module_rg <- function(result,
       NA_real_
     }
     out$n_eff_loci[rows[k]] <- if (is.finite(n_eff)) n_eff else NA_real_
-    out$concordance_z[rows[k]] <- if (is.finite(null_sd) && null_sd > 0) {
-      (obs - mean(nv)) / null_sd
-    } else {
-      NA_real_
-    }
     # Two-sided: a pair whose loadings oppose at the shared loci links as
     # readily as one whose loadings agree (the sign is not a direction).
     out$p_concordance[rows[k]] <- (1 + sum(abs(nv) >= abs(obs))) / (1 + n_perm)
@@ -1481,16 +1411,12 @@ module_rg <- function(result,
 
 .empty_concordance_pairs <- function() {
   out <- .empty_pairs()
-  out$n_loci_axis <- integer(0)
-  out$locus_concordance <- numeric(0)
   out$alignment <- numeric(0)
   out$comparability <- numeric(0)
   out$n_eff_loci <- numeric(0)
-  out$concordance_z <- numeric(0)
   out$p_concordance <- numeric(0)
   out$q_concordance <- numeric(0)
   out$phi_traits <- numeric(0)
-  out$n_traits_shared <- integer(0)
   out$n_eff_traits <- numeric(0)
   out$direction_profile <- character(0)
   out$profile_strength <- character(0)
@@ -1522,8 +1448,7 @@ module_rg <- function(result,
 # carry. This is what makes module_rg a statement about the module rather than
 # about the trait pair: .shared_locus_axis() returns every locus the two traits
 # have in common, so weighting it by |loading| still leaves every pair using the
-# same loci and reports the same n_loci_rg for all of them. program_a and
-# program_b may each be several programs of one trait (a family's members).
+# same loci and reports the same n_loci_rg for all of them.
 .module_locus_axis <- function(loadings, program_a, program_b,
                                trait_a, trait_b, bridges = NULL) {
   shared <- .shared_locus_axis(loadings, trait_a, trait_b, bridges = bridges)

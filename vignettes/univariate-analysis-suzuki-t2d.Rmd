@@ -11,27 +11,10 @@ vignette: >
 params:
   api: "production"
   target_guid: "c6d2e20f-6ece-d093-78ee-37534547c466"
-  p_threshold: null
   include_situated_gene: false
-  min_mean_internal: 0.2
-  min_connectedness: 0.5
-  ebmf_magnitude_threshold: 0.75
-  ebmf_lfsr_threshold: 0.02
-  ebmf_prior: "point_laplace"
-  min_module_size: 3
-  n_null: 10
-  alpha_membership: 0.05
-  n_candidate_tier: 25
   n_rep: 3
-  frac_traits: 0.8
-  stability_top_n: 20
-  posterior_stat: "median"
-  posterior_evidence_cap: 50
-  redundancy_threshold: 0.9
   cores: 5
-  associations: "coloc"
   remove_duplicates: true
-  ebmf_missing_se: null
 ---
 
 
@@ -228,7 +211,6 @@ suzuki_profiles |>
 ```{r upload}
 select_api(params$api)
 target_guid <- params$target_guid
-p_threshold <- params$p_threshold
 target <- trait(target_guid, include_associations = TRUE)
 target_name <- target$trait$name
 
@@ -272,10 +254,8 @@ knitr::kable(
 )
 ```
 
-The analysis below uses signals at
-`r if (is.null(p_threshold)) "the upload's own threshold" else format(p_threshold)`.
-Re-render with `params = list(p_threshold = 5e-8)` to match the
-genome-wide threshold that Suzuki et al. used.
+The analysis below uses every signal the upload reports, at the upload's own
+threshold.
 
 ## Part 3: Univariate analysis
 
@@ -305,12 +285,13 @@ Only the pleiotropy comparison of unique vs shared SNPs is left to the
 univariate vignette.
 
 ```{r params}
-min_group_size <- 5
-max_snp_fraction <- 0.8
 top_n_traits <- 10L
 min_specificity <- 1.25
 
+# Analysis settings come only from vignettes/_ebmf_settings.yml (see the
+# univariate BMI vignette). The locals below are for the text.
 ebmf_settings <- resolve_ebmf_settings(params)
+settings_signature <- ebmf_settings_signature(ebmf_settings)
 
 trait_subset <- ebmf_settings$trait_subset
 min_module_size <- as.integer(ebmf_settings$min_module_size)
@@ -324,61 +305,31 @@ ebmf_prior <- ebmf_settings$ebmf_prior
 ebmf_backfit <- isTRUE(ebmf_settings$ebmf_backfit)
 ebmf_magnitude_threshold <- as.numeric(ebmf_settings$ebmf_magnitude_threshold)
 similarity_n_perm <- as.integer(ebmf_settings$similarity_n_perm)
-similarity_q_threshold <- as.numeric(ebmf_settings$similarity_q)
 high_similarity_q <- as.numeric(ebmf_settings$high_similarity_q)
 high_connectedness <- as.numeric(ebmf_settings$high_connectedness)
 high_similarity_z <- as.numeric(ebmf_settings$high_similarity_z)
 min_effective_traits <- as.numeric(ebmf_settings$min_effective_traits)
-ebmf_greedy_Kmax <- as.integer(ebmf_settings$ebmf_greedy_Kmax)
-ebmf_missing_se <- as.numeric(ebmf_settings$ebmf_missing_se)
-associations <- params$associations
 include_situated_gene <- isTRUE(params$include_situated_gene)
-min_mean_internal <- as.numeric(params$min_mean_internal)
-min_connectedness <- as.numeric(params$min_connectedness)
-n_null <- as.integer(params$n_null)
-alpha_membership <- as.numeric(params$alpha_membership)
-n_candidate_tier <- as.integer(params$n_candidate_tier)
 n_rep <- as.integer(params$n_rep)
-frac_traits <- as.numeric(params$frac_traits)
-stability_top_n <- as.integer(params$stability_top_n)
-posterior_stat <- params$posterior_stat
-posterior_evidence_cap <- as.numeric(params$posterior_evidence_cap)
-redundancy_threshold <- as.numeric(params$redundancy_threshold)
 cores <- as.integer(params$cores)
 
 knitr::kable(
   data.frame(
-    api = params$api,
-    gpmap_url = getOption("gpmap_url"),
-    target_guid = target_guid,
-    p_threshold = if (is.null(p_threshold)) "upload default" else format(p_threshold),
-    associations = associations,
-    trait_subset = trait_subset,
-    include_trans = include_trans,
-    min_snp_signals = min_snp_signals,
-    compress_method = compress_method,
-    compress_scale = compress_scale,
-    ebmf_prior = ebmf_prior,
-    ebmf_backfit = ebmf_backfit,
-    ebmf_lfsr_threshold = ebmf_lfsr_threshold,
-    ebmf_magnitude_threshold = ebmf_magnitude_threshold,
-    ebmf_greedy_Kmax = ebmf_greedy_Kmax,
-    ebmf_missing_se = ebmf_missing_se,
-    min_module_size = min_module_size,
-    similarity_threshold = similarity_threshold,
-    similarity_n_perm = similarity_n_perm,
-    similarity_q = similarity_q_threshold,
-    high_similarity_q = high_similarity_q,
-    high_connectedness = high_connectedness,
-    high_similarity_z = high_similarity_z,
-    min_effective_traits = min_effective_traits,
-    n_rep = n_rep,
-    frac_traits = frac_traits,
-    redundancy_threshold = redundancy_threshold,
-    remove_duplicates = isTRUE(params$remove_duplicates),
+    setting = c(
+      "api", "gpmap_url", "target_guid", "include_situated_gene", "n_rep",
+      "cores", "remove_duplicates", names(ebmf_settings)
+    ),
+    value = c(
+      params$api, getOption("gpmap_url"), target_guid, include_situated_gene,
+      n_rep, cores, isTRUE(params$remove_duplicates),
+      vapply(ebmf_settings, function(x) paste(format(x), collapse = ", "), character(1))
+    ),
     stringsAsFactors = FALSE
   ),
-  caption = "Active run parameters",
+  caption = paste0(
+    "Active run parameters. Analysis settings are from _ebmf_settings.yml ",
+    "(signature: ", settings_signature, ")."
+  ),
   row.names = FALSE
 )
 ```
@@ -477,27 +428,17 @@ if (isTRUE(params$remove_duplicates)) {
 
 ```{r fit}
 set.seed(20240214)
-ebmf_result <- run_univariate_clustering(
+# Fits EBMF and scores the programs (summarised in the next section).
+pipeline <- run_ebmf_pipeline(
   target,
+  settings = ebmf_settings,
   target_trait_id = target_guid,
-  associations = associations,
-  p_threshold = p_threshold,
-  trait_subset = trait_subset,
-  include_trans = include_trans,
-  min_snp_signals = min_snp_signals,
-  max_snp_fraction = max_snp_fraction,
-  compress_method = compress_method,
-  compress_scale = compress_scale,
-  ebmf_lfsr_threshold = ebmf_lfsr_threshold,
-  ebmf_magnitude_threshold = ebmf_magnitude_threshold,
-  ebmf_greedy_Kmax = ebmf_greedy_Kmax,
-  ebmf_prior = ebmf_prior,
-  ebmf_backfit = ebmf_backfit,
-  ebmf_missing_se = ebmf_missing_se,
-  min_module_size = min_module_size,
-  min_mean_internal = min_mean_internal,
-  min_connectedness = min_connectedness
+  n_rep = n_rep,
+  cores = cores,
+  verbose = FALSE
 )
+ebmf_result <- pipeline$fit
+program_summary <- pipeline$summary
 X <- ebmf_result$x_matrix
 S <- ebmf_result$s_matrix
 cg <- ebmf_result$coloc_groups
@@ -560,11 +501,8 @@ The columns:
   `similarity_q` but has no floor, so it keeps ranking programs that beat every
   random group; at `high_similarity_z` or above it makes a program high in place
   of connectedness. See
-  [SNP biological clustering](univariate-overview.html#what-similarity_z-measures).
+  [SNP biological clustering](../article/univariate-overview.html#what-similarity_z-measures).
 - **connectedness**: the share of member pairs with `S >= similarity_threshold`.
-- **excess_similarity** and **excess_connectedness** (reported): each of the
-  above minus its value in the random groups; effect sizes that do not grow
-  with program size.
 - **factor_pve_pct** (reported): the share of the matrix variance the factor
   explains.
 - **replication** (reported): the mean Jaccard overlap between the program's
@@ -575,29 +513,6 @@ The columns:
   their parent.
 
 ```{r validation, results = "asis"}
-program_summary <- summarise_ebmf_programs(
-  ebmf_result,
-  s_matrix = S,
-  edge_threshold = similarity_threshold,
-  min_module_size = min_module_size,
-  similarity_n_perm = similarity_n_perm,
-  similarity_q_threshold = similarity_q_threshold,
-  high_similarity_q = high_similarity_q,
-  high_min_connectedness = high_connectedness,
-  high_min_similarity_z = high_similarity_z,
-  min_effective_traits = min_effective_traits,
-  n_null = n_null,
-  alpha_membership = alpha_membership,
-  n_candidate_tier = n_candidate_tier,
-  n_rep = n_rep,
-  frac_traits = frac_traits,
-  top_n = stability_top_n,
-  posterior_stat = posterior_stat,
-  posterior_evidence_cap = posterior_evidence_cap,
-  redundancy_threshold = redundancy_threshold,
-  cores = cores,
-  verbose = FALSE
-)
 # Every kept program (at least min_module_size SNPs) is annotated; the tier is
 # reported, not applied.
 analysis_ids <- program_summary$programs$program
@@ -610,9 +525,7 @@ print(kable_confidence(
       n_snps_filtered,
       effective_n_traits = round(effective_n_traits, 2),
       mean_internal_similarity = round(mean_internal_similarity, 3),
-      excess_similarity = round(excess_similarity, 3),
       connectedness = round(connectedness, 3),
-      excess_connectedness = round(excess_connectedness, 3),
       similarity_q = signif(similarity_q, 2),
       similarity_z = round(similarity_z, 1),
       factor_pve_pct = round(100 * factor_pve, 2),
@@ -720,7 +633,6 @@ group_traits <- summarise_module_specific_traits(
   exclude_trait_ids = target_guid,
   min_group_size = min_module_size,
   top_n = top_n_traits,
-  n_categories = 3L,
   min_specificity = min_specificity
 )
 module_traits_overview <- dplyr::bind_rows(lapply(group_traits$by_group, function(x) {

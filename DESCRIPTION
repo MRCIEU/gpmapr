@@ -20,7 +20,6 @@ Imports:
     igraph,
     parallel,
     readr,
-    tidyLPA,
     tidyr,
     yaml
 Suggests: 

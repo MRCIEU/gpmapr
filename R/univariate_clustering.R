@@ -4,35 +4,32 @@
 #' similarity -> Empirical Bayes Matrix Factorization programs) from a single
 #' entry point. The function takes a trait object as returned by
 #' `trait(trait_id, include_associations = TRUE)` — or a simulated object with
-#' the same shape — so no API calls are made when `coloc_groups` (and, for
-#' `associations = "full"`, `full_associations`) are supplied.
+#' the same shape — so no API calls are made.
+#'
+#' The defaults are the shared analysis settings in
+#' `vignettes/_ebmf_settings.yml`. To run with a settings list, and to follow
+#' with [summarise_ebmf_programs()], use [run_ebmf_pipeline()].
 #'
 #' The simulated `coloc_groups` dataframe must include at least: `coloc_group_id`,
 #' `variant_id`, `display_snp`, `chr`, `bp`, `trait_id`, `trait_name`, `min_p`,
-#' `beta`, and `se` (plus `snp_key` if not `"variant_id"`). Rows where
-#' `trait_id == target_trait_id` define the target SNPs (columns); all other
-#' rows become background trait profiles. Optional annotation columns
-#' (`gene_id`, `gene`, `tissue`, `trait_category`) enrich downstream
-#' interpretation functions.
+#' `beta`, and `se`. Rows where `trait_id == target_trait_id` define the target
+#' SNPs (columns, named by `variant_id`); all other rows become background
+#' trait profiles. Optional annotation columns (`gene_id`, `gene`, `tissue`,
+#' `trait_category`) enrich downstream interpretation functions.
 #' @param trait_object A trait result list (from `trait()` or a simulation) with
-#'   a `coloc_groups` dataframe. For `associations = "full"` it must also contain
-#'   `full_associations`.
+#'   a `coloc_groups` dataframe.
 #' @param target_trait_id Target trait id. Defaults to `trait_object$trait$id`.
-#' @param associations Which association set backs the matrix: `"coloc"`
-#'   (default; colocalisation rows only) or `"full"` (all full associations).
-#' @param p_threshold Optional p-value threshold for including target SNPs.
-#' @param snp_key Column used to name SNP columns.
-#' @param include_trans If `FALSE` (default), rows flagged `cis_trans == "trans"`
-#'   are removed before matrix construction (requires a `cis_trans` column;
-#'   ignored otherwise).
+#' @param include_trans If `TRUE` (default), rows flagged `cis_trans ==
+#'   "trans"` are kept; `FALSE` removes them before matrix construction
+#'   (requires a `cis_trans` column; ignored otherwise).
 #' @param trait_subset Which trait rows back the trait x SNP matrix:
-#'   `"all"` (default) uses every available background trait, while
-#'   `"phenotypic"` keeps only phenotype traits (rows whose `feature_type` is
-#'   `"phenotypic"` or missing) plus the target trait, dropping molecular /
-#'   gene-annotated rows. Molecular traits are much sparser, so clustering on
-#'   phenotype traits only can recover structure that sparse molecular rows
-#'   dilute. Requires `trait_info` with a `feature_type` column (present for
-#'   `trait()` and simulated objects).
+#'   `"phenotypic"` (default) keeps only phenotype traits (rows whose
+#'   `feature_type` is `"phenotypic"` or missing) plus the target trait,
+#'   dropping molecular / gene-annotated rows, while `"all"` uses every
+#'   available background trait. Molecular traits are much sparser, so
+#'   clustering on phenotype traits only can recover structure that sparse
+#'   molecular rows dilute. `"phenotypic"` requires `trait_info` with a
+#'   `feature_type` column (present for `trait()` and simulated objects).
 #' @param min_snp_signals Minimum non-`NA` SNPs per background trait row.
 #' @param max_snp_fraction Maximum non-`NA` fraction per background trait row.
 #' @param compress_method Effect compression passed to `compress_effect_matrix()`.
@@ -46,17 +43,12 @@
 #'   programs. This guards against the near-null "one giant cluster" failure
 #'   mode.
 #' @param ebmf_prior Prior family for EBMF loadings/factors:
-#'   `"point_normal"` (default) or `"point_laplace"` (heavier tails, often
-#'   better when true effects are large relative to noise).
+#'   `"point_laplace"` (default; heavier tails, often better when true effects
+#'   are large relative to noise) or `"point_normal"`.
 #' @param ebmf_backfit If `TRUE` (default), cyclically refit all factors after
 #'   the greedy phase. `FALSE` is faster but leaves greedy-order artifacts.
 #' @param ebmf_missing_se Standard error of an unobserved cell (no colocalising
 #'   association), which EBMF fits as an observed 0. See `run_ebmf()`.
-#' @param min_module_size,min_mean_internal,min_connectedness Recorded pipeline
-#'   settings for the downstream program-validation layer and used (for
-#'   `min_module_size`) by `calibrate_ebmf_programs()`. They do not affect the
-#'   EBMF fit itself; pass them explicitly to `summarise_ebmf_programs()` to
-#'   gate programs.
 #' @return A list with:
 #'   \itemize{
 #'     \item x_matrix: raw traits x SNPs z-score matrix after trait filtering
@@ -79,27 +71,19 @@
 #' @export
 run_univariate_clustering <- function(trait_object,
                                       target_trait_id = NULL,
-                                      associations = c("coloc", "full"),
-                                      p_threshold = NULL,
-                                      snp_key = c("variant_id", "display_snp", "coloc_group_id"),
-                                      include_trans = FALSE,
-                                      trait_subset = c("all", "phenotypic"),
-                                      min_snp_signals = 5L,
+                                      include_trans = TRUE,
+                                      trait_subset = c("phenotypic", "all"),
+                                      min_snp_signals = 2L,
                                       max_snp_fraction = 0.8,
-                                      compress_method = c("none", "asinh"),
-                                      compress_scale = 2,
+                                      compress_method = c("asinh", "none"),
+                                      compress_scale = 5,
                                       ebmf_greedy_Kmax = 100L,
-                                      ebmf_lfsr_threshold = 0.01,
-                                      ebmf_magnitude_threshold = 0.25,
+                                      ebmf_lfsr_threshold = 0.02,
+                                      ebmf_magnitude_threshold = 0.5,
                                       ebmf_drop_global = TRUE,
-                                      ebmf_prior = c("point_normal", "point_laplace"),
+                                      ebmf_prior = c("point_laplace", "point_normal"),
                                       ebmf_backfit = TRUE,
-                                      ebmf_missing_se = 1,
-                                      min_module_size = 1L,
-                                      min_mean_internal = 0.3,
-                                      min_connectedness = 0.5) {
-  associations <- match.arg(associations)
-  snp_key <- match.arg(snp_key)
+                                      ebmf_missing_se = 1) {
   trait_subset <- match.arg(trait_subset)
   compress_method <- match.arg(compress_method)
   ebmf_prior <- match.arg(ebmf_prior)
@@ -129,26 +113,10 @@ run_univariate_clustering <- function(trait_object,
     }
   }
 
-  if (associations == "full") {
-    full_associations <- trait_object$full_associations
-    if (!is.data.frame(full_associations) || nrow(full_associations) == 0) {
-      stop("associations = 'full' requires trait_object$full_associations")
-    }
-    locus_data <- .prepare_dense_locus_data(
-      trait_id = target_trait_id,
-      coloc_groups = coloc_groups,
-      full_associations = full_associations,
-      p_threshold = p_threshold,
-      snp_key = snp_key
-    )
-  } else {
-    locus_data <- .prepare_pleiotropy_locus_data(
-      trait_id = target_trait_id,
-      coloc_groups = coloc_groups,
-      p_threshold = p_threshold,
-      snp_key = snp_key
-    )
-  }
+  locus_data <- .prepare_pleiotropy_locus_data(
+    trait_id = target_trait_id,
+    coloc_groups = coloc_groups
+  )
   pleiotropy <- .finalize_pleiotropy_from_locus(locus_data, target_id)
 
   X <- pleiotropy$x_matrix
@@ -265,9 +233,6 @@ run_univariate_clustering <- function(trait_object,
     parameters = list(
       method = "ebmf",
       target_trait_id = target_id,
-      associations = associations,
-      p_threshold = p_threshold,
-      snp_key = snp_key,
       include_trans = include_trans,
       trait_subset = trait_subset,
       min_snp_signals = min_snp_signals,
@@ -280,12 +245,114 @@ run_univariate_clustering <- function(trait_object,
       ebmf_drop_global = ebmf_drop_global,
       ebmf_prior = ebmf_prior,
       ebmf_backfit = ebmf_backfit,
-      ebmf_missing_se = ebmf_missing_se,
-      min_module_size = min_module_size,
-      min_mean_internal = min_mean_internal,
-      min_connectedness = min_connectedness
+      ebmf_missing_se = ebmf_missing_se
     )
   ))
+}
+
+
+#' @title Run the Univariate EBMF Pipeline From One Settings List
+#' @description Run [run_univariate_clustering()] and then
+#' [summarise_ebmf_programs()] with one list of analysis settings, keyed as in
+#' `vignettes/_ebmf_settings.yml`, typically from [resolve_ebmf_settings()].
+#' Settings not supplied take the two functions' defaults, which match that
+#' file.
+#'
+#' Keys passed to [run_univariate_clustering()] under the same name:
+#' `include_trans`, `trait_subset`, `min_snp_signals`, `max_snp_fraction`,
+#' `compress_method`, `compress_scale`, `ebmf_greedy_Kmax`,
+#' `ebmf_lfsr_threshold`, `ebmf_magnitude_threshold`, `ebmf_drop_global`,
+#' `ebmf_prior`, `ebmf_backfit`, `ebmf_missing_se`. Keys passed to
+#' [summarise_ebmf_programs()]: `min_module_size`, `similarity_n_perm`,
+#' `high_similarity_q`, `min_effective_traits` and `frac_traits` under the same
+#' name, and `similarity_threshold` (as `edge_threshold`), `similarity_q`
+#' (`similarity_q_threshold`), `high_connectedness`
+#' (`high_min_connectedness`), `high_similarity_z` (`high_min_similarity_z`)
+#' and `stability_top_n` (`top_n`). Any other key is an error.
+#' @param trait_object A trait result list (from `trait()` or a simulation)
+#'   with a `coloc_groups` dataframe.
+#' @param settings Named list of analysis settings (see Description). `NULL`
+#'   entries are ignored.
+#' @param target_trait_id Target trait id. Defaults to `trait_object$trait$id`.
+#' @param n_rep,seed,cores,verbose Passed to [summarise_ebmf_programs()].
+#' @return A list with `fit` (the [run_univariate_clustering()] result) and
+#'   `summary` (the [summarise_ebmf_programs()] result).
+#' @export
+run_ebmf_pipeline <- function(trait_object,
+                              settings = list(),
+                              target_trait_id = NULL,
+                              n_rep = 10,
+                              seed = 1,
+                              cores = 1,
+                              verbose = TRUE) {
+  args <- .ebmf_pipeline_args(settings)
+  fit <- do.call(
+    run_univariate_clustering,
+    c(
+      list(trait_object = trait_object, target_trait_id = target_trait_id),
+      args$clustering
+    )
+  )
+  summary <- do.call(
+    summarise_ebmf_programs,
+    c(
+      list(
+        clustering_result = fit, n_rep = n_rep, seed = seed, cores = cores,
+        verbose = verbose
+      ),
+      args$validation
+    )
+  )
+  return(list(fit = fit, summary = summary))
+}
+
+
+# Settings keys (as in vignettes/_ebmf_settings.yml) and the argument each one
+# sets, for run_univariate_clustering() and summarise_ebmf_programs().
+.ebmf_settings_map <- function() {
+  clustering <- c(
+    "include_trans", "trait_subset", "min_snp_signals", "max_snp_fraction",
+    "compress_method", "compress_scale", "ebmf_greedy_Kmax",
+    "ebmf_lfsr_threshold", "ebmf_magnitude_threshold", "ebmf_drop_global",
+    "ebmf_prior", "ebmf_backfit", "ebmf_missing_se"
+  )
+  return(list(
+    clustering = stats::setNames(clustering, clustering),
+    validation = c(
+      min_module_size = "min_module_size",
+      similarity_threshold = "edge_threshold",
+      similarity_n_perm = "similarity_n_perm",
+      similarity_q = "similarity_q_threshold",
+      high_similarity_q = "high_similarity_q",
+      high_connectedness = "high_min_connectedness",
+      high_similarity_z = "high_min_similarity_z",
+      min_effective_traits = "min_effective_traits",
+      frac_traits = "frac_traits",
+      stability_top_n = "top_n"
+    )
+  ))
+}
+
+
+# Split a settings list into the argument lists of the two pipeline steps.
+.ebmf_pipeline_args <- function(settings) {
+  if (is.null(settings)) {
+    settings <- list()
+  }
+  if (!is.list(settings) || (length(settings) > 0 && is.null(names(settings)))) {
+    stop("settings must be a named list")
+  }
+  settings <- settings[!vapply(settings, is.null, logical(1))]
+  map <- .ebmf_settings_map()
+  unknown <- setdiff(names(settings), c(names(map$clustering), names(map$validation)))
+  if (length(unknown) > 0) {
+    stop("Unknown EBMF setting(s): ", paste(unknown, collapse = ", "))
+  }
+  pick <- function(m) {
+    keys <- intersect(names(m), names(settings))
+    return(stats::setNames(settings[keys], unname(m[keys])))
+  }
+  return(list(clustering = pick(map$clustering), validation = pick(map$validation)))
 }
 
 
@@ -295,102 +362,4 @@ run_univariate_clustering <- function(trait_object,
     stop("clustering_result must come from run_univariate_clustering()")
   }
   return(invisible(TRUE))
-}
-
-
-.cluster_snp_profiles_ebmf <- function(x_matrix,
-                                       greedy_Kmax = 50L,
-                                       lfsr_threshold = 0.05,
-                                       magnitude_threshold = 0.25,
-                                       drop_global = TRUE,
-                                       prior = "point_normal",
-                                       backfit = TRUE,
-                                       missing_se = 1) {
-  beta_matrix <- x_matrix
-  se_matrix <- matrix(
-    1,
-    nrow = nrow(beta_matrix),
-    ncol = ncol(beta_matrix),
-    dimnames = dimnames(beta_matrix)
-  )
-  se_matrix[is.na(beta_matrix)] <- NA_real_
-
-  fit_error <- NULL
-  flash_fit <- tryCatch(
-    run_ebmf(
-      beta_matrix = beta_matrix,
-      se_matrix = se_matrix,
-      se_mode = "unit",
-      missing_se = missing_se,
-      greedy_Kmax = greedy_Kmax,
-      backfit = backfit,
-      ebnm_fn = .resolve_ebnm_fn(prior),
-      verbose = 0L
-    ),
-    error = function(e) {
-      fit_error <<- conditionMessage(e)
-      NULL
-    }
-  )
-
-  if (is.null(flash_fit)) {
-    warning("EBMF fit failed: ", fit_error, call. = FALSE)
-    return(list(
-      method = "ebmf",
-      details = list(
-        flash_fit = NULL,
-        membership = NULL,
-        n_programs = 0L,
-        n_multi_program = 0L,
-        dropped_global_factors = integer(0),
-        error = fit_error
-      )
-    ))
-  }
-
-  # Recorded before any global factor is removed, so the cap check below asks
-  # what the greedy search itself produced.
-  n_greedy_factors <- flash_fit$n_factors
-
-  dropped_global <- integer(0)
-  if (drop_global && flash_fit$n_factors > 0) {
-    preliminary <- extract_ebmf_clusters(
-      flash_fit,
-      lfsr_threshold = lfsr_threshold,
-      magnitude_threshold = magnitude_threshold
-    )
-    dropped_global <- identify_ebmf_global_factors(
-      flash_fit,
-      membership = preliminary$membership
-    )
-    if (length(dropped_global) > 0) {
-      flash_fit <- remove_ebmf_factors(flash_fit, kset = dropped_global)
-    }
-  }
-
-  extracted <- extract_ebmf_clusters(
-    flash_fit,
-    lfsr_threshold = lfsr_threshold,
-    magnitude_threshold = magnitude_threshold
-  )
-
-  membership <- extracted$membership
-
-  return(list(
-    method = "ebmf",
-    details = list(
-      flash_fit = flash_fit,
-      membership = membership,
-      n_programs = extracted$n_programs,
-      n_multi_program = extracted$n_multi_program,
-      dropped_global_factors = dropped_global,
-      greedy_Kmax = as.integer(greedy_Kmax),
-      # TRUE when the greedy search stopped because it hit the cap rather than
-      # because it ran out of factors worth adding -- i.e. K was set by
-      # greedy_Kmax, not by the data. Raise the cap and refit if so.
-      greedy_Kmax_reached = isTRUE(
-        (n_greedy_factors + length(dropped_global)) >= as.integer(greedy_Kmax)
-      )
-    )
-  ))
 }
