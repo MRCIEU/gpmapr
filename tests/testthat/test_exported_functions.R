@@ -123,8 +123,11 @@ test_that("trait_duplicates() returns expected output", {
   result <- trait_duplicates()
   expect_true(is.data.frame(result))
   expect_true(nrow(result) > 0)
-  expected_names <- c("trait_id", "trait_name", "parent_trait_id", "parent_trait_name")
-  expect_true(all(expected_names %in% names(result)))
+  # Older API versions name each duplicate's parent; newer ones list duplicate
+  # groups with a representative. remove_duplicate_traits() reads both.
+  parent_shape <- c("trait_id", "trait_name", "parent_trait_id", "parent_trait_name")
+  group_shape <- c("trait_id", "trait_name", "duplicate_group", "is_representative")
+  expect_true(all(parent_shape %in% names(result)) || all(group_shape %in% names(result)))
 })
 
 test_that("delete_gwas() validates its inputs", {
