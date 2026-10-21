@@ -1,0 +1,23 @@
+{
+  "/health": "response-01.json",
+  "/v1/traits": "response-02.json",
+  "/v1/traits/duplicates": "response-03.json",
+  "/v1/traits/5020?include_associations=FALSE": "response-04.json",
+  "/v1/traits/5020?include_associations=TRUE": "response-05.json",
+  "/v1/traits/5020/associations-full": "response-06.json",
+  "/v1/traits?ids=4405&ids=4872&include_associations=TRUE": "response-07.json",
+  "/v1/genes": "response-08.json",
+  "/v1/genes/WNT7B?include_associations=FALSE&include_coloc_pairs=FALSE&include_trans=TRUE&h4_threshold=0.8": "response-09.json",
+  "/v1/genes?ids=WNT7B&ids=WNT7A&include_associations=TRUE&include_coloc_pairs=FALSE&include_trans=TRUE&h4_threshold=0.8": "response-10.json",
+  "/v1/variants/5553693?include_coloc_pairs=FALSE&h4_threshold=0.8": "response-11.json",
+  "/v1/variants?variants=5553693&variants=5553694&expand=true&include_associations=true&include_coloc_pairs=false&h4_threshold=0.8": "response-12.json",
+  "/v1/regions/459?include_associations=FALSE&include_coloc_pairs=FALSE&h4_threshold=0.8": "response-13.json",
+  "/v1/regions/459?include_associations=TRUE&include_coloc_pairs=FALSE&h4_threshold=0.8": "response-14.json",
+  "/v1/associations?variant_ids=80717&study_ids=926&study_ids=927": "response-15.json",
+  "/v1/ld/proxies?variant_ids=5553693&variant_ids=5553694": "response-16.json",
+  "/v1/pleiotropy/genes": "response-17.json",
+  "/v1/pleiotropy/snps": "response-18.json",
+  "/v1/gwas/7a289615-c1b4-91f3-3d97-887f60de9155": "response-19.json",
+  "/v1/search/variant/rs9939609?rsquared_threshold=0.8": "response-20.json",
+  "/v1/search/options": "response-21.json"
+}

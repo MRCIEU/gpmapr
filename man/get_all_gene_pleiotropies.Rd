@@ -18,3 +18,8 @@ A list containing the gene pleiotropy
 \description{
 Get gene pleiotropy from the API by gene id
 }
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+head(get_all_gene_pleiotropies())
+\dontshow{\}) # examplesIf}
+}

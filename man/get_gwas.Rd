@@ -19,3 +19,9 @@ A list containing the GWAS information
 \description{
 Get a GWAS from the API
 }
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+gwas <- get_gwas("7a289615-c1b4-91f3-3d97-887f60de9155")
+gwas$trait$name
+\dontshow{\}) # examplesIf}
+}

@@ -150,3 +150,9 @@ It has the following columns, along side many more columns from VEP:
 }
 }
 
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+wnt7b <- gene("WNT7B")
+head(wnt7b$coloc_groups)
+\dontshow{\}) # examplesIf}
+}

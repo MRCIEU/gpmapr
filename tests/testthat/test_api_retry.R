@@ -72,6 +72,7 @@ test_that("api_get retries transparently on 429 via httr::GET", {
     return(fake_response(200L))
   }
   testthat::local_mocked_bindings(GET = fake_get, .package = "httr")
+  testthat::local_mocked_bindings(ensure_api_compatible = function() invisible(TRUE))
 
   result <- api_get("http://example.com", base_delay = 0.001, max_delay = 0.002)
   expect_equal(httr::status_code(result), 200L)

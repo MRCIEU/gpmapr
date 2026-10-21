@@ -18,6 +18,9 @@
 #'     \item num_coloc_studies: the number of studies that have coloc results for this trait
 #'     \item num_rare_results: the number of rare results for this trait
 #'   }
+#' @examplesIf gpmap_available()
+#' traits <- all_traits()
+#' head(traits[, c("id", "trait_name")])
 #' @export
 all_traits <- function() {
   traits <- traits_api()
@@ -33,6 +36,8 @@ all_traits <- function() {
 #'     \item parent_trait_id: the id of the trait it duplicates
 #'     \item parent_trait_name: the name of the trait it duplicates
 #'   }
+#' @examplesIf gpmap_available()
+#' head(trait_duplicates())
 #' @export
 trait_duplicates <- function() {
   duplicates <- trait_duplicates_api()
@@ -71,6 +76,9 @@ trait_duplicates <- function() {
 #' @inheritSection rare_results_doc rare_results_dataframe
 #' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
 #' @inheritSection variants_doc variants_dataframe
+#' @examplesIf gpmap_available()
+#' result <- trait(5020)
+#' head(result$coloc_groups)
 #' @export
 trait <- function(trait_id,
                   include_associations = FALSE,
@@ -139,6 +147,9 @@ trait <- function(trait_id,
 #' @inheritSection study_extractions_doc study_extractions_dataframe
 #' @inheritSection rare_results_doc rare_results_dataframe
 #' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
+#' @examplesIf gpmap_available()
+#' result <- traits(c(4405, 4872))
+#' result$traits
 #' @export
 traits <- function(trait_ids,
   include_associations = FALSE,

@@ -136,3 +136,9 @@ It has the following columns:
 }
 }
 
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+result <- traits(c(4405, 4872))
+result$traits
+\dontshow{\}) # examplesIf}
+}

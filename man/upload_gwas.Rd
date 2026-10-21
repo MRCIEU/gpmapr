@@ -96,3 +96,13 @@ Upload a GWAS to the API.  Column names are specified with the \verb{*_col} argu
 \code{chr_col = "chr"}.  \code{chr_col}, \code{bp_col}, \code{ea_col}, \code{oa_col} and \code{p_col} are required, along with either
 \code{beta_col} and \code{se_col}, or \code{or_col}, \code{or_lb_col} and \code{or_ub_col}.
 }
+\examples{
+\dontrun{
+# Uploads summary statistics to the GPMap server; needs an email address.
+result <- upload_gwas(
+  "my_gwas.tsv", name = "My GWAS", email = "you@example.com", sample_size = 10000,
+  chr_col = "chr", bp_col = "pos", ea_col = "ea", oa_col = "oa",
+  p_col = "p", beta_col = "beta", se_col = "se"
+)
+}
+}

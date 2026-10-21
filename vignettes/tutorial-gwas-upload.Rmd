@@ -7,13 +7,7 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r, include = FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  eval = TRUE
-)
-```
+
 
 The GPMap API allows you to upload your own GWAS summary statistics and receive colocalisation results against the existing GPMap. This vignette covers how to upload a GWAS, retrieve your results, interpret them, and compare your upload with another trait (including another upload) to find insights.
 
@@ -21,7 +15,8 @@ The GPMap API allows you to upload your own GWAS summary statistics and receive 
 
 Use `gpmapr::upload_gwas()` to submit your summary statistics. You need a file with standard GWAS columns and metadata such as sample size and ancestry.
 
-```{r upload-example, eval = FALSE}
+
+``` r
 # Example: upload a GWAS file
 result <- gpmapr::upload_gwas(
   file = "path/to/your_gwas.tsv.gz",
@@ -49,7 +44,8 @@ You can also compare your upload with another upload by passing the GUIDs of the
 
 The response includes a **GUID** (a UUID such as `a1b2c3d4-e5f6-7890-abcd-ef1234567890`). Save this GUID; you use it to fetch your results once they are ready.
 
-```{r guid-example, eval = FALSE}
+
+``` r
 # The GUID is returned in the response
 my_guid <- result$guid
 ```
@@ -60,7 +56,8 @@ Processing can take some time. Use the GUID with `trait()` to check status and r
 
 This is of Atopic Dermatitis.
 
-```{r fetch-results, cache = TRUE}
+
+``` r
 my_guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
 my_results <- gpmapr::trait(my_guid, include_associations = TRUE)
 ```
@@ -79,12 +76,15 @@ The difference between study_extractions and upload_study_extractions is that up
 
 Key columns include `study`, `snp`, `gene`, `chr`, `bp`, `min_p`, and trait metadata (`trait_name`, `data_type`, `tissue`).
 
-```{r study-extractions-demo}
+
+``` r
 # Study extractions (structure may vary - list of dataframes or single dataframe)
 uploaded_study_extractions <- my_results$upload_study_extractions
 paste("Number of uploaded study extractions:", nrow(uploaded_study_extractions))
+#> [1] "Number of uploaded study extractions: 144"
 study_extractions <- my_results$study_extractions
 paste("Number of study extractions associated with your upload:", nrow(study_extractions))
+#> [1] "Number of study extractions associated with your upload: 3854"
 ```
 
 ### Coloc groups and coloc pairs
@@ -96,7 +96,8 @@ Although coloc groups provide a more robust view of the relationship between you
 
 If you are interested in the relationship between your trait and another specific trait, you can filter the coloc groups by trait id.
 
-```{r coloc-groups-demo, fig.width=8, fig.height=10, out.width="100%"}
+
+``` r
 trait_to_compare <- 2527L # Allergic rhinitis
 upload_id   <- my_results$trait$id
 upload_name <- as.character(my_results$trait$name)[[1L]]
@@ -224,6 +225,14 @@ if (nrow(cg_df) > 0) {
     "Colocalisation groups"
   ))
 }
+```
+
+<div class="figure">
+<img src="figures/tutorial-gwas-upload-coloc-groups-demo-1.png" alt="plot of chunk coloc-groups-demo" width="100%" />
+<p class="caption">plot of chunk coloc-groups-demo</p>
+</div>
+
+``` r
 
 # --- Section 2: Coloc pairs only (h4 > 0.8, locus not in shared coloc groups) ---
 pairs_all <- my_results$coloc_pairs
@@ -262,6 +271,11 @@ if (!is.null(pairs_all) && nrow(pairs_all) > 0 && "h4" %in% names(pairs_all) &&
 }
 ```
 
+<div class="figure">
+<img src="figures/tutorial-gwas-upload-coloc-groups-demo-2.png" alt="plot of chunk coloc-groups-demo" width="100%" />
+<p class="caption">plot of chunk coloc-groups-demo</p>
+</div>
+
 **Coloc pairs** give pairwise colocalisation probabilities between study extractions:
 
 - **h4**: Both traits share **one common causal variant**
@@ -269,7 +283,8 @@ if (!is.null(pairs_all) && nrow(pairs_all) > 0 && "h4" %in% names(pairs_all) &&
 
 The forest plot above already includes loci with h4 > 0.8 that are not captured by any shared coloc group. The raw pair scores for all significant pairs are shown below.
 
-```{r coloc-pairs-demo}
+
+``` r
 truncate_results <- 20L
 
 pairs <- my_results$coloc_pairs
@@ -288,10 +303,38 @@ if (!is.null(pairs) && nrow(pairs) > 0) {
 }
 ```
 
+
+
+|existing_study_extraction_id_a | study_extraction_id_a| existing_study_extraction_id_b| study_extraction_id_b| ld_block_id|    h3|    h4|false_positive |
+|:------------------------------|---------------------:|------------------------------:|---------------------:|-----------:|-----:|-----:|:--------------|
+|NA                             |                  7293|                          46415|                    NA|           9| 0.083| 0.882|FALSE          |
+|NA                             |                  7293|                          49939|                    NA|           9| 0.117| 0.879|FALSE          |
+|NA                             |                  7293|                          50071|                    NA|           9| 0.003| 0.996|FALSE          |
+|NA                             |                  7293|                          50085|                    NA|           9| 0.086| 0.911|FALSE          |
+|NA                             |                  7294|                         276438|                    NA|          58| 0.002| 0.998|FALSE          |
+|NA                             |                  7294|                         276555|                    NA|          58| 0.069| 0.931|FALSE          |
+|NA                             |                  7294|                         276582|                    NA|          58| 0.002| 0.998|FALSE          |
+|NA                             |                  7295|                             NA|                  7296|          59| 0.000| 1.000|FALSE          |
+|NA                             |                  7297|                             NA|                  7298|          59| 0.000| 1.000|FALSE          |
+|NA                             |                  7303|                         281882|                    NA|          60| 0.067| 0.933|FALSE          |
+|NA                             |                  7303|                         282948|                    NA|          60| 0.064| 0.936|FALSE          |
+|NA                             |                  7303|                         283008|                    NA|          60| 0.071| 0.929|FALSE          |
+|NA                             |                  7303|                         283259|                    NA|          60| 0.057| 0.943|FALSE          |
+|NA                             |                  7303|                         289880|                    NA|          60| 0.097| 0.903|FALSE          |
+|NA                             |                  7303|                         291699|                    NA|          60| 0.047| 0.952|FALSE          |
+|NA                             |                  7303|                         291703|                    NA|          60| 0.127| 0.872|FALSE          |
+|NA                             |                  7303|                         296454|                    NA|          60| 0.039| 0.960|FALSE          |
+|NA                             |                  7303|                         296463|                    NA|          60| 0.052| 0.948|FALSE          |
+|NA                             |                  7303|                         296756|                    NA|          60| 0.025| 0.975|FALSE          |
+|NA                             |                  7303|                         296758|                    NA|          60| 0.047| 0.953|FALSE          |
+
+
+
 ## Deleting an upload
 
 If you no longer want an upload stored in the GPMap, you can permanently delete it, along with all of its results, using `delete_gwas()`. You need to provide the same email address that you used for the upload. Uploads that are still processing can't be deleted.
 
-```{r delete-example, eval = FALSE}
+
+``` r
 gpmapr::delete_gwas(my_guid, email = "your@email.com")
 ```

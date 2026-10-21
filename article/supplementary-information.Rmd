@@ -1,0 +1,280 @@
+---
+title: "Supplementary information"
+output:
+  rmarkdown::html_vignette:
+    includes:
+      in_header: ../vignettes/investigation-wide.html
+vignette: >
+  %\VignetteIndexEntry{Supplementary information}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+## Supplementary Note 1: Sensitivity of the decomposition to duplicate and proxy traits
+
+GPMap often holds several genome-wide association studies (GWAS) of the same
+trait, together with traits that are defined by it or that track it closely.
+Phenome-wide factor methods tolerate this redundancy. Our decomposition is more
+sensitive to it, for two reasons that follow from its design: the pleiotropy
+matrix holds only colocalising associations, and its variants are selected on
+the target trait. This note describes the mechanism, the trait filters we apply
+to counter it, and their effect in two traits.
+
+### Why full-summary-statistic methods tolerate duplicates
+
+GFA [1], GUIDE [2] and PathGPS [3] factorise a matrix in which every trait has
+an estimated effect at every variant. A second, lower-powered GWAS of a trait
+therefore has a row that is approximately a scaled copy of the first: its
+z-scores are proportional to those of the original trait, plus sampling noise.
+A linear factor model represents a scaled copy with the factor that already
+represents the original trait, so the copy adds weight to that factor without
+creating a new one. Consistent with this, GUIDE deliberately includes traits
+correlated with its focal trait (r² > 0.5) in its trait-specific analyses [2],
+and PathGPS removes no traits [3]. GFA removed near-identical traits in one
+application, a panel of blood-cell traits measured in the same individuals,
+because their highly correlated residuals made the fit numerically unstable;
+it otherwise retains correlated traits [1].
+
+### Why a colocalisation-based matrix does not
+
+In our matrix a cell is observed only where the background trait colocalises
+with the target trait at that locus, and an unobserved cell is fitted as an
+observed zero with standard error 1 (Methods). Whether a trait colocalises at a
+locus depends on its power, because it must carry an association signal there
+strong enough to be fine-mapped. A lower-powered copy of a trait therefore
+colocalises only at the loci where the original trait's effect is largest. Its
+row is no longer a scaled copy of the original but a thresholded one, and the
+threshold depends on the copy's power.
+
+Supplementary Table 1 illustrates this with five target-trait loci and a second
+GWAS of the same trait with one third of the power. With full summary
+statistics, the second GWAS has expected z-scores of one third of the
+original's, and the original trait's factor absorbs it. In the colocalisation
+matrix, if for illustration a fine-mapped signal requires |z| > 5, the second
+GWAS is observed at the first locus only. Its row is then not proportional to
+the original: once the original trait's factor is fitted, the residual is
+positive at the strongest locus and negative at the weaker ones, and empirical
+Bayes matrix factorisation (EBMF) fits this contrast as a separate factor. That
+factor marks loci with a large effect on the original trait, not a shared
+mechanism. Copies of different power are thresholded at different points, and
+each can contribute such a factor. Thresholding thus turns a linear copy, which
+a linear factor model absorbs, into a non-linear one, which it does not.
+
+**Supplementary Table 1.** Illustrative oriented z-scores for a target trait
+and a second GWAS of the same trait with one third of the power.
+
+| | Locus 1 | Locus 2 | Locus 3 | Locus 4 | Locus 5 |
+|---|---|---|---|---|---|
+| Target trait | 20 | 12 | 8 | 6 | 5 |
+| Second GWAS, full summary statistics | 6.7 | 4.0 | 2.7 | 2.0 | 1.7 |
+| Second GWAS, colocalising cells only | 6.7 | 0 | 0 | 0 | 0 |
+
+This effect on the factorisation depends on fitting unobserved cells as zeros.
+If unobserved cells were instead excluded from the likelihood, the observed
+cells of a lower-powered copy would remain approximately proportional to the
+original trait. We fit them as zeros because, in a matrix this sparse, which
+cells are observed carries most of the information that separates programs;
+a fit that skips unobserved cells collapses into one broad program (Methods).
+
+### Proxies of the target trait
+
+The problem is most severe for proxies of the target trait: other GWAS of the
+target trait, and the diagnosis, medication use, family history and
+complications of a target disease. Because every variant in the matrix is
+associated with the target trait, these proxies are observed at its strongest
+loci and, once each locus is oriented to the target-trait risk allele, are
+positive wherever they are observed. Each therefore separates the target's loci
+by the size of their effect on the target rather than by mechanism. For the
+same reason the target-trait row is excluded from the variant–variant
+similarity matrix used in program validation, and a proxy left in the matrix
+reintroduces it. In a phenome-wide analysis, by contrast, variants are drawn
+from associations with any trait, and a proxy row reinforces the factor of the
+trait it stands in for.
+
+In the type 2 diabetes (T2D) analysis benchmarked against the clusters of
+Suzuki et al. [4], retaining 11 diabetes diagnosis, medication and
+family-history traits produced an additional high-confidence program (20
+variants, similarity z = 16) whose trait loadings rested entirely on those
+traits and whose loci came from every Suzuki cluster. The number of
+high-confidence programs fell from 11 to 8, and the number of programs
+supported by Suzuki index variants (enrichment q ≤ 0.10) fell from 11 of 15 to
+7 of 16. Mean background similarity did not change (0.029 in both fits),
+because these traits colocalise only at the strongest loci, so a check of
+background similarity alone would not have detected the problem.
+
+### Redundancy among background traits
+
+A second problem arises from redundancy among background traits. It takes two
+forms: the same trait measured more than once (for example, a consortium GWAS
+and the UK Biobank (UKB) field for the same trait, or the saddlepoint
+approximation (SPA)- and Firth-corrected analyses of one UKB binary trait), and
+traits whose effects share the target's sign at nearly every target locus (for
+body mass index (BMI), body-size and body-composition measures). The matrix is
+sparse: after duplicate and proxy removal, 2.2% of cells in the BMI matrix were
+observed, and the median pair of variants shared one observed trait. A block of
+well-powered, same-signed traits therefore makes up much of each variant's
+observed profile and makes random pairs of variants appear similar. This raises
+the background against which the program similarity test is calibrated, since
+the test compares each program with random variant sets of the same size drawn
+from the same matrix. The validation statistics also count each copy
+separately: variant–variant similarity, connectedness and similarity z sum over
+traits, and the effective number of traits counts each copy as a distinct
+trait, so a program carried by several versions of one trait need not appear to
+rest on a single trait. This second problem stems partly from the sparsity of
+the colocalisation matrix and partly from the similarity-based validation, which
+has no counterpart in the full-summary-statistic methods.
+
+### Mitigation
+
+We remove traits before building the matrix, using two lists that each pair a
+trait with a parent trait.
+
+- **Duplicates** are the same measurement imported into GPMap more than once,
+  such as a repeated import of one GWAS, the left- and right-side versions of a
+  body measure, or the SPA- and Firth-corrected versions of one UKB trait.
+  GPMap maintains this list. The parent is retained and the copies are removed,
+  whatever the target trait; if the target trait is itself listed as a copy,
+  its parent is removed instead, so that one version of the measurement
+  remains.
+- **Proxies** are different traits that stand in for the same underlying
+  trait, such as the diagnosis, medication use, family history and
+  complications of a disease (family history is the basis of GWAS by proxy
+  [5]), or body-size measures for BMI. Proxies are removed only when their
+  parent is the target trait, and are currently curated by hand for each target
+  from its colocalisation partners. A proxy of a background trait is retained,
+  because it carries biology relevant to the target (body size in a T2D
+  analysis), although it still counts more than once in the validation
+  statistics.
+
+Where background similarity remains high, correlated background traits can
+additionally be removed with a concordance rule. For BMI, we removed
+anthropometric and body-composition traits that were observed at 10 or more
+BMI loci and whose oriented effect had the same sign at 80% or more of them.
+The rule selected 40 traits, of which 14 had already been removed as GPMap
+duplicates. Waist-to-hip ratio met the rule but was retained, because fat
+distribution is what separates obesity sub-programs. We fitted BMI with and
+without this rule; both fits removed 4 BMI proxies and 156 GPMap duplicates
+(Supplementary Table 2).
+
+**Supplementary Table 2.** BMI decomposition with and without removal of
+correlated body-size traits (GPMap build of 12 October 2026).
+
+| | Duplicates and proxies removed | Also 26 body-size traits removed |
+|---|---|---|
+| Background traits | 569 | 543 |
+| Mean background similarity | 0.251 | 0.013 |
+| Variant pairs with similarity ≥ 0.2 | 52% | 4.2% |
+| High / medium-confidence programs | 4 / 2 | 7 / 6 |
+| Low-confidence programs | 29 | 14 |
+| Annotations with enrichment (trait categories / Reactome / KEGG) | 4 / 0 / 0 | 8 / 1 / 2 |
+
+Removing 26 of 569 background traits (5%) reduced mean background similarity
+about twentyfold and more than doubled the number of high- and
+medium-confidence programs. In the first fit, half of all random variant pairs
+already exceeded the connectedness threshold, so few programs could show that
+their variants were more alike than chance.
+
+Removing traits also removes observations. With the body-size traits removed,
+1.0% of matrix cells were observed (against 2.2%), and the median pair of
+variants shared no observed trait (against one), so many similarities rest on
+few traits. A removed trait may also carry real biology. The aim is therefore
+to remove the axis shared by every variant while keeping traits that differ
+between variants, such as fat distribution.
+
+We report background similarity for every fit. A high value indicates that
+redundant background traits remain in the matrix. As the T2D example shows,
+proxies of the target trait need not raise background similarity, which is why
+they are removed by an explicit list rather than detected from the fit.
+
+## Supplementary Note 2: Linkage disequilibrium
+
+Phenome-wide factor methods work at the level of individual variants and must
+handle linkage disequilibrium (LD) themselves: GFA clumps variants to r² < 0.01
+within 1 Mb windows [1], and GUIDE does not explicitly account for LD [2]. Our
+decomposition inherits its handling of LD from GPMap, which addresses LD before
+any data enter the matrix [6]. GPMap partitions the genome into 1,357
+approximately LD-independent regions [7], fine-maps each region with SuSiE [8]
+against a European-ancestry UK Biobank LD reference panel, tests pairs of
+fine-mapped signals for colocalisation using coloc on the SuSiE Bayes factors
+[9], and groups colocalising signals across studies.
+
+Two consequences follow. First, each column of the matrix is one fine-mapped
+signal of the target trait (one colocalisation group), not a variant. Each
+signal is therefore represented once, rather than by the many variants that tag
+it, and no clumping or pruning step is needed. Second, a cell is observed only
+when a background trait's fine-mapped signal colocalises with the target signal
+(posterior probability of a shared causal variant ≥ 0.8). A background trait
+therefore enters a column through evidence for a shared causal variant, not
+merely through association at a nearby correlated variant.
+
+Some LD-related limitations remain. Colocalisation cannot distinguish a single
+causal variant shared by two traits from two distinct causal variants in strong
+LD [10, 11], so an observed cell may reflect a distinct but highly correlated
+variant; this limitation applies to any colocalisation-based analysis.
+Fine-mapping assumes that distinct signals in a region can be separated [9],
+and signals in the same or neighbouring regions may still be in partial LD. Our
+enrichment analyses treat each signal as an independent observation, so their
+p-values may be somewhat optimistic where nearby signals share annotations.
+
+## Supplementary Note 3: Sample overlap
+
+Many GWAS in GPMap share participants, most notably those drawn from UK
+Biobank. Overlapping samples correlate the sampling errors of two studies'
+estimates, approximately in proportion to the fraction of shared participants
+multiplied by the phenotypic correlation of the two traits [10, 12]. This
+produces correlation between the traits' summary statistics that is not
+genetic.
+
+Full-summary-statistic factor methods must model this, because most variants in
+their matrices have little or no association with most traits, and the
+cross-trait covariance at those variants is dominated by correlated sampling
+error. GFA estimates this covariance from cross-trait LD score regression
+intercepts and includes it in the model as fixed factors [1], and PathGPS
+subtracts a covariance estimated from variants without association signals [3].
+Our matrix contains no such cells. A cell is observed only where a background
+trait has a fine-mapped association signal that colocalises with the target
+signal, and unobserved cells are fixed at zero rather than estimated.
+Correlated sampling error can shift the value of an observed cell, but it does
+not supply the fine-mapped, colocalising association that a cell requires.
+
+The remaining question is whether overlap affects the colocalisation calls
+themselves. Colocalisation methods compute the joint likelihood of two studies
+as the product of their individual likelihoods, which assumes independent
+samples [11, 12]. Simulations suggest that this assumption matters little in
+practice. In HyPrColoc simulations of ten quantitative traits measured in the
+same individuals, ignoring the overlap identified the cluster of colocalised
+traits in 97.5% of simulations (residual correlation 0.5), compared with 95.5%
+for traits measured in independent samples, with no increase in false
+positives; results were similar for residual correlations of −0.1 and 0.8, and
+adjusting the likelihood alone for overlap performed worse [12]. For two
+quantitative traits measured in the same individuals, residual correlations up
+to 0.8 likewise had a negligible effect on coloc posterior probabilities [13].
+These simulations used quantitative traits only. They did not test case–control
+traits, colocalisation on SuSiE output, or distinct causal variants in LD under
+overlap, and the HyPrColoc authors describe their investigation as brief and
+limited [12]. We did not model sample overlap explicitly.
+
+GPMap's rare-variant results would be more exposed to overlap. They come from
+exome-sequencing analyses of UK Biobank participants (Genebass, Backman et al.
+and the AstraZeneca Genomics Initiative), so different traits' results share
+most of their participants. Because the variants are absent from the LD
+reference panel, these results are not fine-mapped or colocalised, and GPMap
+instead groups traits that share a significant variant [6]. They would
+therefore lack both protections described above. The decomposition uses only
+common-variant colocalisation results, not rare-variant results.
+
+## References
+
+1. Morrison J, Willwerscheid J, Sylvertooth D, He X, Stephens M (2026). Genetic factor analysis for characterizing phenome-wide patterns of genetic pleiotropy. *Nature Genetics*. https://doi.org/10.1038/s41588-026-02753-1
+2. Lazarev D, Chau G, Bloemendal A, Churchhouse C, Neale BM (2024). GUIDE deconstructs genetic architectures using association studies. *bioRxiv*. https://doi.org/10.1101/2024.05.03.592285
+3. Gao Z, Zhao Q, Hastie T (2024). PathGPS: discover shared genetic architecture using GWAS summary data. *Biometrics*. https://doi.org/10.1093/biomtc/ujae060
+4. Suzuki K, et al. (2024). Genetic drivers of heterogeneity in type 2 diabetes pathophysiology. *Nature*. https://doi.org/10.1038/s41586-024-07019-6
+5. Liu JZ, Erlich Y, Pickrell JK (2017). Case–control association mapping by proxy using family history of disease. *Nature Genetics*. https://doi.org/10.1038/ng.3766
+6. Elmore AR, Hanson AL, Leyden GM, Johnson J, Davey Smith G, Paternoster L, Gaunt TR, Hemani G (2026). Building the human genotype-phenotype map to harness pleiotropy and refine disease mechanisms. *medRxiv*. https://doi.org/10.64898/2026.02.19.26346618
+7. Berisa T, Pickrell JK (2016). Approximately independent linkage disequilibrium blocks in human populations. *Bioinformatics*. https://doi.org/10.1093/bioinformatics/btv546
+8. Wang G, Sarkar A, Carbonetto P, Stephens M (2020). A simple new approach to variable selection in regression, with application to genetic fine mapping. *Journal of the Royal Statistical Society: Series B*. https://doi.org/10.1111/rssb.12388
+9. Wallace C (2021). A more accurate method for colocalisation analysis allowing for multiple causal variants. *PLoS Genetics*. https://doi.org/10.1371/journal.pgen.1009440
+10. Pickrell JK, Berisa T, Liu JZ, Ségurel L, Tung JY, Hinds DA (2016). Detection and interpretation of shared genetic influences on 42 human traits. *Nature Genetics*. https://doi.org/10.1038/ng.3570
+11. Hukku A, Pividori M, Luca F, Pique-Regi R, Im HK, Wen X (2021). Probabilistic colocalization of genetic variants from complex and molecular traits: promise and limitations. *American Journal of Human Genetics*. https://doi.org/10.1016/j.ajhg.2020.11.012
+12. Foley CN, Staley JR, Breen PG, Sun BB, Kirk PDW, Burgess S, Howson JMM (2021). A fast and efficient colocalization algorithm for identifying shared genetic risk factors across multiple traits. *Nature Communications*. https://doi.org/10.1038/s41467-020-20885-8
+13. Mitchelmore J, Grinberg NF, Wallace C, Spivakov M (2020). Functional effects of variation in transcription factor binding highlight long-range gene regulation by epromoters. *Nucleic Acids Research*. https://doi.org/10.1093/nar/gkaa123

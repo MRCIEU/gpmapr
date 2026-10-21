@@ -25,6 +25,9 @@
 #' @inheritSection rare_results_doc rare_results_dataframe
 #' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
 #' @inheritSection variants_doc variants_dataframe
+#' @examplesIf gpmap_available()
+#' result <- region(459)
+#' head(result$coloc_groups)
 #' @export
 region <- function(region_id,
                    include_associations = FALSE,

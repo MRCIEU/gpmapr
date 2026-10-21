@@ -22,6 +22,9 @@
 #' @inheritSection study_extractions_doc study_extractions_dataframe
 #' @inheritSection summary_statistics_doc summary_statistics_dataframe
 #' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
+#' @examplesIf gpmap_available()
+#' result <- variant(5553693)
+#' head(result$coloc_groups)
 #' @export
 variant <- function(variant_id,
                     include_coloc_pairs = FALSE,
@@ -69,6 +72,9 @@ variant <- function(variant_id,
 #' @inheritSection rare_results_doc rare_results_dataframe
 #' @inheritSection summary_statistics_doc summary_statistics_dataframe
 #' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
+#' @examplesIf gpmap_available()
+#' result <- variants(c(5553693, 5553694))
+#' result$variants
 #' @export
 variants <- function(
   variants,

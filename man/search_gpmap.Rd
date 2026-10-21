@@ -18,16 +18,16 @@ results (most first).  For variant searches the searched variant is always first
 \item type: the type of the search result: "original_variant", "proxy_variant", "trait", "gene"
 \item name: the name of the search result
 \item type_id: the type_id of the search result.  This is the internal id in which the data can be accessed.
+\item rsq: (variant searches only) the r-squared between a proxy variant and the searched variant; \code{NA} for
+the searched variant itself
+\item num_study_extractions: the number of study extractions (\code{NA} for variants)
+\item num_coloc_groups: the number of colocalisation groups
+\item num_coloc_studies: the number of colocalising studies
+\item num_rare_results: the number of rare results
 \item call: the call to get the search result: "variant(type_id)", "trait(type_id)", "gene(type_id)"
-\item info: a string containing informaiton about the search result, which may include:
-\itemize{
-\item Extractions: the number of extractions
-\item Colocalisation Groups: the number of colocalisation groups
-\item Colocalisation Studies: the number of colocalisation studies
-\item Rare Results: the number of rare results
-\item Rsquared: the rsquared of the proxy variant compared to the original variant
 }
-}
+Trait and gene results also carry the descriptive columns of the search options (e.g. \code{aliases},
+\code{sample_size}, \code{ancestry}).
 }
 \description{
 Search the GP Map for Traits, Genes or Variants
@@ -35,4 +35,10 @@ Search the GP Map for Traits, Genes or Variants
 \details{
 After calling search, you can use call the subsequent data as described in the \code{call} column of the
 search results.
+}
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+search_gpmap("haemoglobin")
+search_gpmap("rs9939609")
+\dontshow{\}) # examplesIf}
 }

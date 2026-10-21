@@ -3,6 +3,10 @@
 #' @param variant_ids A character string specifying the Variant ID.  Variant IDs can be SNP IDs or variant IDs.
 #' @return A list containing the LD matrix
 #' @inheritSection ld_doc ld_dataframe
+#' @examples
+#' \dontrun{
+#' ld_matrix(c(5553693, 5553694))
+#' }
 #' @export
 ld_matrix <- function(variant_ids = c()) {
   if (is.numeric(variant_ids)) {
@@ -20,6 +24,9 @@ ld_matrix <- function(variant_ids = c()) {
 #' @param variant_ids A character string specifying the Variant ID.  Variant IDs can be SNP IDs or variant IDs.
 #' @return A list containing the LD proxies
 #' @inheritSection ld_doc ld_dataframe
+#' @examplesIf gpmap_available()
+#' proxies <- ld_proxies(c(5553693, 5553694))
+#' head(proxies$lds)
 #' @export
 ld_proxies <- function(variant_ids = c()) {
   if (is.numeric(variant_ids)) {

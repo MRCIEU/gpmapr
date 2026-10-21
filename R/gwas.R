@@ -4,6 +4,9 @@
 #' @param include_summary_stats Whether to include summary statistics
 #' @param include_associations Whether to include associations
 #' @return A list containing the GWAS information
+#' @examplesIf gpmap_available()
+#' gwas <- get_gwas("7a289615-c1b4-91f3-3d97-887f60de9155")
+#' gwas$trait$name
 #' @export
 get_gwas <- function(gwas_id, include_associations = FALSE, include_summary_stats = FALSE) {
   gwas_info <- get_gwas_api(
@@ -48,6 +51,15 @@ get_gwas <- function(gwas_id, include_associations = FALSE, include_summary_stat
 #' @param snp_col The name of the SNP identifier column (optional)
 #' @param rsid_col The name of the rsID column (optional)
 #' @return A list containing the GWAS information, including the `guid` used to fetch results
+#' @examples
+#' \dontrun{
+#' # Uploads summary statistics to the GPMap server; needs an email address.
+#' result <- upload_gwas(
+#'   "my_gwas.tsv", name = "My GWAS", email = "you@example.com", sample_size = 10000,
+#'   chr_col = "chr", bp_col = "pos", ea_col = "ea", oa_col = "oa",
+#'   p_col = "p", beta_col = "beta", se_col = "se"
+#' )
+#' }
 #' @export
 upload_gwas <- function(file,
                         name,
@@ -127,6 +139,11 @@ upload_gwas <- function(file,
 #' @param gwas_id The GUID of the GWAS upload
 #' @param email The email address used for the upload
 #' @return Invisibly, a list containing the API response message
+#' @examples
+#' \dontrun{
+#' # Permanently deletes an upload; needs the email address used to upload it.
+#' delete_gwas("00000000-0000-0000-0000-000000000000", email = "you@example.com")
+#' }
 #' @export
 delete_gwas <- function(gwas_id, email) {
   if (missing(gwas_id) || length(gwas_id) != 1 || is.na(gwas_id) || !is_guid(gwas_id)) {

@@ -32,3 +32,8 @@ It has the following columns:
 }
 }
 
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+associations(variant_ids = 80717, study_ids = c(926, 927))
+\dontshow{\}) # examplesIf}
+}

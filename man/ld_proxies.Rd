@@ -27,3 +27,9 @@ It has the following columns:
 }
 }
 
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+proxies <- ld_proxies(c(5553693, 5553694))
+head(proxies$lds)
+\dontshow{\}) # examplesIf}
+}

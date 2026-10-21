@@ -27,3 +27,8 @@ It has the following columns:
 }
 }
 
+\examples{
+\dontrun{
+ld_matrix(c(5553693, 5553694))
+}
+}

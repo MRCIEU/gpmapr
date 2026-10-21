@@ -29,3 +29,9 @@ A dataframe containing all traits with the following columns:
 \description{
 Get all traits from the API
 }
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+traits <- all_traits()
+head(traits[, c("id", "trait_name")])
+\dontshow{\}) # examplesIf}
+}

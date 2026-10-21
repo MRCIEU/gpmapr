@@ -159,3 +159,9 @@ It has the following columns:
 }
 }
 
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+result <- variant(5553693)
+head(result$coloc_groups)
+\dontshow{\}) # examplesIf}
+}

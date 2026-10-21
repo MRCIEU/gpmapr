@@ -1,6 +1,6 @@
 api_to_package_version <- list(
   "1.0.0" = c("0.0.0.9000"),
-  "1.0.1" = c("0.0.1.0", "0.0.2.0")
+  "1.0.1" = c("0.0.1.0", "0.0.2.0", "0.1.0")
 )
 
 #' Check if a string is a GUID
@@ -23,7 +23,7 @@ is_guid <- function(id) {
 #' @keywords internal
 #' @noRd
 merge_associations <- function(coloc_groups, rare_results, associations) {
-  if (is.null(associations)) return(coloc_groups = coloc_groups, rare_results = rare_results)
+  if (is.null(associations)) return(list(coloc_groups = coloc_groups, rare_results = rare_results))
 
   join_keys <- c("study_id", "variant_id")
   if (!all(join_keys %in% colnames(associations))) {

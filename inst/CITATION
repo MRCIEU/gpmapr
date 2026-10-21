@@ -1,0 +1,8 @@
+bibentry(
+  bibtype = "Manual",
+  title = "{gpmapr}: Query the {OpenGWAS} Genotype-Phenotype Map",
+  author = c(person("Andrew", "Elmore"), person("Gibran", "Hemani")),
+  year = "2026",
+  note = paste("R package version", meta$Version),
+  url = "https://github.com/MRCIEU/gpmapr"
+)

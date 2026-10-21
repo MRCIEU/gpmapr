@@ -134,3 +134,9 @@ It has the following columns:
 }
 }
 
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+result <- genes(c("WNT7B", "WNT7A"))
+result$genes
+\dontshow{\}) # examplesIf}
+}

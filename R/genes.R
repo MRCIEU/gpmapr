@@ -18,6 +18,9 @@
 #'     \item num_coloc_studies: the number of studies that have coloc results for this gene
 #'     \item num_rare_groups: the number of rare groups for this gene
 #'   }
+#' @examplesIf gpmap_available()
+#' genes <- all_genes()
+#' head(genes[, c("id", "gene", "chr")])
 #' @export
 all_genes <- function() {
   genes <- genes_api()
@@ -51,6 +54,9 @@ all_genes <- function() {
 #' @inheritSection rare_results_doc rare_results_dataframe
 #' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
 #' @inheritSection variants_doc variants_dataframe
+#' @examplesIf gpmap_available()
+#' wnt7b <- gene("WNT7B")
+#' head(wnt7b$coloc_groups)
 #' @export
 gene <- function(gene_id,
   include_associations = FALSE,
@@ -95,6 +101,9 @@ gene <- function(gene_id,
 #' @inheritSection study_extractions_doc study_extractions_dataframe
 #' @inheritSection rare_results_doc rare_results_dataframe
 #' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
+#' @examplesIf gpmap_available()
+#' result <- genes(c("WNT7B", "WNT7A"))
+#' result$genes
 #' @export
 genes <- function(gene_ids,
   include_associations = FALSE,
