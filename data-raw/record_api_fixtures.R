@@ -9,9 +9,10 @@
 # Re-run from the package root whenever the live tests (test_live_api.R) show
 # that the API has changed:
 #   Rscript data-raw/record_api_fixtures.R
+# Records from production; set GPMAP_URL to record from another API.
 
 pkgload::load_all(".", quiet = TRUE)
-options(gpmap_url = "https://gpmap.opengwas.io/api")
+options(gpmap_url = Sys.getenv("GPMAP_URL", "https://gpmap.opengwas.io/api"))
 ns <- asNamespace("gpmapr")
 
 fixture_dir <- file.path("tests", "testthat", "fixtures")
@@ -61,6 +62,7 @@ calls <- list(
   quote(region(459, include_associations = TRUE)),
   quote(associations(80717, c(926, 927))),
   quote(ld_proxies(c(5553693, 5553694))),
+  quote(ld_matrix(c(5553693, 5553688))),
   quote(get_all_gene_pleiotropies()),
   quote(get_all_variant_pleiotropies()),
   quote(get_gwas("7a289615-c1b4-91f3-3d97-887f60de9155")),

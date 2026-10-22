@@ -1,6 +1,6 @@
 Package: gpmapr
 Title: Query the 'OpenGWAS' Genotype-Phenotype Map
-Version: 0.1.0
+Version: 0.1.1
 Authors@R: c(
     person("Andrew", "Elmore", , "andrew.elmore@bristol.ac.uk", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0003-0292-447X")),

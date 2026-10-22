@@ -136,7 +136,7 @@ This returns a list of elements, which you can access by name.  More detailed ex
 * `coloc_groups`: a dataframe containing information about which studies have coloc results for this trait.
 * `study_extractions`: a list of dataframes containing the study extractions for this trait.
 * `rare_results`: (if they exist) a list of dataframes containing the rare results for this trait
-* `associations`: (optional) a dataframe containing the associations for the variants in which the trait is colocalised
+* With `include_associations = TRUE`, `coloc_groups`, `rare_results` and `study_extractions` also include each study's association at its variant (`beta`, `se`, `p`, `eaf`, `imputed`).
 * `coloc_pairs`: (optional) a dataframe containing all pairwise coloc results for this trait.
 
 ### How `study_extractions`, `coloc_groups`, and `rare_results` relate
@@ -283,53 +283,26 @@ knitr::kable(head(slc44a1_no_trans$coloc_groups[, c("coloc_group_id", "trait_nam
 
 Although coloc groups provide a helpful overview of the colocalisation results for a gene, you may want to look at the pairwise relationships between the studies.  You can do this by setting `include_coloc_pairs = TRUE` in the call.
 
-As there may be many coloc pairs, the results are not as fleshed out as the coloc groups.  You may have to filter the results to get the information you need, or join with the study extractions to get the full picture.
+Each pair carries the trait name, data type, tissue and gene of both of its study extractions (`trait_name_a`, `trait_name_b`, and so on), so you can read the pairs without joining them to `study_extractions` yourself.  As there may be many coloc pairs, you may want to filter them, for example by `h4`.
 
 
 ``` r
 slc44a1_coloc_pairs <- gene("SLC44A1", include_coloc_pairs = TRUE)
 nrow(slc44a1_coloc_pairs$coloc_pairs)
 #> [1] 1096
-knitr::kable(head(slc44a1_coloc_pairs$coloc_pairs[, c("study_extraction_a_id", "study_extraction_b_id", "h4")]))
+knitr::kable(head(slc44a1_coloc_pairs$coloc_pairs[, c("trait_name_a", "trait_name_b", "h3", "h4")]))
 ```
 
 
 
-| study_extraction_a_id| study_extraction_b_id|        h4|
-|---------------------:|---------------------:|---------:|
-|               2469380|               2469454| 0.9971425|
-|               2469380|               2469455| 0.9969158|
-|               2469454|               2469455| 0.9999984|
-|               2469454|               2469769| 0.9071751|
-|               2469454|               2469816| 0.8388802|
-|               2469454|               2469956| 0.9998948|
-
-
-
-``` r
-
-study_extractions_tbl <- dplyr::bind_rows(slc44a1_no_trans$study_extractions)
-study_extractions_subset <- dplyr::select(study_extractions_tbl, id, trait_name, min_p)
-
-hydrated_coloc_pairs <- slc44a1_coloc_pairs$coloc_pairs |>
-  dplyr::left_join(slc44a1_coloc_pairs$study_extractions, by = c("study_extraction_a_id" = "id")) |>
-  dplyr::rename(trait_a = trait_name) |>
-  dplyr::left_join(slc44a1_coloc_pairs$study_extractions, by = c("study_extraction_b_id" = "id")) |>
-  dplyr::rename(trait_b = trait_name)
-
-knitr::kable(head(hydrated_coloc_pairs[, c("trait_a", "trait_b", "h4")]))
-```
-
-
-
-|trait_a                  |trait_b                                           |        h4|
-|:------------------------|:-------------------------------------------------|---------:|
-|HDL cholesterol          |Apolipoprotein A1 levels                          | 0.9971425|
-|HDL cholesterol          |HDL cholesterol levels                            | 0.9969158|
-|Apolipoprotein A1 levels |HDL cholesterol levels                            | 0.9999984|
-|Apolipoprotein A1 levels |Phospholipids to total lipids ratio in large HDL  | 0.9071751|
-|Apolipoprotein A1 levels |Phospholipids to total lipids ratio in medium HDL | 0.8388802|
-|Apolipoprotein A1 levels |SLC44A1 Blood eQTL                                | 0.9998948|
+|trait_name_a             |trait_name_b                                      |        h3|        h4|
+|:------------------------|:-------------------------------------------------|---------:|---------:|
+|HDL cholesterol          |Apolipoprotein A1 levels                          | 0.0028575| 0.9971425|
+|HDL cholesterol          |HDL cholesterol levels                            | 0.0030842| 0.9969158|
+|Apolipoprotein A1 levels |HDL cholesterol levels                            | 0.0000016| 0.9999984|
+|Apolipoprotein A1 levels |Phospholipids to total lipids ratio in large HDL  | 0.0108699| 0.9071751|
+|Apolipoprotein A1 levels |Phospholipids to total lipids ratio in medium HDL | 0.1601366| 0.8388802|
+|Apolipoprotein A1 levels |SLC44A1 Blood eQTL                                | 0.0001047| 0.9998948|
 
 
 

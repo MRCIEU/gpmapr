@@ -36,7 +36,7 @@ result <- gpmapr::upload_gwas(
   beta_col = "beta",
   se_col = "se",
   email = "your@email.com",
-  category = "continuous",
+  variable_type = "continuous",
   ancestry = "EUR",
   sample_size = 50000,
   reference_build = "GRCh38"
@@ -65,7 +65,7 @@ my_guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
 my_results <- gpmapr::trait(my_guid, include_associations = TRUE)
 ```
 
-When processing is complete, the result includes `trait`, `coloc_groups`, `study_extractions`, `upload_study_extractions`, and optionally `associations` and `coloc_pairs`.
+When processing is complete, the result includes `trait`, `coloc_groups`, `study_extractions`, `upload_study_extractions`, and optionally `coloc_pairs`. Each coloc group row is either one of your upload's study extractions (`source = "upload"`, id in `upload_study_extraction_id`) or a study already in the GPMap (`source = "existing"`, id in `existing_study_extraction_id`). With `include_associations = TRUE`, each study's association at its variant (`beta`, `se`, `p`, `eaf`, `imputed`) is added to the coloc groups and study extractions.
 
 ## Interpreting your results
 
@@ -267,6 +267,8 @@ if (!is.null(pairs_all) && nrow(pairs_all) > 0 && "h4" %in% names(pairs_all) &&
 - **h4**: Both traits share **one common causal variant**
 - **h3**: Both traits associate at the region through **two distinct causal variants**
 
+Each side of a pair is either one of your upload's study extractions (`source_a = "upload"`) or a study already in the GPMap (`source_a = "existing"`), with its trait name, data type, tissue and gene alongside. The ids are in `upload_study_extraction_a_id` or `existing_study_extraction_a_id` (and the same for `b`).
+
 The forest plot above already includes loci with h4 > 0.8 that are not captured by any shared coloc group. The raw pair scores for all significant pairs are shown below.
 
 ```{r coloc-pairs-demo}
@@ -275,9 +277,8 @@ truncate_results <- 20L
 pairs <- my_results$coloc_pairs
 if (!is.null(pairs) && nrow(pairs) > 0) {
   cols <- intersect(names(pairs), c(
-    "study_extraction_id_a", "study_extraction_id_b",
-    "existing_study_extraction_id_a", "existing_study_extraction_id_b",
-    "ld_block_id", "h3", "h4", "false_positive", "spurious"
+    "source_a", "trait_name_a", "source_b", "trait_name_b", "data_type_b", "tissue_b",
+    "ld_block_id", "h3", "h4"
   ))
   knitr::kable(
     head(dplyr::filter(pairs[, cols, drop = FALSE], h4 > 0.8), truncate_results),

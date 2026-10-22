@@ -1,46 +1,46 @@
 {
-  "snps": [
+  "genes": [
     {
-      "variant_id": 36,
-      "display_snp": "1:843942 A/G",
-      "distinct_trait_categories": 0,
-      "distinct_protein_coding_genes": 0,
-      "distinct_trait_categories_cis_gws": 0,
-      "distinct_trait_categories_cis_all": 0,
-      "distinct_trait_categories_cis_trans_gws": 0,
-      "distinct_trait_categories_cis_trans_all": 0,
-      "distinct_protein_coding_genes_cis_gws": 0,
-      "distinct_protein_coding_genes_cis_all": 0,
-      "distinct_protein_coding_genes_cis_trans_gws": 0,
-      "distinct_protein_coding_genes_cis_trans_all": 0
-    },
-    {
-      "variant_id": 54,
-      "display_snp": "1:863579 G/A",
+      "gene_id": 1,
+      "gene": "DPM1",
       "distinct_trait_categories": 1,
-      "distinct_protein_coding_genes": 0,
+      "distinct_protein_coding_genes": 2,
       "distinct_trait_categories_cis_gws": 1,
       "distinct_trait_categories_cis_all": 1,
       "distinct_trait_categories_cis_trans_gws": 1,
       "distinct_trait_categories_cis_trans_all": 1,
-      "distinct_protein_coding_genes_cis_gws": 0,
-      "distinct_protein_coding_genes_cis_all": 0,
-      "distinct_protein_coding_genes_cis_trans_gws": 0,
-      "distinct_protein_coding_genes_cis_trans_all": 0
+      "distinct_protein_coding_genes_cis_gws": 1,
+      "distinct_protein_coding_genes_cis_all": 2,
+      "distinct_protein_coding_genes_cis_trans_gws": 1,
+      "distinct_protein_coding_genes_cis_trans_all": 2
     },
     {
-      "variant_id": 73,
-      "display_snp": "1:874496 A/G",
-      "distinct_trait_categories": 0,
-      "distinct_protein_coding_genes": 0,
-      "distinct_trait_categories_cis_gws": 0,
-      "distinct_trait_categories_cis_all": 0,
-      "distinct_trait_categories_cis_trans_gws": 0,
-      "distinct_trait_categories_cis_trans_all": 0,
-      "distinct_protein_coding_genes_cis_gws": 0,
-      "distinct_protein_coding_genes_cis_all": 0,
-      "distinct_protein_coding_genes_cis_trans_gws": 0,
-      "distinct_protein_coding_genes_cis_trans_all": 0
+      "gene_id": 2,
+      "gene": "SCYL3",
+      "distinct_trait_categories": 5,
+      "distinct_protein_coding_genes": 7,
+      "distinct_trait_categories_cis_gws": 2,
+      "distinct_trait_categories_cis_all": 5,
+      "distinct_trait_categories_cis_trans_gws": 2,
+      "distinct_trait_categories_cis_trans_all": 5,
+      "distinct_protein_coding_genes_cis_gws": 5,
+      "distinct_protein_coding_genes_cis_all": 7,
+      "distinct_protein_coding_genes_cis_trans_gws": 6,
+      "distinct_protein_coding_genes_cis_trans_all": 7
+    },
+    {
+      "gene_id": 3,
+      "gene": "FIRRM",
+      "distinct_trait_categories": 7,
+      "distinct_protein_coding_genes": 7,
+      "distinct_trait_categories_cis_gws": 6,
+      "distinct_trait_categories_cis_all": 7,
+      "distinct_trait_categories_cis_trans_gws": 6,
+      "distinct_trait_categories_cis_trans_all": 7,
+      "distinct_protein_coding_genes_cis_gws": 7,
+      "distinct_protein_coding_genes_cis_all": 7,
+      "distinct_protein_coding_genes_cis_trans_gws": 7,
+      "distinct_protein_coding_genes_cis_trans_all": 7
     }
   ]
 }

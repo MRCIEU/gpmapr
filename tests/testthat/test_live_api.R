@@ -172,3 +172,40 @@ test_that("search_gpmap() returns a well-formed table for a variant", {
   expect_equal(result$type[1], "original_variant")
   expect_true(all(c("type", "name", "type_id", "rsq", "num_coloc_studies", "call") %in% names(result)))
 })
+
+test_that("trait tables and records use pipeline_id and variable_type", {
+  skip_if_no_api()
+  traits_table <- all_traits()
+  expect_true(all(c("pipeline_id", "variable_type") %in% names(traits_table)))
+  result <- trait(5020)
+  expect_true(is.character(result$trait$pipeline_id))
+  expect_match(result$trait$source_url, "^https://opengwas.io/datasets/")
+})
+
+test_that("include_associations folds associations into the tables", {
+  skip_if_no_api()
+  result <- gene("WNT7B", include_associations = TRUE)
+  expect_null(result$associations)
+  expect_true(all(c("beta", "se", "p") %in% names(result$coloc_groups)))
+  expect_true(all(c("beta", "se", "p") %in% names(result$study_extractions)))
+})
+
+test_that("ld_matrix() returns stored pairs, and an empty table when there are none", {
+  skip_if_no_api()
+  pair <- ld_matrix(c(5553693, 5553688))$lds
+  expect_gt(nrow(pair), 0)
+  expect_true(all(c("r", "rsq") %in% names(pair)))
+  expect_equal(nrow(ld_matrix(c(5553693, 80717))$lds), 0)
+})
+
+test_that("get_gwas() returns an upload with current names and folded associations", {
+  skip_if_no_api()
+  guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
+  result <- tryCatch(get_gwas(guid, include_associations = TRUE), gpmap_api_error = function(e) NULL)
+  skip_if(is.null(result), "The example GWAS upload is not on this API")
+  expect_null(result$associations)
+  expect_true(all(c("upload_study_extraction_id", "existing_study_extraction_id", "source", "beta")
+                  %in% names(result$coloc_groups)))
+  expect_true(all(c("upload_study_extraction_a_id", "source_a", "trait_name_a") %in% names(result$coloc_pairs)))
+  expect_true(all(result$coloc_groups$source %in% c("upload", "existing")))
+})

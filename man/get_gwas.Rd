@@ -9,12 +9,25 @@ get_gwas(gwas_id, include_associations = FALSE, include_summary_stats = FALSE)
 \arguments{
 \item{gwas_id}{The ID of the GWAS}
 
-\item{include_associations}{Whether to include associations}
+\item{include_associations}{Whether to add each study's association at its variant (beta, se, p, eaf, imputed)
+to the coloc_groups, study_extractions and upload_study_extractions}
 
 \item{include_summary_stats}{Whether to include summary statistics}
 }
 \value{
-A list containing the GWAS information
+A list containing the GWAS information, including:
+\itemize{
+\item trait: the upload's details, e.g. its \code{name} and \code{status}
+\item coloc_groups: the colocalisation groups the upload's studies are in.  Each row is either one of the
+upload's study extractions (\code{source = "upload"}, id in \code{upload_study_extraction_id}) or a study extraction
+already in the map (\code{source = "existing"}, id in \code{existing_study_extraction_id}).
+\item coloc_pairs: one row per colocalising pair. Each side (\code{a}, \code{b}) is either one of the upload's
+study extractions (\code{source_a = "upload"}, id in \code{upload_study_extraction_a_id}) or a study extraction
+already in the map (\code{source_a = "existing"}, id in \code{existing_study_extraction_a_id}).
+\code{trait_name_a}, \code{data_type_a}, \code{tissue_a} and \code{gene_a} describe it (and the same for \code{b}).
+\item study_extractions: the existing study extractions referred to by the coloc groups and pairs
+\item upload_study_extractions: the upload's study extractions
+}
 }
 \description{
 Get a GWAS from the API

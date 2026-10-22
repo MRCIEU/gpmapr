@@ -4,12 +4,12 @@
 #'   \itemize{
 #'     \item id: the id of the trait
 #'     \item data_type: the data type of the trait
-#'     \item trait: the internal string id of the trait
+#'     \item pipeline_id: the string id the GPMap pipeline uses for the trait, e.g. its OpenGWAS dataset id
 #'     \item trait_name: the name of the trait
 #'     \item trait_category: the trait category of the trait
 #'     \item variant_type: the type of variant
 #'     \item sample_size: the sample size of the trait
-#'     \item category: the category of the trait (continuous, categorical)
+#'     \item variable_type: the type of variable the trait is (continuous, categorical)
 #'     \item ancestry: the ancestry of the trait
 #'     \item heritability: the LDSC heritability score of the trait
 #'     \item heritability_se: the standard error of the LDSC heritability score of the trait
@@ -24,7 +24,7 @@
 #' @export
 all_traits <- function() {
   traits <- traits_api()
-  return(traits$traits)
+  return(standardise_column_names(traits$traits))
 }
 
 #' @title Trait duplicates
@@ -49,16 +49,16 @@ trait_duplicates <- function() {
 #' A trait will include a common study and occasionally a rare study.
 #' When trait_id is a GUID (from GWAS upload), fetches the upload result instead.
 #' @param trait_id A numeric value or GUID (from GWAS upload) specifying the trait id
-#' @param include_associations A logical value specifying whether to include associations
-#' (BETA, SE, P), defaults to FALSE
+#' @param include_associations A logical value specifying whether to add each study's association at its
+#' variant (beta, se, p, eaf, imputed) to the coloc_groups, rare_results and study_extractions, defaults to FALSE
 #' @param include_full_associations A logical value specifying whether to include full
 #' trait associations from \code{/associations-full}, defaults to FALSE
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8
 #' @return A list which contains the following elements:
 #' \itemize{
-#'   \item trait: A list containing metadata about the trait,
-#' including common and rare studies associated with the trait
+#'   \item trait: A list containing metadata about the trait, including its `pipeline_id`, `source_url`,
+#' and the common and rare studies associated with it
 #'   \item coloc_groups: a dataframe containing information about which studies have coloc results for this trait.
 #' See below for details.
 #'   \item study_extractions: a list of dataframes containing the study extractions for this trait.
@@ -91,33 +91,28 @@ trait <- function(trait_id,
 
   if (is_guid(trait_id)) {
     trait_info <- get_gwas_api(trait_id, include_summary_stats = FALSE, include_associations = include_associations)
-    if (include_associations && !is.null(trait_info$associations)) {
-      trait_info$coloc_groups <- merge_gwas_upload_associations(trait_info$coloc_groups, trait_info$associations)
-    }
+    trait_info <- fold_upload_associations(trait_info)
   } else {
     trait_info <- trait_api(trait_id, include_associations)
-
-    if (include_coloc_pairs) {
-      response <- trait_coloc_pairs_api(trait_id, h4_threshold)
-      trait_info$coloc_pairs <- response
-    }
 
     if (include_full_associations) {
       trait_info$full_associations <- trait_associations_full_api(trait_id)
     }
 
-    if (include_associations) {
-      new_groups <- merge_associations(trait_info$coloc_groups, trait_info$rare_results, trait_info$associations)
-      trait_info$coloc_groups <- new_groups$coloc_groups
-      trait_info$rare_results <- new_groups$rare_results
-    }
-  }
-
-  if (!is.null(trait_info$trait) && !is.null(trait_info$trait$trait)) {
-    trait_info$trait$source_url <- create_source_url(trait_info$trait$trait)
+    trait_info <- fold_associations(trait_info)
   }
 
   trait_info <- cleanup_api_object(trait_info)
+  if (!is.null(trait_info$trait$pipeline_id)) {
+    trait_info$trait$source_url <- create_source_url(trait_info$trait$pipeline_id)
+  }
+
+  # Added after the clean up: the trait coloc pairs endpoint doesn't return the study extractions
+  # its pairs refer to, so their details can't be joined on (see add_coloc_pair_details()).
+  if (!is_guid(trait_id) && include_coloc_pairs) {
+    coloc_pairs <- trait_coloc_pairs_api(trait_id, h4_threshold)
+    if (length(coloc_pairs) > 0) trait_info$coloc_pairs <- coloc_pairs
+  }
   return(trait_info)
 }
 
@@ -126,8 +121,8 @@ trait <- function(trait_id,
 #' @description Get specific traits from the API. The API returns collapsed/combined data for all requested traits.
 #' When a trait ID is a GUID (from GWAS upload), fetches the upload result instead.
 #' @param trait_ids A vector of trait ids (numeric) or GUIDs (from GWAS upload)
-#' @param include_associations A logical value specifying whether to include associations
-#' (BETA, SE, P), defaults to FALSE
+#' @param include_associations A logical value specifying whether to add each study's association at its
+#' variant (beta, se, p, eaf, imputed) to the coloc_groups, rare_results and study_extractions, defaults to FALSE
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE.
 #' Coloc pairs are fetched from a separate endpoint per trait.
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8
@@ -170,16 +165,7 @@ traits <- function(trait_ids,
       include_associations = include_associations,
       h4_threshold = h4_threshold
     )
-    if (include_associations && is.data.frame(result$associations) && nrow(result$associations) > 0) {
-      new_groups <- merge_associations(result$coloc_groups, result$rare_results, result$associations)
-      result$coloc_groups <- new_groups$coloc_groups
-      result$rare_results <- new_groups$rare_results
-    }
-    if (include_coloc_pairs && length(numeric_ids) > 0) {
-      result$coloc_pairs <- lapply(numeric_ids, trait_coloc_pairs_api, h4_threshold = h4_threshold) |>
-        dplyr::bind_rows() |>
-        dplyr::distinct()
-    }
+    result <- fold_associations(result)
   } else {
     result <- list(traits = NULL, coloc_groups = NULL, study_extractions = NULL, rare_results = NULL)
   }
@@ -191,6 +177,16 @@ traits <- function(trait_ids,
     }
   }
 
+  result <- cleanup_api_object(result)
+
+  # Added after the clean up, as in trait(): the trait coloc pairs endpoint doesn't return the study
+  # extractions its pairs refer to, so their details can't be joined on.
+  if (include_coloc_pairs && length(numeric_ids) > 0) {
+    coloc_pairs <- lapply(numeric_ids, trait_coloc_pairs_api, h4_threshold = h4_threshold) |>
+      dplyr::bind_rows() |>
+      dplyr::distinct()
+    if (length(coloc_pairs) > 0) result$coloc_pairs <- coloc_pairs
+  }
   return(result)
 }
 
@@ -203,6 +199,9 @@ traits <- function(trait_ids,
 #' @noRd
 merge_trait_result <- function(result, upload) {
   if (is.null(upload)) return(result)
+  upload <- standardise_column_names(upload)
+  upload$trait <- standardise_record(upload$trait)
+  upload$coloc_groups <- add_upload_source(upload$coloc_groups)
   if (!is.null(upload$trait)) {
     trait_df <- as.data.frame(t(upload$trait))
     result$traits <- dplyr::bind_rows(result$traits, trait_df)

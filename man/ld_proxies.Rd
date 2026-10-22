@@ -24,6 +24,7 @@ It has the following columns:
 \item proxy_variant_id: the id of the variant SNP
 \item ld_block_id: the id of the LD block
 \item r: the r value between the lead and variant SNPs
+\item rsq: the r-squared between the lead and variant SNPs, rounded to 2 decimal places
 }
 }
 

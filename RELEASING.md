@@ -23,6 +23,24 @@ listed for it**.
 Prefer a new path (e.g. `/v2/`) for breaking changes, so older clients keep
 working on `/v1/`.
 
+## API field renames
+
+When the API renames a field, let gpmapr work with both the old and the new
+API version so the deploy and the CRAN release can happen in either order:
+
+1. Add `old = "new"` to `legacy_column_names` in `R/common.R` (or to
+   `legacy_upload_column_names` for a name that only changes in GWAS upload
+   tables). gpmapr then always returns the new name.
+2. For a field gpmapr sends, send both names (see `upload_gwas_api()`); the API
+   ignores fields it doesn't know.
+3. List the release under both API versions in `api_to_package_version`.
+4. Once no supported API version sends the old names, remove them, and the
+   other code marked for the old API version (e.g. `get_ld_matrix()`'s 404
+   handling for API 1.0.1).
+
+Run the live tests against both versions: production by default, and a local
+API with `GPMAP_URL=http://localhost:8000`.
+
 ## Each release
 
 1. `usethis::use_release_issue()` for the checklist.

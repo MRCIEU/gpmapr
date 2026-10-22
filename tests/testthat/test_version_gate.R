@@ -21,6 +21,20 @@ test_that("a supported API version passes and is cached for the session", {
   expect_equal(lookups, 1)
 })
 
+test_that("gpmapr 0.1.1 supports API 1.0.1 and 1.1.0, and older versions are told to update for 1.1.0", {
+  for (api_version in c("1.0.1", "1.1.0")) {
+    reset_api_state()
+    local_mocked_bindings(fetch_api_version = function(url) api_version)
+    local_mocked_bindings(installed_package_version = function() "0.1.1")
+    expect_true(ensure_api_compatible())
+  }
+  reset_api_state()
+  on.exit(reset_api_state())
+  local_mocked_bindings(fetch_api_version = function(url) "1.1.0")
+  local_mocked_bindings(installed_package_version = function() "0.1.0")
+  expect_error(ensure_api_compatible(), "gpmapr 0.1.0 does not support version 1.1.0")
+})
+
 test_that("an unsupported API version stops with upgrade instructions", {
   reset_api_state()
   on.exit(reset_api_state())

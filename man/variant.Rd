@@ -28,6 +28,8 @@ A list which contains the following elements:
 \item coloc_groups: a dataframe containing information about which studies have coloc results for this variant
 \item rare_results: a list of dataframes containing the rare variants
 \item study_extractions: a list of dataframes containing the study extractions
+\item coloc_groups, rare_results and study_extractions include each study's association at its variant
+(beta, se, p, eaf, imputed)
 \item summary_stats (optional): a list of dataframes containing the summary stats for each study,
 where the name of each element is the study_id. Column names are uppercase (e.g. SNP, BP, BETA, SE, LBF_1).
 \item coloc_pairs (optional): a dataframe containing information about which studies have coloc pairs for this variant
@@ -51,19 +53,31 @@ It has the following columns:
 \item study_extraction_id: the id of the study extraction
 \item variant_id: the id of the SNP
 \item ld_block_id: the id of the LD block
+\item h4_connectedness: the proportion of the pairs of studies in the group that colocalise
+(posterior probability of H4, one shared causal variant, of at least 0.8)
+\item h3_connectedness: the proportion of the pairs of studies in the group with a posterior probability
+of H3 (two distinct causal variants) of at least 0.8
 \item chr: the chromosome of the SNP
 \item bp: the base pair position of the SNP
 \item min_p: the minimum p-value related to the study_extraction_id
 \item cis_trans: the cis/trans status of the SNP
 \item ld_block: the LD block of the SNP
 \item display_snp: the display SNP name
-\item gene: the gene associated with the SNP
+\item rsid: the rsID of the SNP
+\item gene: the gene whose expression, splicing or protein level the study measures (for molecular QTLs)
 \item gene_id: the id of the gene
+\item situated_gene: the gene the measured site is in, for methylation studies (which have no \code{gene})
+\item situated_gene_id: the id of the situated gene
 \item trait_id: the id of the trait
 \item trait_name: the name of the trait
 \item trait_category: the category of the trait
 \item data_type: the data type of the trait
 \item tissue: the tissue of the trait
+\item cell_type: the cell type of the trait
+\item source_id: the id of the source the study comes from
+\item source_name: the name of the source the study comes from
+\item source_url: a link to the study at its source
+\item beta, se, p, eaf, imputed: (with \code{include_associations = TRUE}) the association of the study at the SNP
 }
 }
 
@@ -152,6 +166,10 @@ It has the following columns:
 \itemize{
 \item study_extraction_a_id: the id of the study extraction associated with this coloc pair
 \item study_extraction_b_id: the id of the study extraction associated with this coloc pair
+\item trait_name_a, data_type_a, tissue_a, gene_a: the trait name, data type, tissue and gene of
+study extraction a (and the same with \verb{_b} for study extraction b), joined from \code{study_extractions}.
+Not added to the coloc pairs of \code{trait()}, whose endpoint doesn't return the study extractions
+its pairs refer to.
 \item ld_block_id: the id of the LD block
 \item h3: the h3 value for this coloc pair
 \item h4: the h4 value for this coloc pair

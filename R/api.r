@@ -106,7 +106,10 @@ stop_for_api_status <- function(response) {
   } else {
     httr::http_status(response)$message
   }
-  stop("GPMap API request failed (HTTP ", status, "): ", detail, call. = FALSE)
+  stop(structure(
+    class = c("gpmap_api_error", "error", "condition"),
+    list(message = paste0("GPMap API request failed (HTTP ", status, "): ", detail), call = NULL, status = status)
+  ))
 }
 
 #' @title Retry a request with exponential backoff when rate-limited
@@ -604,10 +607,7 @@ ld_proxies_by_variant_id_api <- function(variant_ids) {
 ld_matrix_by_variant_api <- function(variants) {
   variants <- paste(variants, collapse = "&variants=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/matrix?variants=", variants)
-  ld_matrix <- api_get(url)
-  ld_matrix <- httr::content(ld_matrix, "text", encoding = "UTF-8")
-  ld_matrix <- jsonlite::fromJSON(ld_matrix)
-  return(ld_matrix)
+  return(get_ld_matrix(url))
 }
 
 #' @title Get LD Matrix by SNP ID API
@@ -618,7 +618,21 @@ ld_matrix_by_variant_api <- function(variants) {
 ld_matrix_by_variant_id_api <- function(variant_ids) {
   variant_ids <- paste(variant_ids, collapse = "&variant_ids=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/matrix?variant_ids=", variant_ids)
-  ld_matrix <- api_get(url)
+  return(get_ld_matrix(url))
+}
+
+# An LD matrix response, with no pairs as `list(lds = list())`.  API 1.0.1 answers a request with
+# no stored pairs with a 404; 1.1.0 returns an empty `lds`.
+get_ld_matrix <- function(url) {
+  ld_matrix <- tryCatch(api_get(url), gpmap_api_error = function(e) {
+    if (identical(e$status, 404L)) {
+      return(NULL)
+    }
+    stop(e)
+  })
+  if (is.null(ld_matrix)) {
+    return(list(lds = list()))
+  }
   ld_matrix <- httr::content(ld_matrix, "text", encoding = "UTF-8")
   ld_matrix <- jsonlite::fromJSON(ld_matrix)
   return(ld_matrix)
@@ -715,7 +729,7 @@ get_gwas_summary_stats_api <- function(gwas_id) {
 #' @param p_value_threshold The p-value threshold for the GWAS
 #' @param column_names A validated named list of column names, e.g. list(CHR = "chr", BP = "pos"...)
 #' @param email The email of the user
-#' @param category The category of the GWAS.  Only "continuous" and "categorical" are accepted.
+#' @param variable_type The type of variable the GWAS is of.  Only "continuous" and "categorical" are accepted.
 #' @param is_published Whether the GWAS is published
 #' @param doi The DOI of the GWAS
 #' @param should_be_added Whether the GWAS should be added to the API
@@ -730,7 +744,7 @@ upload_gwas_api <- function(file,
                             p_value_threshold,
                             column_names,
                             email,
-                            category,
+                            variable_type,
                             is_published = FALSE,
                             doi = NA,
                             should_be_added = FALSE,
@@ -748,7 +762,9 @@ upload_gwas_api <- function(file,
     reference_build = reference_build,
     email = email,
     name = name,
-    category = category,
+    variable_type = variable_type,
+    # API 1.0.1 reads `category`; 1.1.0 reads `variable_type` and ignores `category`.
+    category = variable_type,
     is_published = is_published,
     doi = doi,
     should_be_added = should_be_added,

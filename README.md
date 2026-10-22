@@ -13,17 +13,12 @@ You can:
 
 ## Installation
 
-Install the released version from CRAN:
+
+Install the package from GitHub:
 
 ``` r
-install.packages("gpmapr")
-```
-
-or the development version from GitHub:
-
-``` r
-# install.packages("pak")
-pak::pak("MRCIEU/gpmapr")
+# install.packages("remotes")
+remotes::install_github("MRCIEU/gpmapr")
 ```
 
 ## Usage
@@ -48,9 +43,7 @@ version of the GPMap API. If the API has changed, you'll see an error asking
 you to update. Update with:
 
 ``` r
-install.packages("gpmapr")   # or update.packages()
-# or, for the development version
-pak::pak("MRCIEU/gpmapr")
+remotes::install_github("MRCIEU/gpmapr")
 ```
 
 then restart R.

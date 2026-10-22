@@ -10,6 +10,8 @@
 #'  * coloc_groups: a dataframe containing information about which studies have coloc results for this variant
 #'  * rare_results: a list of dataframes containing the rare variants
 #'  * study_extractions: a list of dataframes containing the study extractions
+#'  * coloc_groups, rare_results and study_extractions include each study's association at its variant
+#'      (beta, se, p, eaf, imputed)
 #'  * summary_stats (optional): a list of dataframes containing the summary stats for each study,
 #'      where the name of each element is the study_id. Column names are uppercase (e.g. SNP, BP, BETA, SE, LBF_1).
 #'  * coloc_pairs (optional): a dataframe containing information about which studies have coloc pairs for this variant
@@ -41,10 +43,8 @@ variant <- function(variant_id,
     variant_info$summary_stats <- summary_stats
   }
 
+  variant_info <- fold_associations(variant_info)
   variant_info <- cleanup_api_object(variant_info)
-  new_groups <- merge_associations(variant_info$coloc_groups, variant_info$rare_results, variant_info$associations)
-  variant_info$coloc_groups <- new_groups$coloc_groups
-  variant_info$rare_results <- new_groups$rare_results
 
   return(variant_info)
 }
@@ -55,7 +55,8 @@ variant <- function(variant_id,
 #' Max 10 variants when expand=TRUE.
 #' @param variants A vector of variant identifiers (variant_ids, rsids, or strings)
 #' @param expand Logical. FALSE (default) returns minimal data. TRUE returns full VariantResponse (max 10)
-#' @param include_associations Logical. Whether to include associations (BETA, SE, P). Only when expand=TRUE
+#' @param include_associations Logical. Whether to add each study's association at its variant (beta, se, p, eaf,
+#'   imputed) to the coloc_groups, rare_results and study_extractions. Only when expand=TRUE
 #' @param include_coloc_pairs Logical. Whether to include coloc pairs. Only when expand=TRUE
 #' @param h4_threshold Numeric. H4 threshold for coloc pairs, defaults to 0.8
 #' @return A list which contains the following elements:
@@ -98,11 +99,6 @@ variants <- function(
     h4_threshold = h4_threshold
   )
 
-  if (expand && include_associations && is.data.frame(result$associations) && nrow(result$associations) > 0) {
-    new_groups <- merge_associations(result$coloc_groups, result$rare_results, result$associations)
-    result$coloc_groups <- new_groups$coloc_groups
-    result$rare_results <- new_groups$rare_results
-  }
-
+  result <- fold_associations(result)
   return(cleanup_api_object(result))
 }

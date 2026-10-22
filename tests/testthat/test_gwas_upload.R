@@ -53,3 +53,30 @@ test_that("legacy column_names are mapped to API column names", {
   expect_equal(names(result), c("CHR", "BP", "EA", "OA", "P", "OR", "OR_LB", "OR_UB"))
   expect_equal(result$OR_LB, "lb")
 })
+
+test_that("upload_gwas() sends the variable type under both API versions' names", {
+  file <- tempfile(fileext = ".tsv")
+  writeLines(c("chr\tpos\tea\toa\tp\tbeta\tse", "1\t100\tA\tG\t1e-9\t0.1\t0.01"), file)
+  on.exit(unlink(file))
+  sent <- NULL
+  local_mocked_bindings(api_post = function(url, body, ...) {
+    sent <<- jsonlite::fromJSON(body$request)
+    return(fake_api_response('{"guid": "00000000-0000-0000-0000-000000000000"}'))
+  })
+  upload <- function(...) {
+    return(upload_gwas(
+      file, name = "test", email = "user@example.com", sample_size = 1000,
+      chr_col = "chr", bp_col = "pos", ea_col = "ea", oa_col = "oa", p_col = "p", beta_col = "beta", se_col = "se",
+      ...
+    ))
+  }
+
+  upload(variable_type = "categorical")
+  expect_equal(sent$variable_type, "categorical")
+  expect_equal(sent$category, "categorical")
+
+  expect_warning(upload(category = "categorical"), "`category` is deprecated")
+  expect_equal(sent$variable_type, "categorical")
+
+  expect_error(upload(variable_type = "binary"), "variable_type must be")
+})

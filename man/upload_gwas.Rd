@@ -10,7 +10,7 @@ upload_gwas(
   p_value_threshold = 5e-08,
   column_names = NULL,
   email = NA,
-  category = "continuous",
+  variable_type = "continuous",
   is_published = FALSE,
   doi = NA,
   should_be_added = FALSE,
@@ -30,7 +30,8 @@ upload_gwas(
   or_lb_col = NULL,
   or_ub_col = NULL,
   snp_col = NULL,
-  rsid_col = NULL
+  rsid_col = NULL,
+  category = NULL
 )
 }
 \arguments{
@@ -46,7 +47,7 @@ Accepted names are SNP, RSID, CHR, BP, EA, OA, P, EAF, BETA, SE, OR, OR_LB (or L
 
 \item{email}{The email of the user}
 
-\item{category}{The category of the GWAS.  Only "continuous" and "categorical" are accepted.}
+\item{variable_type}{The type of variable the GWAS is of.  Only "continuous" and "categorical" are accepted.}
 
 \item{is_published}{Whether the GWAS is published}
 
@@ -87,6 +88,8 @@ Accepted names are SNP, RSID, CHR, BP, EA, OA, P, EAF, BETA, SE, OR, OR_LB (or L
 \item{snp_col}{The name of the SNP identifier column (optional)}
 
 \item{rsid_col}{The name of the rsID column (optional)}
+
+\item{category}{Deprecated, use \code{variable_type} instead.}
 }
 \value{
 A list containing the GWAS information, including the \code{guid} used to fetch results

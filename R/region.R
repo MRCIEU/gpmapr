@@ -1,8 +1,8 @@
 #' @title Region
 #' @description A collection of studies that are associated with a particular region.
 #' @param region_id A numeric value specifying the region id
-#' @param include_associations A logical value specifying whether to include associations
-#' (BETA, SE, P), defaults to FALSE
+#' @param include_associations A logical value specifying whether to add each study's association at its
+#' variant (beta, se, p, eaf, imputed) to the coloc_groups, rare_results and study_extractions, defaults to FALSE
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8
 #' @return A list which contains the following elements:
@@ -38,12 +38,8 @@ region <- function(region_id,
   }
   region_info <- region_api(region_id, include_associations, include_coloc_pairs, h4_threshold)
 
+  region_info <- fold_associations(region_info)
   region_info <- cleanup_api_object(region_info)
-  if (include_associations) {
-    new_groups <- merge_associations(region_info$coloc_groups, region_info$rare_results, region_info$associations)
-    region_info$coloc_groups <- new_groups$coloc_groups
-    region_info$rare_results <- new_groups$rare_results
-  }
   region_info$tissues <- NULL
 
   return(region_info)

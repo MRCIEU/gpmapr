@@ -30,8 +30,8 @@ all_genes <- function() {
 #' @title Gene
 #' @description A collection of studies that are associated with a particular gene.
 #' @param gene_id A numeric value specifying the gene id
-#' @param include_associations A logical value specifying whether to include associations
-#' (BETA, SE, P), defaults to FALSE
+#' @param include_associations A logical value specifying whether to add each study's association at its
+#' variant (beta, se, p, eaf, imputed) to the coloc_groups, rare_results and study_extractions, defaults to FALSE
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
 #' @param include_trans A logical value specifying whether to include trans genetic effects, defaults to TRUE
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8
@@ -69,22 +69,17 @@ gene <- function(gene_id,
   }
   gene_info <- gene_api(gene_id, include_associations, include_coloc_pairs, include_trans, h4_threshold)
   gene_info$tissues <- NULL
+  gene_info <- fold_associations(gene_info)
 
   gene_info <- cleanup_api_object(gene_info)
-  if (include_associations) {
-    new_groups <- merge_associations(gene_info$coloc_groups, gene_info$rare_results, gene_info$associations)
-    gene_info$coloc_groups <- new_groups$coloc_groups
-    gene_info$rare_results <- new_groups$rare_results
-  }
-
   return(gene_info)
 }
 
 #' @title Genes
 #' @description Get specific genes from the API. The API returns collapsed/combined data for all requested genes.
 #' @param gene_ids A vector of gene ids (1 or more)
-#' @param include_associations A logical value specifying whether to include associations
-#' (BETA, SE, P), defaults to FALSE
+#' @param include_associations A logical value specifying whether to add each study's association at its
+#' variant (beta, se, p, eaf, imputed) to the coloc_groups, rare_results and study_extractions, defaults to FALSE
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
 #' @param include_trans A logical value specifying whether to include trans genetic effects, defaults to TRUE
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8
@@ -125,11 +120,8 @@ genes <- function(gene_ids,
     h4_threshold = h4_threshold
   )
 
-  if (include_associations && !is.null(result$associations)) {
-    new_groups <- merge_associations(result$coloc_groups, result$rare_results, result$associations)
-    result$coloc_groups <- new_groups$coloc_groups
-    result$rare_results <- new_groups$rare_results
-  }
+  result$tissues <- NULL
+  result <- fold_associations(result)
 
-  return(result)
+  return(cleanup_api_object(result))
 }

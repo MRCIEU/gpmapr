@@ -31,7 +31,7 @@ result <- gpmapr::upload_gwas(
   beta_col = "beta",
   se_col = "se",
   email = "your@email.com",
-  category = "continuous",
+  variable_type = "continuous",
   ancestry = "EUR",
   sample_size = 50000,
   reference_build = "GRCh38"
@@ -62,7 +62,7 @@ my_guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
 my_results <- gpmapr::trait(my_guid, include_associations = TRUE)
 ```
 
-When processing is complete, the result includes `trait`, `coloc_groups`, `study_extractions`, `upload_study_extractions`, and optionally `associations` and `coloc_pairs`.
+When processing is complete, the result includes `trait`, `coloc_groups`, `study_extractions`, `upload_study_extractions`, and optionally `coloc_pairs`. Each coloc group row is either one of your upload's study extractions (`source = "upload"`, id in `upload_study_extraction_id`) or a study already in the GPMap (`source = "existing"`, id in `existing_study_extraction_id`). With `include_associations = TRUE`, each study's association at its variant (`beta`, `se`, `p`, `eaf`, `imputed`) is added to the coloc groups and study extractions.
 
 ## Interpreting your results
 
@@ -281,6 +281,8 @@ if (!is.null(pairs_all) && nrow(pairs_all) > 0 && "h4" %in% names(pairs_all) &&
 - **h4**: Both traits share **one common causal variant**
 - **h3**: Both traits associate at the region through **two distinct causal variants**
 
+Each side of a pair is either one of your upload's study extractions (`source_a = "upload"`) or a study already in the GPMap (`source_a = "existing"`), with its trait name, data type, tissue and gene alongside. The ids are in `upload_study_extraction_a_id` or `existing_study_extraction_a_id` (and the same for `b`).
+
 The forest plot above already includes loci with h4 > 0.8 that are not captured by any shared coloc group. The raw pair scores for all significant pairs are shown below.
 
 
@@ -290,9 +292,8 @@ truncate_results <- 20L
 pairs <- my_results$coloc_pairs
 if (!is.null(pairs) && nrow(pairs) > 0) {
   cols <- intersect(names(pairs), c(
-    "study_extraction_id_a", "study_extraction_id_b",
-    "existing_study_extraction_id_a", "existing_study_extraction_id_b",
-    "ld_block_id", "h3", "h4", "false_positive", "spurious"
+    "source_a", "trait_name_a", "source_b", "trait_name_b", "data_type_b", "tissue_b",
+    "ld_block_id", "h3", "h4"
   ))
   knitr::kable(
     head(dplyr::filter(pairs[, cols, drop = FALSE], h4 > 0.8), truncate_results),
@@ -305,28 +306,28 @@ if (!is.null(pairs) && nrow(pairs) > 0) {
 
 
 
-|existing_study_extraction_id_a | study_extraction_id_a| existing_study_extraction_id_b| study_extraction_id_b| ld_block_id|    h3|    h4|false_positive |
-|:------------------------------|---------------------:|------------------------------:|---------------------:|-----------:|-----:|-----:|:--------------|
-|NA                             |                  7293|                          46415|                    NA|           9| 0.083| 0.882|FALSE          |
-|NA                             |                  7293|                          49939|                    NA|           9| 0.117| 0.879|FALSE          |
-|NA                             |                  7293|                          50071|                    NA|           9| 0.003| 0.996|FALSE          |
-|NA                             |                  7293|                          50085|                    NA|           9| 0.086| 0.911|FALSE          |
-|NA                             |                  7294|                         276438|                    NA|          58| 0.002| 0.998|FALSE          |
-|NA                             |                  7294|                         276555|                    NA|          58| 0.069| 0.931|FALSE          |
-|NA                             |                  7294|                         276582|                    NA|          58| 0.002| 0.998|FALSE          |
-|NA                             |                  7295|                             NA|                  7296|          59| 0.000| 1.000|FALSE          |
-|NA                             |                  7297|                             NA|                  7298|          59| 0.000| 1.000|FALSE          |
-|NA                             |                  7303|                         281882|                    NA|          60| 0.067| 0.933|FALSE          |
-|NA                             |                  7303|                         282948|                    NA|          60| 0.064| 0.936|FALSE          |
-|NA                             |                  7303|                         283008|                    NA|          60| 0.071| 0.929|FALSE          |
-|NA                             |                  7303|                         283259|                    NA|          60| 0.057| 0.943|FALSE          |
-|NA                             |                  7303|                         289880|                    NA|          60| 0.097| 0.903|FALSE          |
-|NA                             |                  7303|                         291699|                    NA|          60| 0.047| 0.952|FALSE          |
-|NA                             |                  7303|                         291703|                    NA|          60| 0.127| 0.872|FALSE          |
-|NA                             |                  7303|                         296454|                    NA|          60| 0.039| 0.960|FALSE          |
-|NA                             |                  7303|                         296463|                    NA|          60| 0.052| 0.948|FALSE          |
-|NA                             |                  7303|                         296756|                    NA|          60| 0.025| 0.975|FALSE          |
-|NA                             |                  7303|                         296758|                    NA|          60| 0.047| 0.953|FALSE          |
+|source_a |trait_name_a |source_b |trait_name_b                                        |data_type_b     |tissue_b                   | ld_block_id|    h3|    h4|
+|:--------|:------------|:--------|:---------------------------------------------------|:---------------|:--------------------------|-----------:|-----:|-----:|
+|upload   |AD GWAS      |existing |TNFRSF8 Skin Sun Exposed Lower leg eQTL             |Gene Expression |Skin Sun Exposed Lower leg |           9| 0.083| 0.882|
+|upload   |AD GWAS      |existing |TNFRSF8 Whole blood cg07017135 methQTL              |Methylation     |Whole blood                |           9| 0.117| 0.879|
+|upload   |AD GWAS      |existing |Whole blood cg22877366 methQTL                      |Methylation     |Whole blood                |           9| 0.003| 0.996|
+|upload   |AD GWAS      |existing |TNFRSF8 Whole blood cg24427243 methQTL              |Methylation     |Whole blood                |           9| 0.086| 0.911|
+|upload   |AD GWAS      |existing |Ankle spacing width (left)                          |Phenotype       |NA                         |          58| 0.002| 0.998|
+|upload   |AD GWAS      |existing |Age hay fever, rhinitis or eczema diagnosed         |Phenotype       |NA                         |          58| 0.069| 0.931|
+|upload   |AD GWAS      |existing |Ankle spacing width (right)                         |Phenotype       |NA                         |          58| 0.002| 0.998|
+|upload   |AD GWAS      |upload   |AD GWAS                                             |NA              |NA                         |          59| 0.000| 1.000|
+|upload   |AD GWAS      |upload   |AD GWAS                                             |NA              |NA                         |          59| 0.000| 1.000|
+|upload   |AD GWAS      |existing |IL6R Artery Tibial eQTL                             |Gene Expression |Artery Tibial              |          60| 0.067| 0.933|
+|upload   |AD GWAS      |existing |IL6R Colon Sigmoid eQTL                             |Gene Expression |Colon Sigmoid              |          60| 0.064| 0.936|
+|upload   |AD GWAS      |existing |IL6R Colon Transverse eQTL                          |Gene Expression |Colon Transverse           |          60| 0.071| 0.929|
+|upload   |AD GWAS      |existing |IL6R Ooesophagus Muscularis eQTL                    |Gene Expression |Esophagus Muscularis       |          60| 0.057| 0.943|
+|upload   |AD GWAS      |existing |IL6R Colon Transverse sQTL chr1:154449980:154465134 |Splice Variant  |Colon Transverse           |          60| 0.097| 0.903|
+|upload   |AD GWAS      |existing |IL6R Lung sQTL chr1:154448171:154449911             |Splice Variant  |Lung                       |          60| 0.047| 0.952|
+|upload   |AD GWAS      |existing |SHE Lung sQTL chr1:154470362:154485943              |Splice Variant  |Lung                       |          60| 0.127| 0.872|
+|upload   |AD GWAS      |existing |Granulocyte percentage of myeloid white cells       |Phenotype       |NA                         |          60| 0.039| 0.960|
+|upload   |AD GWAS      |existing |Allergic disease (asthma, hay fever or eczema)      |Phenotype       |NA                         |          60| 0.052| 0.948|
+|upload   |AD GWAS      |existing |Mean corpuscular volume                             |Phenotype       |NA                         |          60| 0.025| 0.975|
+|upload   |AD GWAS      |existing |Monocyte count                                      |Phenotype       |NA                         |          60| 0.047| 0.953|
 
 
 
