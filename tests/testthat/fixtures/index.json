@@ -18,7 +18,8 @@
   "/v1/ld/matrix?variant_ids=5553693&variant_ids=5553688": "response-17.json",
   "/v1/pleiotropy/genes": "response-18.json",
   "/v1/pleiotropy/snps": "response-19.json",
-  "/v1/gwas/7a289615-c1b4-91f3-3d97-887f60de9155": "response-20.json",
-  "/v1/search/variant/rs9939609?rsquared_threshold=0.8": "response-21.json",
-  "/v1/search/options": "response-22.json"
+  "/v1/search/variant/rs9939609?rsquared_threshold=0.8": "response-20.json",
+  "/v1/search/options": "response-21.json",
+  "/v1/gwas/7a289615-c1b4-91f3-3d97-887f60de9155": "gwas-upload.json",
+  "/v1/gwas/7a289615-c1b4-91f3-3d97-887f60de9155?include_associations=true": "gwas-upload-associations.json"
 }

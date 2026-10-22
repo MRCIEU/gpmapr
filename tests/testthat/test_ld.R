@@ -9,21 +9,11 @@ test_that("ld_proxies() and ld_matrix() add the r-squared", {
   expect_equal(matrix$rsq, round(matrix$r^2, 2))
 })
 
-test_that("ld_matrix() returns an empty table when no pairs are stored, under both API versions", {
-  columns <- c("lead_variant_id", "proxy_variant_id", "ld_block_id", "r", "rsq")
-  # API 1.1.0
+test_that("ld_matrix() returns an empty table when no pairs are stored", {
   local_mocked_bindings(api_get = function(url, ...) fake_api_response('{"lds": []}'))
   result <- ld_matrix(c(5553693, 80717))
   expect_equal(nrow(result$lds), 0)
-  expect_equal(names(result$lds), columns)
-
-  # API 1.0.1
-  local_mocked_bindings(api_get = function(url, ...) {
-    return(stop_for_api_status(fake_api_response('{"detail": "LD matrix for variants None not found"}', status = 404L)))
-  })
-  result <- ld_matrix(c(5553693, 80717))
-  expect_equal(nrow(result$lds), 0)
-  expect_equal(names(result$lds), columns)
+  expect_equal(names(result$lds), c("lead_variant_id", "proxy_variant_id", "ld_block_id", "r", "rsq"))
 })
 
 test_that("ld_matrix() still reports other API errors", {

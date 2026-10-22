@@ -46,28 +46,24 @@ test_that("study extractions given as a list of data frames are joined too", {
   expect_equal(pairs$trait_name_b, "PCSK9 Liver eQTL")
 })
 
-test_that("upload pairs say which side is the upload, and name it", {
+test_that("upload pairs are matched to their study extractions by source and id", {
+  # Upload and existing study extractions have separate ids: 7223 is both here.
   api_object <- list(
-    trait = list(id = 90, name = "My GWAS"),
     coloc_pairs = data.frame(
-      gwas_upload_id = 90,
-      existing_study_extraction_a_id = c(NA, NA, NA),
-      upload_study_extraction_a_id = c(7001, 7001, 7002),
-      existing_study_extraction_b_id = c(10, NA, NA),
-      upload_study_extraction_b_id = c(NA, 7002, 8001),
+      study_extraction_a_id = c(7223, 7223, 10), source_a = c("upload", "upload", "existing"),
+      study_extraction_b_id = c(10, 7223, 7223), source_b = c("existing", "existing", "upload"),
       h4 = c(0.9, 0.95, 0.85)
     ),
-    study_extractions = existing_extractions,
-    upload_study_extractions = data.frame(id = c(7001, 7002, 8001), gwas_upload_id = c(90, 90, 144)),
-    coloc_groups = data.frame(upload_study_extraction_id = 8001, trait_name = "Compared GWAS")
+    study_extractions = data.frame(
+      id = c(10, 7223, 7223), source = c("existing", "existing", "upload"),
+      gwas_upload_id = c(NA, NA, 90), trait_name = c("LDL cholesterol", "Granulocyte percentage", "My GWAS"),
+      data_type = "Phenotype"
+    )
   )
   pairs <- add_coloc_pair_details(api_object)$coloc_pairs
-  expect_equal(pairs$source_a, c("upload", "upload", "upload"))
-  expect_equal(pairs$source_b, c("existing", "upload", "upload"))
-  expect_equal(pairs$trait_name_a, c("My GWAS", "My GWAS", "My GWAS"))
-  expect_equal(pairs$trait_name_b, c("LDL cholesterol", "My GWAS", "Compared GWAS"))
-  expect_equal(pairs$data_type_b, c("Phenotype", NA, NA))
-  expect_equal(which(names(pairs) == "source_a"), which(names(pairs) == "upload_study_extraction_b_id") + 1)
+  expect_equal(pairs$trait_name_a, c("My GWAS", "My GWAS", "LDL cholesterol"))
+  expect_equal(pairs$trait_name_b, c("LDL cholesterol", "Granulocyte percentage", "My GWAS"))
+  expect_equal(which(names(pairs) == "trait_name_a"), which(names(pairs) == "source_b") + 1)
 })
 
 test_that("objects without coloc pairs are returned unchanged", {
@@ -76,12 +72,11 @@ test_that("objects without coloc pairs are returned unchanged", {
   expect_equal(add_coloc_pair_details(list(trait = list(id = 1))), list(trait = list(id = 1)))
 })
 
-test_that("get_gwas() returns upload coloc pairs with their sources", {
+test_that("get_gwas() describes both sides of its coloc pairs", {
   local_mock_api()
   pairs <- get_gwas("7a289615-c1b4-91f3-3d97-887f60de9155")$coloc_pairs
-  expect_true(all(c("source_a", "trait_name_a", "source_b", "trait_name_b") %in% names(pairs)))
-  expect_equal(pairs$source_a, ifelse(is.na(pairs$upload_study_extraction_a_id), "existing", "upload"))
-  expect_equal(pairs$source_b, ifelse(is.na(pairs$upload_study_extraction_b_id), "existing", "upload"))
+  expect_equal(pairs$trait_name_a, c("AD GWAS", "Allergic rhinitis", "AD GWAS", "Granulocyte percentage"))
+  expect_equal(pairs$trait_name_b, c("Allergic rhinitis", "AD GWAS", "Compared GWAS", "AD GWAS"))
 })
 
 test_that("trait() coloc pairs are left without details", {

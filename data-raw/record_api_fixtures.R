@@ -9,15 +9,26 @@
 # Re-run from the package root whenever the live tests (test_live_api.R) show
 # that the API has changed:
 #   Rscript data-raw/record_api_fixtures.R
-# Records from production; set GPMAP_URL to record from another API.
+# Records from production; set GPMAP_URL to record from another API, e.g.
+#   GPMAP_URL=http://localhost:8000 Rscript data-raw/record_api_fixtures.R
+# The GWAS upload responses are recorded only from a server that has the
+# example upload; otherwise the hand-written fixtures from
+# data-raw/build_upload_fixture.R are used.
 
 pkgload::load_all(".", quiet = TRUE)
 options(gpmap_url = Sys.getenv("GPMAP_URL", "https://gpmap.opengwas.io/api"))
 ns <- asNamespace("gpmapr")
 
 fixture_dir <- file.path("tests", "testthat", "fixtures")
-unlink(fixture_dir, recursive = TRUE)
-dir.create(fixture_dir, recursive = TRUE)
+dir.create(fixture_dir, showWarnings = FALSE, recursive = TRUE)
+unlink(c(Sys.glob(file.path(fixture_dir, "response-*.json")), file.path(fixture_dir, "index.json")))
+
+upload_guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
+# Hand-written stand-ins for the GWAS upload responses, by request URL.
+upload_fixtures <- list(
+  "gwas-upload.json" = paste0("/v1/gwas/", upload_guid),
+  "gwas-upload-associations.json" = paste0("/v1/gwas/", upload_guid, "?include_associations=true")
+)
 
 max_elements <- 3
 
@@ -65,16 +76,22 @@ calls <- list(
   quote(ld_matrix(c(5553693, 5553688))),
   quote(get_all_gene_pleiotropies()),
   quote(get_all_variant_pleiotropies()),
-  quote(get_gwas("7a289615-c1b4-91f3-3d97-887f60de9155")),
+  quote(get_gwas(upload_guid)),
+  quote(get_gwas(upload_guid, include_associations = TRUE)),
   quote(search_gpmap("rs9939609")),
   quote(search_gpmap("haemoglobin"))
 )
 
 assignInNamespace("api_get", recording(httr::GET), ns = "gpmapr")
 assignInNamespace("api_post", recording(httr::POST), ns = "gpmapr")
+call_env <- new.env(parent = ns)
+call_env$upload_guid <- upload_guid
 for (call in calls) {
   message("Recording ", deparse(call))
-  eval(call, envir = ns)
+  tryCatch(eval(call, envir = call_env), gpmap_api_error = function(e) {
+    message("  not recorded: ", conditionMessage(e))
+    return(invisible(NULL))
+  })
 }
 pkgload::load_all(".", quiet = TRUE)
 
@@ -96,6 +113,13 @@ for (i in seq_along(recorded)) {
   writeLines(jsonlite::toJSON(body, auto_unbox = TRUE, null = "null", na = "null", digits = NA, pretty = TRUE),
              file.path(fixture_dir, file))
   index[[relative_url]] <- file
+}
+for (file in names(upload_fixtures)) {
+  relative_url <- upload_fixtures[[file]]
+  if (is.null(index[[relative_url]]) && file.exists(file.path(fixture_dir, file))) {
+    message("Using the hand-written ", file, " for ", relative_url)
+    index[[relative_url]] <- file
+  }
 }
 writeLines(jsonlite::toJSON(index, auto_unbox = TRUE, pretty = TRUE), file.path(fixture_dir, "index.json"))
 message("Wrote ", length(index), " fixtures to ", fixture_dir)

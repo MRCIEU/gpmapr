@@ -54,27 +54,34 @@ test_that("functions fold the associations into their tables and drop them", {
   expect_equal(result$study_extractions$se, 0.01)
 })
 
-test_that("GWAS upload associations are folded into the upload's tables", {
-  api_object <- list(
-    trait = list(id = 90L, name = "My GWAS"),
-    coloc_groups = data.frame(
-      study_id = c(90L, NA), existing_study_id = c(NA, 21L), variant_id = c(100L, 100L),
-      existing_study_extraction_id = c(NA, 5L), study_extraction_id = c(7L, NA)
-    ),
-    study_extractions = data.frame(id = 5L, study_id = 21L, variant_id = 100L),
-    upload_study_extractions = data.frame(id = 7L, gwas_upload_id = 90L, variant_id = 100L),
-    associations = data.frame(
-      gwas_upload_id = 90L, variant_id = 100L, study_id = c(90L, NA), existing_study_id = c(NA, 21L),
-      beta = c(0.5, 0.2), se = 0.1, p = 1e-9, eaf = 0.3, imputed = FALSE
-    )
-  )
-  local_mocked_bindings(get_gwas_api = function(...) api_object)
+test_that("GWAS upload associations are folded in by source", {
+  local_mock_api()
   result <- get_gwas("7a289615-c1b4-91f3-3d97-887f60de9155", include_associations = TRUE)
   expect_null(result$associations)
-  expect_equal(result$coloc_groups$beta[result$coloc_groups$source == "upload"], 0.5)
-  expect_equal(result$coloc_groups$beta[result$coloc_groups$source == "existing"], 0.2)
-  expect_equal(result$study_extractions$beta, 0.2)
-  expect_equal(result$upload_study_extractions$beta, 0.5)
+  groups <- result$coloc_groups
+  # Existing rows join on study_id, upload rows on gwas_upload_id; the same id in each must not mix.
+  expect_equal(groups$beta[groups$source == "upload" & groups$gwas_upload_id == 90], c(0.5, 0.3))
+  expect_equal(groups$beta[groups$source == "upload" & groups$gwas_upload_id == 144], 0.45)
+  expect_equal(groups$beta[groups$source == "existing" & groups$trait_id == 2527], 0.2)
+  extractions <- result$study_extractions
+  expect_equal(extractions$beta[extractions$source == "upload" & extractions$id == 7223], 0.5)
+  expect_true(is.na(extractions$beta[extractions$source == "existing" & extractions$id == 7223]))
+})
+
+test_that("placeholder associations are returned as missing", {
+  associations <- data.frame(
+    variant_id = 1:3, study_id = 1, beta = c(0, 0, 0.2), se = c(1, 0.5, 1), p = c(1, 0.9, 1e-3),
+    eaf = 0.3, imputed = c(TRUE, TRUE, FALSE)
+  )
+  masked <- mask_padded_associations(associations)
+  expect_equal(masked$beta, c(NA, 0, 0.2))
+  expect_equal(masked$eaf, c(NA, 0.3, 0.3))
+  expect_equal(masked$imputed, associations$imputed)
+  expect_equal(nrow(masked), 3)
+
+  local_mock_api()
+  groups <- get_gwas("7a289615-c1b4-91f3-3d97-887f60de9155", include_associations = TRUE)$coloc_groups
+  expect_true(is.na(groups$beta[groups$source == "existing" & groups$study_extraction_id == 7223]))
 })
 
 # Each of these reaches merge_associations() even when the API sends no

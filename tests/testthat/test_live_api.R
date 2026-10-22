@@ -198,14 +198,22 @@ test_that("ld_matrix() returns stored pairs, and an empty table when there are n
   expect_equal(nrow(ld_matrix(c(5553693, 80717))$lds), 0)
 })
 
-test_that("get_gwas() returns an upload with current names and folded associations", {
+test_that("get_gwas() returns an upload in the same shape as other results", {
   skip_if_no_api()
   guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
   result <- tryCatch(get_gwas(guid, include_associations = TRUE), gpmap_api_error = function(e) NULL)
   skip_if(is.null(result), "The example GWAS upload is not on this API")
   expect_null(result$associations)
-  expect_true(all(c("upload_study_extraction_id", "existing_study_extraction_id", "source", "beta")
-                  %in% names(result$coloc_groups)))
-  expect_true(all(c("upload_study_extraction_a_id", "source_a", "trait_name_a") %in% names(result$coloc_pairs)))
-  expect_true(all(result$coloc_groups$source %in% c("upload", "existing")))
+  expect_null(result$upload_study_extractions)
+  groups <- result$coloc_groups
+  expect_true(all(c("study_extraction_id", "source", "gwas_upload_id", "beta") %in% names(groups)))
+  expect_true(all(groups$source %in% c("upload", "existing")))
+  expect_true(all(is.na(groups$gwas_upload_id[groups$source == "existing"])))
+  expect_true(any(groups$source == "upload" & groups$gwas_upload_id == result$trait$id))
+  extraction_keys <- paste(result$study_extractions$source, result$study_extractions$id)
+  expect_true(all(paste(groups$source, groups$study_extraction_id) %in% extraction_keys))
+  expect_true(all(c("study_extraction_a_id", "source_a", "trait_name_a") %in% names(result$coloc_pairs)))
+
+  comparison <- compare_upload(result, 2527)
+  expect_true(all(comparison$coloc_groups$coloc_group_id %in% groups$coloc_group_id))
 })

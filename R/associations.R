@@ -9,5 +9,5 @@
 #' @export
 associations <- function(variant_ids, study_ids) {
   associations <- associations_api(variant_ids, study_ids)
-  return(associations$associations)
+  return(mask_padded_associations(associations$associations))
 }

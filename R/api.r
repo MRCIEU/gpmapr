@@ -183,10 +183,11 @@ retry_delay_seconds <- function(attempt, response,
 }
 
 #' @title Is the GPMap API available?
-#' @description Checks whether the GPMap API can be reached, without raising an
-#'   error. Useful before running code that needs the API, for example in
-#'   examples, vignettes or tests.
-#' @return `TRUE` if the API's health endpoint responds, otherwise `FALSE`.
+#' @description Checks whether the GPMap API can be reached and is a version this
+#'   version of gpmapr supports, without raising an error. Useful before running
+#'   code that needs the API, for example in examples, vignettes or tests.
+#' @return `TRUE` if the API's health endpoint responds and its version is
+#'   supported, otherwise `FALSE`.
 #' @examples
 #' gpmap_available()
 #' @export
@@ -195,7 +196,10 @@ gpmap_available <- function() {
     httr::GET(paste0(getOption("gpmap_url"), "/health"), httr::timeout(10)),
     error = function(e) NULL
   )
-  return(!is.null(response) && httr::status_code(response) < 400)
+  if (is.null(response) || httr::status_code(response) >= 400) {
+    return(FALSE)
+  }
+  return(isTRUE(tryCatch(ensure_api_compatible(), error = function(e) FALSE)))
 }
 
 #' @title Select API
@@ -621,18 +625,9 @@ ld_matrix_by_variant_id_api <- function(variant_ids) {
   return(get_ld_matrix(url))
 }
 
-# An LD matrix response, with no pairs as `list(lds = list())`.  API 1.0.1 answers a request with
-# no stored pairs with a 404; 1.1.0 returns an empty `lds`.
+# An LD matrix response; `lds` is empty when none of the variants are stored as a lead and its proxy.
 get_ld_matrix <- function(url) {
-  ld_matrix <- tryCatch(api_get(url), gpmap_api_error = function(e) {
-    if (identical(e$status, 404L)) {
-      return(NULL)
-    }
-    stop(e)
-  })
-  if (is.null(ld_matrix)) {
-    return(list(lds = list()))
-  }
+  ld_matrix <- api_get(url)
   ld_matrix <- httr::content(ld_matrix, "text", encoding = "UTF-8")
   ld_matrix <- jsonlite::fromJSON(ld_matrix)
   return(ld_matrix)
@@ -763,8 +758,6 @@ upload_gwas_api <- function(file,
     email = email,
     name = name,
     variable_type = variable_type,
-    # API 1.0.1 reads `category`; 1.1.0 reads `variable_type` and ignores `category`.
-    category = variable_type,
     is_published = is_published,
     doi = doi,
     should_be_added = should_be_added,

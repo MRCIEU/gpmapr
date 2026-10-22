@@ -54,7 +54,7 @@ test_that("legacy column_names are mapped to API column names", {
   expect_equal(result$OR_LB, "lb")
 })
 
-test_that("upload_gwas() sends the variable type under both API versions' names", {
+test_that("upload_gwas() sends the variable type, also accepting the deprecated category", {
   file <- tempfile(fileext = ".tsv")
   writeLines(c("chr\tpos\tea\toa\tp\tbeta\tse", "1\t100\tA\tG\t1e-9\t0.1\t0.01"), file)
   on.exit(unlink(file))
@@ -73,7 +73,7 @@ test_that("upload_gwas() sends the variable type under both API versions' names"
 
   upload(variable_type = "categorical")
   expect_equal(sent$variable_type, "categorical")
-  expect_equal(sent$category, "categorical")
+  expect_null(sent$category)
 
   expect_warning(upload(category = "categorical"), "`category` is deprecated")
   expect_equal(sent$variable_type, "categorical")

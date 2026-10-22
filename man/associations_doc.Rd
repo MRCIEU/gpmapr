@@ -22,6 +22,8 @@ It has the following columns:
 \item eaf: the estimated allele frequency of the association
 \item imputed: whether the association is imputed
 }
+Associations of variants a study did not report are placeholders in the GPMap (beta 0, se 1, p 1),
+and are returned with \code{beta}, \code{se}, \code{p} and \code{eaf} set to \code{NA} (and \code{imputed} TRUE).
 }
 
 \keyword{internal}

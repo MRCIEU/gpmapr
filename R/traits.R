@@ -24,7 +24,7 @@
 #' @export
 all_traits <- function() {
   traits <- traits_api()
-  return(standardise_column_names(traits$traits))
+  return(traits$traits)
 }
 
 #' @title Trait duplicates
@@ -47,7 +47,8 @@ trait_duplicates <- function() {
 #' @title Trait
 #' @description A collection of studies that are associated with a particular phenotype.
 #' A trait will include a common study and occasionally a rare study.
-#' When trait_id is a GUID (from GWAS upload), fetches the upload result instead.
+#' When trait_id is a GUID (from GWAS upload), fetches the upload result instead, as [get_gwas()] does: see
+#' its documentation for how upload results mark the upload's own rows.
 #' @param trait_id A numeric value or GUID (from GWAS upload) specifying the trait id
 #' @param include_associations A logical value specifying whether to add each study's association at its
 #' variant (beta, se, p, eaf, imputed) to the coloc_groups, rare_results and study_extractions, defaults to FALSE
@@ -96,7 +97,7 @@ trait <- function(trait_id,
     trait_info <- trait_api(trait_id, include_associations)
 
     if (include_full_associations) {
-      trait_info$full_associations <- trait_associations_full_api(trait_id)
+      trait_info$full_associations <- mask_padded_associations(trait_associations_full_api(trait_id))
     }
 
     trait_info <- fold_associations(trait_info)
@@ -171,7 +172,9 @@ traits <- function(trait_ids,
   }
 
   if (length(guid_ids) > 0) {
-    upload_results <- lapply(guid_ids, get_gwas_api)
+    upload_results <- lapply(guid_ids, function(guid) {
+      return(fold_upload_associations(get_gwas_api(guid, include_associations = include_associations)))
+    })
     for (upload in upload_results) {
       result <- merge_trait_result(result, upload)
     }
@@ -199,21 +202,19 @@ traits <- function(trait_ids,
 #' @noRd
 merge_trait_result <- function(result, upload) {
   if (is.null(upload)) return(result)
-  upload <- standardise_column_names(upload)
-  upload$trait <- standardise_record(upload$trait)
-  upload$coloc_groups <- add_upload_source(upload$coloc_groups)
-  if (!is.null(upload$trait)) {
-    trait_df <- as.data.frame(t(upload$trait))
+  if (is.list(upload$trait)) {
+    # One row per upload, from its single-value fields, named like the other traits.
+    is_single_value <- vapply(upload$trait, function(x) is.atomic(x) && length(x) == 1, logical(1))
+    trait_df <- as.data.frame(upload$trait[is_single_value], stringsAsFactors = FALSE)
+    if ("name" %in% names(trait_df)) trait_df$trait_name <- trait_df$name
     result$traits <- dplyr::bind_rows(result$traits, trait_df)
   }
-  if (is.data.frame(upload$coloc_groups) && nrow(upload$coloc_groups) > 0) {
-    result$coloc_groups <- dplyr::bind_rows(result$coloc_groups, upload$coloc_groups)
-  }
-  if (is.data.frame(upload$study_extractions) && nrow(upload$study_extractions) > 0) {
-    result$study_extractions <- dplyr::bind_rows(result$study_extractions, upload$study_extractions)
-  }
-  if (is.data.frame(upload$rare_results) && nrow(upload$rare_results) > 0) {
-    result$rare_results <- dplyr::bind_rows(result$rare_results, upload$rare_results)
+  for (table in c("coloc_groups", "study_extractions", "rare_results")) {
+    if (!is.data.frame(upload[[table]]) || nrow(upload[[table]]) == 0) next
+    if (is.data.frame(result[[table]]) && nrow(result[[table]]) > 0 && !"source" %in% names(result[[table]])) {
+      result[[table]]$source <- "existing"
+    }
+    result[[table]] <- dplyr::bind_rows(result[[table]], upload[[table]])
   }
   return(result)
 }

@@ -3,6 +3,7 @@
 export(all_genes)
 export(all_traits)
 export(associations)
+export(compare_upload)
 export(delete_gwas)
 export(gene)
 export(genes)

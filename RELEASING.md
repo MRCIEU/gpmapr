@@ -23,23 +23,27 @@ listed for it**.
 Prefer a new path (e.g. `/v2/`) for breaking changes, so older clients keep
 working on `/v1/`.
 
-## API field renames
+## Breaking API changes
 
-When the API renames a field, let gpmapr work with both the old and the new
-API version so the deploy and the CRAN release can happen in either order:
+Once gpmapr is on CRAN, a breaking API change (renamed or restructured fields)
+should not stop released versions before a fixed one is accepted. Either:
 
-1. Add `old = "new"` to `legacy_column_names` in `R/common.R` (or to
-   `legacy_upload_column_names` for a name that only changes in GWAS upload
-   tables). gpmapr then always returns the new name.
-2. For a field gpmapr sends, send both names (see `upload_gwas_api()`); the API
-   ignores fields it doesn't know.
-3. List the release under both API versions in `api_to_package_version`.
-4. Once no supported API version sends the old names, remove them, and the
-   other code marked for the old API version (e.g. `get_ld_matrix()`'s 404
-   handling for API 1.0.1).
+- make the new gpmapr read both the old and the new responses (map old field
+  names to new ones as the responses are parsed; for fields gpmapr sends, send
+  both names, as the API ignores fields it doesn't know), list it under both API
+  versions, release it, then deploy; or
+- serve the change under a new path (e.g. `/v2/`) so older clients keep working.
 
-Run the live tests against both versions: production by default, and a local
-API with `GPMAP_URL=http://localhost:8000`.
+0.1.1, the first CRAN release, did neither: it requires API 1.1.0, and the
+version gate stops every earlier gpmapr. With no CRAN users yet, the order was
+API 1.1.0 deployed first, then 0.1.1 released.
+
+## Testing against a local API
+
+The live tests and the fixture recorder call production unless `GPMAP_URL` is
+set, e.g. `GPMAP_URL=http://localhost:8000`. Use it to test against an API
+version that isn't deployed yet (gpmapr refuses an API version it isn't listed
+for, so live tests against production fail until the matching API is deployed).
 
 ## Each release
 

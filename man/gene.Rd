@@ -79,6 +79,9 @@ of H3 (two distinct causal variants) of at least 0.8
 \item source_name: the name of the source the study comes from
 \item source_url: a link to the study at its source
 \item beta, se, p, eaf, imputed: (with \code{include_associations = TRUE}) the association of the study at the SNP
+\item source, gwas_upload_id: (GWAS upload results only) whether the row is from an uploaded GWAS
+("upload", with the upload's id in \code{gwas_upload_id}) or already in the GPMap ("existing").  Identify a
+study extraction by \code{source} and \code{study_extraction_id} together.
 }
 }
 
@@ -109,6 +112,10 @@ It has the following columns:
 \item trait_category: the category of the trait
 \item data_type: the data type of the trait
 \item tissue: the tissue of the trait
+\item source, gwas_upload_id: (GWAS upload results only) whether the study extraction is from an
+uploaded GWAS ("upload", with the upload's id in \code{gwas_upload_id}) or already in the GPMap
+("existing").  Upload and existing study extractions have separate ids, so identify a study
+extraction by \code{source} and \code{id} together.
 }
 }
 
@@ -144,6 +151,8 @@ It has the following columns:
 \itemize{
 \item study_extraction_a_id: the id of the study extraction associated with this coloc pair
 \item study_extraction_b_id: the id of the study extraction associated with this coloc pair
+\item source_a, source_b: (GWAS upload results only) whether each study extraction is from an uploaded
+GWAS ("upload") or already in the GPMap ("existing")
 \item trait_name_a, data_type_a, tissue_a, gene_a: the trait name, data type, tissue and gene of
 study extraction a (and the same with \verb{_b} for study extraction b), joined from \code{study_extractions}.
 Not added to the coloc pairs of \code{trait()}, whose endpoint doesn't return the study extractions

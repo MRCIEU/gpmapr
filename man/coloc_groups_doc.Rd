@@ -44,6 +44,9 @@ of H3 (two distinct causal variants) of at least 0.8
 \item source_name: the name of the source the study comes from
 \item source_url: a link to the study at its source
 \item beta, se, p, eaf, imputed: (with \code{include_associations = TRUE}) the association of the study at the SNP
+\item source, gwas_upload_id: (GWAS upload results only) whether the row is from an uploaded GWAS
+("upload", with the upload's id in \code{gwas_upload_id}) or already in the GPMap ("existing").  Identify a
+study extraction by \code{source} and \code{study_extraction_id} together.
 }
 }
 

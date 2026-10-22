@@ -7,12 +7,13 @@
 gpmap_available()
 }
 \value{
-\code{TRUE} if the API's health endpoint responds, otherwise \code{FALSE}.
+\code{TRUE} if the API's health endpoint responds and its version is
+supported, otherwise \code{FALSE}.
 }
 \description{
-Checks whether the GPMap API can be reached, without raising an
-error. Useful before running code that needs the API, for example in
-examples, vignettes or tests.
+Checks whether the GPMap API can be reached and is a version this
+version of gpmapr supports, without raising an error. Useful before running
+code that needs the API, for example in examples, vignettes or tests.
 }
 \examples{
 gpmap_available()

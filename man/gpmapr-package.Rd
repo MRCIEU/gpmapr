@@ -8,6 +8,31 @@
 \description{
 Client for the 'OpenGWAS' genotype-phenotype map ('GPMap') API \url{https://gpmap.opengwas.io}, which brings together colocalisation, rare variant and molecular QTL results across thousands of traits. Functions retrieve traits, genes, variants and genomic regions with their colocalising studies, associations, linkage disequilibrium and pleiotropy summaries, search the map by name or variant, and upload GWAS summary statistics for analysis against it.
 }
+\section{Data model}{
+
+Most functions return a list of dataframes describing the same few kinds of record:
+\itemize{
+\item \code{study_extractions}: a study's association signal in one LD block (a "study extraction"),
+identified by \code{id}.
+\item \code{coloc_groups}: groups of study extractions that colocalise, one row per study extraction in
+each group, identified by \code{coloc_group_id} and pointing at their study extraction with
+\code{study_extraction_id}.
+\item \code{coloc_pairs}: pairwise colocalisation results between two study extractions,
+\code{study_extraction_a_id} and \code{study_extraction_b_id}, with their trait names alongside.
+\item \code{rare_results}: rare-variant results, grouped by \code{rare_result_group_id}.
+}
+Join \code{coloc_groups$study_extraction_id} (and the pair ids) to \code{study_extractions$id}.  \code{trait_id},
+\code{study_id}, \code{variant_id}, \code{gene_id} and \code{ld_block_id} refer to traits, studies, variants, genes and LD
+blocks.  With \code{include_associations = TRUE}, each study's association at the row's variant (\code{beta}, \code{se},
+\code{p}, \code{eaf}, \code{imputed}) is added to \code{coloc_groups}, \code{rare_results} and \code{study_extractions}.
+
+GWAS upload results (\code{\link[=get_gwas]{get_gwas()}}, or \code{\link[=trait]{trait()}} with a GUID) have the same tables, mixing the upload's
+own rows with rows for studies already in the GPMap.  Their \code{source} column ("upload" or "existing")
+says which: identify a study extraction by \code{source} and its id together, and find the upload's own rows
+with \code{source == "upload" & gwas_upload_id == result$trait$id}.  \code{\link[=compare_upload]{compare_upload()}} lines an upload up
+with another trait.
+}
+
 \seealso{
 Useful links:
 \itemize{

@@ -1,18 +1,18 @@
 {
   "snps": [
     {
-      "variant_id": 36,
-      "display_snp": "1:843942 A/G",
+      "variant_id": 30,
+      "display_snp": "1:836587 G/A",
       "distinct_trait_categories": 0,
-      "distinct_protein_coding_genes": 0,
+      "distinct_protein_coding_genes": 1,
       "distinct_trait_categories_cis_gws": 0,
       "distinct_trait_categories_cis_all": 0,
       "distinct_trait_categories_cis_trans_gws": 0,
       "distinct_trait_categories_cis_trans_all": 0,
       "distinct_protein_coding_genes_cis_gws": 0,
       "distinct_protein_coding_genes_cis_all": 0,
-      "distinct_protein_coding_genes_cis_trans_gws": 0,
-      "distinct_protein_coding_genes_cis_trans_all": 0
+      "distinct_protein_coding_genes_cis_trans_gws": 1,
+      "distinct_protein_coding_genes_cis_trans_all": 1
     },
     {
       "variant_id": 54,

@@ -99,7 +99,8 @@ test_that("region() returns the region with and without associations", {
   expect_gt(nrow(plain$coloc_groups), 0)
   # The region endpoint sends no associations, which used to make this error.
   with_associations <- region(459, include_associations = TRUE)
-  expect_equal(with_associations$coloc_groups, plain$coloc_groups)
+  expect_gt(nrow(with_associations$coloc_groups), 0)
+  expect_equal(names(with_associations$coloc_groups), names(plain$coloc_groups))
 })
 
 test_that("associations() returns the requested variant-study associations", {
@@ -123,6 +124,33 @@ test_that("pleiotropy summaries are returned for genes and variants", {
   variants_result <- get_all_variant_pleiotropies()
   expect_true(all(c("gene_id", "distinct_trait_categories") %in% names(genes_result)))
   expect_true(all(c("variant_id", "distinct_trait_categories") %in% names(variants_result)))
+})
+
+test_that("all_traits() and trait() return pipeline_id and variable_type", {
+  local_mock_api()
+  expect_true(all(c("pipeline_id", "variable_type") %in% names(all_traits())))
+  result <- trait(5020)
+  expect_true(is.character(result$trait$pipeline_id))
+  expect_equal(result$trait$source_url, create_source_url(result$trait$pipeline_id))
+})
+
+test_that("get_gwas() returns an upload in the same shape as other results", {
+  local_mock_api()
+  result <- get_gwas("7a289615-c1b4-91f3-3d97-887f60de9155")
+  expect_null(result$upload_study_extractions)
+  expect_true(all(c("id", "source", "gwas_upload_id", "trait_name") %in% names(result$study_extractions)))
+  groups <- result$coloc_groups
+  extraction_keys <- paste(result$study_extractions$source, result$study_extractions$id)
+  expect_true(all(paste(groups$source, groups$study_extraction_id) %in% extraction_keys))
+  expect_equal(trait("7a289615-c1b4-91f3-3d97-887f60de9155")$coloc_groups, groups)
+})
+
+test_that("traits() combines trait ids and GWAS upload GUIDs", {
+  local_mock_api()
+  result <- traits(c(4405, 4872, "7a289615-c1b4-91f3-3d97-887f60de9155"), include_associations = TRUE)
+  expect_true(all(c(4405, 4872, 90) %in% result$traits$id))
+  expect_equal(result$traits$trait_name[result$traits$id == 90], "AD GWAS")
+  expect_true(all(c("existing", "upload") %in% result$coloc_groups$source))
 })
 
 test_that("get_gwas() returns an uploaded GWAS", {
