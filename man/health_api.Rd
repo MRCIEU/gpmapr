@@ -12,3 +12,8 @@ A list containing the health status
 \description{
 Get the health status of the API
 }
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+health_api()$status
+\dontshow{\}) # examplesIf}
+}

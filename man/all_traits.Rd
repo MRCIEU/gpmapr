@@ -11,12 +11,12 @@ A dataframe containing all traits with the following columns:
 \itemize{
 \item id: the id of the trait
 \item data_type: the data type of the trait
-\item trait: the internal string id of the trait
+\item pipeline_id: the string id the GPMap pipeline uses for the trait, e.g. its OpenGWAS dataset id
 \item trait_name: the name of the trait
 \item trait_category: the trait category of the trait
 \item variant_type: the type of variant
 \item sample_size: the sample size of the trait
-\item category: the category of the trait (continuous, categorical)
+\item variable_type: the type of variable the trait is (continuous, categorical)
 \item ancestry: the ancestry of the trait
 \item heritability: the LDSC heritability score of the trait
 \item heritability_se: the standard error of the LDSC heritability score of the trait
@@ -28,4 +28,10 @@ A dataframe containing all traits with the following columns:
 }
 \description{
 Get all traits from the API
+}
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+traits <- all_traits()
+head(traits[, c("id", "trait_name")])
+\dontshow{\}) # examplesIf}
 }

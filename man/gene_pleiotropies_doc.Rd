@@ -16,8 +16,20 @@ It has the following columns:
 \itemize{
 \item gene_id: the id of the gene
 \item gene: the name of the gene
-\item : distinct_trait_categories the number of trait categories that the gene is associated with via coloc groups
-\item : distinct_protein_coding_genes the number of genes that the gene is associated with via coloc groups
+\item distinct_trait_categories: the number of distinct trait categories in the coloc groups the gene's own
+QTLs are in
+(the same as distinct_trait_categories_cis_trans_all)
+\item distinct_protein_coding_genes: the number of distinct protein coding genes in the coloc groups the
+gene's own QTLs are in
+(the same as distinct_protein_coding_genes_cis_trans_all)
+\item distinct_trait_categories_cis_gws, distinct_trait_categories_cis_all,
+distinct_trait_categories_cis_trans_gws, distinct_trait_categories_cis_trans_all: the number of distinct
+trait categories, counting only cis results (\code{_cis_}) or cis and trans results (\code{_cis_trans_}),
+and only genome-wide significant study extractions, with p <= 5e-8 (\code{_gws}), or all of them
+(\code{_all})
+\item distinct_protein_coding_genes_cis_gws, distinct_protein_coding_genes_cis_all,
+distinct_protein_coding_genes_cis_trans_gws, distinct_protein_coding_genes_cis_trans_all: the number of
+distinct protein coding genes, with the same cis / cis_trans and gws / all variants
 }
 }
 

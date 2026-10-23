@@ -22,6 +22,29 @@ It has the following columns:
 \item eaf: the estimated allele frequency of the association
 \item imputed: whether the association is imputed
 }
+Associations of variants a study did not report are placeholders in the GPMap (beta 0, se 1, p 1),
+and are returned with \code{beta}, \code{se}, \code{p} and \code{eaf} set to \code{NA} (and \code{imputed} TRUE).
+}
+
+\section{Which associations are stored}{
+
+The GPMap does not store every study's association at every variant. It stores:
+\itemize{
+\item at the variant of every coloc group and rare result: the association of every study with a study
+extraction in that LD block, whether or not the study is in the group. A coloc group's variant can be
+looked up across all of those studies.
+\item at a study extraction's own lead variant (its \code{display_snp}): that study's association only.
+}
+So other studies have no association at a study extraction's lead variant, unless that variant is also the
+variant of a coloc group or rare result somewhere in the map. To compare studies at a locus, use the
+variant of their coloc group, not the study extractions' lead variants. Asking \code{\link[=associations]{associations()}} for a
+variant and study with nothing stored returns no row for that pair.
+
+\code{trait(include_full_associations = TRUE)} returns the stored associations at the trait's coloc group, rare
+result and study extraction variants, for the trait's own studies and the studies that colocalise with
+it. Within those, the rules above apply: at its coloc groups' variants most of those studies have an
+association; at the lead variant of one of its study extractions that is in none of its coloc groups,
+usually only the trait's own study does.
 }
 
 \keyword{internal}

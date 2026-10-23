@@ -7,13 +7,7 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r, include = FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  eval = TRUE
-)
-```
+
 
 The GPMap API allows you to upload your own GWAS summary statistics and receive colocalisation results against the existing GPMap. This vignette covers how to upload a GWAS, retrieve your results, interpret them, and compare your upload with another trait (including another upload) to find insights.
 
@@ -21,7 +15,8 @@ The GPMap API allows you to upload your own GWAS summary statistics and receive 
 
 Use `gpmapr::upload_gwas()` to submit your summary statistics. You need a file with standard GWAS columns and metadata such as sample size and ancestry.
 
-```{r upload-example, eval = FALSE}
+
+``` r
 # Example: upload a GWAS file
 result <- gpmapr::upload_gwas(
   file = "path/to/your_gwas.tsv.gz",
@@ -36,7 +31,7 @@ result <- gpmapr::upload_gwas(
   beta_col = "beta",
   se_col = "se",
   email = "your@email.com",
-  category = "continuous",
+  variable_type = "continuous",
   ancestry = "EUR",
   sample_size = 50000,
   reference_build = "GRCh38"
@@ -49,7 +44,8 @@ You can also compare your upload with another upload by passing the GUIDs of the
 
 The response includes a **GUID** (a UUID such as `a1b2c3d4-e5f6-7890-abcd-ef1234567890`). Save this GUID; you use it to fetch your results once they are ready.
 
-```{r guid-example, eval = FALSE}
+
+``` r
 # The GUID is returned in the response
 my_guid <- result$guid
 ```
@@ -60,12 +56,13 @@ Processing can take some time. Use the GUID with `trait()` to check status and r
 
 This is of Atopic Dermatitis.
 
-```{r fetch-results, cache = TRUE}
+
+``` r
 my_guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
 my_results <- gpmapr::trait(my_guid, include_associations = TRUE)
 ```
 
-When processing is complete, the result includes `trait`, `coloc_groups`, `study_extractions`, `upload_study_extractions`, and optionally `associations` and `coloc_pairs`.
+When processing is complete, the result includes `trait`, `coloc_groups`, `study_extractions`, `upload_study_extractions`, and optionally `coloc_pairs`. Each coloc group row is either one of your upload's study extractions (`source = "upload"`, id in `upload_study_extraction_id`) or a study already in the GPMap (`source = "existing"`, id in `existing_study_extraction_id`). With `include_associations = TRUE`, each study's association at its variant (`beta`, `se`, `p`, `eaf`, `imputed`) is added to the coloc groups and study extractions.
 
 ## Interpreting your results
 
@@ -79,12 +76,15 @@ The difference between study_extractions and upload_study_extractions is that up
 
 Key columns include `study`, `snp`, `gene`, `chr`, `bp`, `min_p`, and trait metadata (`trait_name`, `data_type`, `tissue`).
 
-```{r study-extractions-demo}
+
+``` r
 # Study extractions (structure may vary - list of dataframes or single dataframe)
 uploaded_study_extractions <- my_results$upload_study_extractions
 paste("Number of uploaded study extractions:", nrow(uploaded_study_extractions))
+#> [1] "Number of uploaded study extractions: 144"
 study_extractions <- my_results$study_extractions
 paste("Number of study extractions associated with your upload:", nrow(study_extractions))
+#> [1] "Number of study extractions associated with your upload: 3854"
 ```
 
 ### Coloc groups and coloc pairs
@@ -96,7 +96,8 @@ Although coloc groups provide a more robust view of the relationship between you
 
 If you are interested in the relationship between your trait and another specific trait, you can filter the coloc groups by trait id.
 
-```{r coloc-groups-demo, fig.width=8, fig.height=10, out.width="100%"}
+
+``` r
 trait_to_compare <- 2527L # Allergic rhinitis
 upload_id   <- my_results$trait$id
 upload_name <- as.character(my_results$trait$name)[[1L]]
@@ -224,6 +225,14 @@ if (nrow(cg_df) > 0) {
     "Colocalisation groups"
   ))
 }
+```
+
+<div class="figure">
+<img src="figures/tutorial-gwas-upload-coloc-groups-demo-1.png" alt="plot of chunk coloc-groups-demo" width="100%" />
+<p class="caption">plot of chunk coloc-groups-demo</p>
+</div>
+
+``` r
 
 # --- Section 2: Coloc pairs only (h4 > 0.8, locus not in shared coloc groups) ---
 pairs_all <- my_results$coloc_pairs
@@ -262,22 +271,29 @@ if (!is.null(pairs_all) && nrow(pairs_all) > 0 && "h4" %in% names(pairs_all) &&
 }
 ```
 
+<div class="figure">
+<img src="figures/tutorial-gwas-upload-coloc-groups-demo-2.png" alt="plot of chunk coloc-groups-demo" width="100%" />
+<p class="caption">plot of chunk coloc-groups-demo</p>
+</div>
+
 **Coloc pairs** give pairwise colocalisation probabilities between study extractions:
 
 - **h4**: Both traits share **one common causal variant**
 - **h3**: Both traits associate at the region through **two distinct causal variants**
 
+Each side of a pair is either one of your upload's study extractions (`source_a = "upload"`) or a study already in the GPMap (`source_a = "existing"`), with its trait name, data type, tissue and gene alongside. The ids are in `upload_study_extraction_a_id` or `existing_study_extraction_a_id` (and the same for `b`).
+
 The forest plot above already includes loci with h4 > 0.8 that are not captured by any shared coloc group. The raw pair scores for all significant pairs are shown below.
 
-```{r coloc-pairs-demo}
+
+``` r
 truncate_results <- 20L
 
 pairs <- my_results$coloc_pairs
 if (!is.null(pairs) && nrow(pairs) > 0) {
   cols <- intersect(names(pairs), c(
-    "study_extraction_id_a", "study_extraction_id_b",
-    "existing_study_extraction_id_a", "existing_study_extraction_id_b",
-    "ld_block_id", "h3", "h4", "false_positive", "spurious"
+    "source_a", "trait_name_a", "source_b", "trait_name_b", "data_type_b", "tissue_b",
+    "ld_block_id", "h3", "h4"
   ))
   knitr::kable(
     head(dplyr::filter(pairs[, cols, drop = FALSE], h4 > 0.8), truncate_results),
@@ -288,10 +304,38 @@ if (!is.null(pairs) && nrow(pairs) > 0) {
 }
 ```
 
+
+
+|source_a |trait_name_a |source_b |trait_name_b                                        |data_type_b     |tissue_b                   | ld_block_id|    h3|    h4|
+|:--------|:------------|:--------|:---------------------------------------------------|:---------------|:--------------------------|-----------:|-----:|-----:|
+|upload   |AD GWAS      |existing |TNFRSF8 Skin Sun Exposed Lower leg eQTL             |Gene Expression |Skin Sun Exposed Lower leg |           9| 0.083| 0.882|
+|upload   |AD GWAS      |existing |TNFRSF8 Whole blood cg07017135 methQTL              |Methylation     |Whole blood                |           9| 0.117| 0.879|
+|upload   |AD GWAS      |existing |Whole blood cg22877366 methQTL                      |Methylation     |Whole blood                |           9| 0.003| 0.996|
+|upload   |AD GWAS      |existing |TNFRSF8 Whole blood cg24427243 methQTL              |Methylation     |Whole blood                |           9| 0.086| 0.911|
+|upload   |AD GWAS      |existing |Ankle spacing width (left)                          |Phenotype       |NA                         |          58| 0.002| 0.998|
+|upload   |AD GWAS      |existing |Age hay fever, rhinitis or eczema diagnosed         |Phenotype       |NA                         |          58| 0.069| 0.931|
+|upload   |AD GWAS      |existing |Ankle spacing width (right)                         |Phenotype       |NA                         |          58| 0.002| 0.998|
+|upload   |AD GWAS      |upload   |AD GWAS                                             |NA              |NA                         |          59| 0.000| 1.000|
+|upload   |AD GWAS      |upload   |AD GWAS                                             |NA              |NA                         |          59| 0.000| 1.000|
+|upload   |AD GWAS      |existing |IL6R Artery Tibial eQTL                             |Gene Expression |Artery Tibial              |          60| 0.067| 0.933|
+|upload   |AD GWAS      |existing |IL6R Colon Sigmoid eQTL                             |Gene Expression |Colon Sigmoid              |          60| 0.064| 0.936|
+|upload   |AD GWAS      |existing |IL6R Colon Transverse eQTL                          |Gene Expression |Colon Transverse           |          60| 0.071| 0.929|
+|upload   |AD GWAS      |existing |IL6R Ooesophagus Muscularis eQTL                    |Gene Expression |Esophagus Muscularis       |          60| 0.057| 0.943|
+|upload   |AD GWAS      |existing |IL6R Colon Transverse sQTL chr1:154449980:154465134 |Splice Variant  |Colon Transverse           |          60| 0.097| 0.903|
+|upload   |AD GWAS      |existing |IL6R Lung sQTL chr1:154448171:154449911             |Splice Variant  |Lung                       |          60| 0.047| 0.952|
+|upload   |AD GWAS      |existing |SHE Lung sQTL chr1:154470362:154485943              |Splice Variant  |Lung                       |          60| 0.127| 0.872|
+|upload   |AD GWAS      |existing |Granulocyte percentage of myeloid white cells       |Phenotype       |NA                         |          60| 0.039| 0.960|
+|upload   |AD GWAS      |existing |Allergic disease (asthma, hay fever or eczema)      |Phenotype       |NA                         |          60| 0.052| 0.948|
+|upload   |AD GWAS      |existing |Mean corpuscular volume                             |Phenotype       |NA                         |          60| 0.025| 0.975|
+|upload   |AD GWAS      |existing |Monocyte count                                      |Phenotype       |NA                         |          60| 0.047| 0.953|
+
+
+
 ## Deleting an upload
 
 If you no longer want an upload stored in the GPMap, you can permanently delete it, along with all of its results, using `delete_gwas()`. You need to provide the same email address that you used for the upload. Uploads that are still processing can't be deleted.
 
-```{r delete-example, eval = FALSE}
+
+``` r
 gpmapr::delete_gwas(my_guid, email = "your@email.com")
 ```

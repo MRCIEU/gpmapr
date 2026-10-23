@@ -15,11 +15,12 @@ trait(
 \arguments{
 \item{trait_id}{A numeric value or GUID (from GWAS upload) specifying the trait id}
 
-\item{include_associations}{A logical value specifying whether to include associations
-(BETA, SE, P), defaults to FALSE}
+\item{include_associations}{A logical value specifying whether to add each study's association at its
+variant (beta, se, p, eaf, imputed) to the coloc_groups, rare_results and study_extractions, defaults to FALSE}
 
-\item{include_full_associations}{A logical value specifying whether to include full
-trait associations from \code{/associations-full}, defaults to FALSE}
+\item{include_full_associations}{A logical value specifying whether to include the stored associations
+of the trait's studies and the studies that colocalise with it, at the trait's coloc group, rare result and
+study extraction variants (see "Which associations are stored"), defaults to FALSE}
 
 \item{include_coloc_pairs}{A logical value specifying whether to include coloc pairs, defaults to FALSE}
 
@@ -28,23 +29,24 @@ trait associations from \code{/associations-full}, defaults to FALSE}
 \value{
 A list which contains the following elements:
 \itemize{
-\item trait: A list containing metadata about the trait,
-including common and rare studies associated with the trait
+\item trait: A list containing metadata about the trait, including its \code{pipeline_id}, \code{source_url},
+and the common and rare studies associated with it
 \item coloc_groups: a dataframe containing information about which studies have coloc results for this trait.
 See below for details.
 \item study_extractions: a list of dataframes containing the study extractions for this trait.
 See below for details.
 \item rare_results: (optional) a list of dataframes containing the rare results for this trait
 \item coloc_pairs: (optional) a dataframe containing all pairwise coloc results for this trait.
-\item full_associations: (optional) a dataframe of full trait associations from
-\code{/associations-full}.
+\item full_associations: (optional) a dataframe of associations (\code{variant_id}, \code{study_id}, \code{beta}, \code{se},
+\code{p}, ...): see "Which associations are stored" below for which variants and studies it covers.
 }
 See below for details.
 }
 \description{
 A collection of studies that are associated with a particular phenotype.
 A trait will include a common study and occasionally a rare study.
-When trait_id is a GUID (from GWAS upload), fetches the upload result instead.
+When trait_id is a GUID (from GWAS upload), fetches the upload result instead, as \code{\link[=get_gwas]{get_gwas()}} does: see
+its documentation for how upload results mark the upload's own rows.
 }
 \details{
 The dataframes returned by this function are as follows:
@@ -59,19 +61,34 @@ It has the following columns:
 \item study_extraction_id: the id of the study extraction
 \item variant_id: the id of the SNP
 \item ld_block_id: the id of the LD block
+\item h4_connectedness: the proportion of the pairs of studies in the group that colocalise
+(posterior probability of H4, one shared causal variant, of at least 0.8)
+\item h3_connectedness: the proportion of the pairs of studies in the group with a posterior probability
+of H3 (two distinct causal variants) of at least 0.8
 \item chr: the chromosome of the SNP
 \item bp: the base pair position of the SNP
 \item min_p: the minimum p-value related to the study_extraction_id
 \item cis_trans: the cis/trans status of the SNP
 \item ld_block: the LD block of the SNP
 \item display_snp: the display SNP name
-\item gene: the gene associated with the SNP
+\item rsid: the rsID of the SNP
+\item gene: the gene whose expression, splicing or protein level the study measures (for molecular QTLs)
 \item gene_id: the id of the gene
+\item situated_gene: the gene the measured site is in, for methylation studies (which have no \code{gene})
+\item situated_gene_id: the id of the situated gene
 \item trait_id: the id of the trait
 \item trait_name: the name of the trait
 \item trait_category: the category of the trait
 \item data_type: the data type of the trait
 \item tissue: the tissue of the trait
+\item cell_type: the cell type of the trait
+\item source_id: the id of the source the study comes from
+\item source_name: the name of the source the study comes from
+\item source_url: a link to the study at its source
+\item beta, se, p, eaf, imputed: (with \code{include_associations = TRUE}) the association of the study at the SNP
+\item source, gwas_upload_id: (GWAS upload results only) whether the row is from an uploaded GWAS
+("upload", with the upload's id in \code{gwas_upload_id}) or already in the GPMap ("existing").  Identify a
+study extraction by \code{source} and \code{study_extraction_id} together.
 }
 }
 
@@ -102,6 +119,12 @@ It has the following columns:
 \item trait_category: the category of the trait
 \item data_type: the data type of the trait
 \item tissue: the tissue of the trait
+\item beta, se, p, eaf, imputed: (with \code{include_associations = TRUE}) the study's association at the
+study extraction's own lead variant
+\item source, gwas_upload_id: (GWAS upload results only) whether the study extraction is from an
+uploaded GWAS ("upload", with the upload's id in \code{gwas_upload_id}) or already in the GPMap
+("existing").  Upload and existing study extractions have separate ids, so identify a study
+extraction by \code{source} and \code{id} together.
 }
 }
 
@@ -137,6 +160,12 @@ It has the following columns:
 \itemize{
 \item study_extraction_a_id: the id of the study extraction associated with this coloc pair
 \item study_extraction_b_id: the id of the study extraction associated with this coloc pair
+\item source_a, source_b: (GWAS upload results only) whether each study extraction is from an uploaded
+GWAS ("upload") or already in the GPMap ("existing")
+\item trait_name_a, data_type_a, tissue_a, gene_a: the trait name, data type, tissue and gene of
+study extraction a (and the same with \verb{_b} for study extraction b), joined from \code{study_extractions}.
+Not added to the coloc pairs of \code{trait()}, whose endpoint doesn't return the study extractions
+its pairs refer to.
 \item ld_block_id: the id of the LD block
 \item h3: the h3 value for this coloc pair
 \item h4: the h4 value for this coloc pair
@@ -155,3 +184,30 @@ It has the following columns, along side many more columns from VEP:
 }
 }
 
+\section{Which associations are stored}{
+
+The GPMap does not store every study's association at every variant. It stores:
+\itemize{
+\item at the variant of every coloc group and rare result: the association of every study with a study
+extraction in that LD block, whether or not the study is in the group. A coloc group's variant can be
+looked up across all of those studies.
+\item at a study extraction's own lead variant (its \code{display_snp}): that study's association only.
+}
+So other studies have no association at a study extraction's lead variant, unless that variant is also the
+variant of a coloc group or rare result somewhere in the map. To compare studies at a locus, use the
+variant of their coloc group, not the study extractions' lead variants. Asking \code{\link[=associations]{associations()}} for a
+variant and study with nothing stored returns no row for that pair.
+
+\code{trait(include_full_associations = TRUE)} returns the stored associations at the trait's coloc group, rare
+result and study extraction variants, for the trait's own studies and the studies that colocalise with
+it. Within those, the rules above apply: at its coloc groups' variants most of those studies have an
+association; at the lead variant of one of its study extractions that is in none of its coloc groups,
+usually only the trait's own study does.
+}
+
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+result <- trait(5020)
+head(result$coloc_groups)
+\dontshow{\}) # examplesIf}
+}

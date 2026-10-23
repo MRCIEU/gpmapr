@@ -10,10 +10,13 @@ ld_matrix(variant_ids = c())
 \item{variant_ids}{A character string specifying the Variant ID.  Variant IDs can be SNP IDs or variant IDs.}
 }
 \value{
-A list containing the LD matrix
+A list containing \code{lds}, a dataframe of the stored LD pairs among \code{variant_ids}, with no rows
+when there are none
 }
 \description{
-Get LD matrix from the API by Variant ID
+Get the LD between the given variants from the API.  The GPMap stores LD only between
+lead variants and their proxies, not between every pair of variants, so this returns the pairs among
+\code{variant_ids} where one is a lead variant and the other its proxy.
 }
 \section{ld_dataframe}{
 
@@ -24,6 +27,12 @@ It has the following columns:
 \item proxy_variant_id: the id of the variant SNP
 \item ld_block_id: the id of the LD block
 \item r: the r value between the lead and variant SNPs
+\item rsq: the r-squared between the lead and variant SNPs, rounded to 2 decimal places
 }
 }
 
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+ld_matrix(c(5553693, 5553688))
+\dontshow{\}) # examplesIf}
+}

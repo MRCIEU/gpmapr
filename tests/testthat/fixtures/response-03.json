@@ -1,0 +1,34 @@
+{
+  "duplicates": [
+    {
+      "trait_id": 1993,
+      "trait_name": "Height",
+      "duplicate_group": 1,
+      "is_representative": true,
+      "match_rules": null,
+      "proxy_group_id": 50,
+      "proxy_group_name": "Height",
+      "proxy_rules": null
+    },
+    {
+      "trait_id": 2869,
+      "trait_name": "Standing height",
+      "duplicate_group": 1,
+      "is_representative": false,
+      "match_rules": "synonym",
+      "proxy_group_id": 50,
+      "proxy_group_name": "Height",
+      "proxy_rules": null
+    },
+    {
+      "trait_id": 168,
+      "trait_name": "Appendicular lean mass",
+      "duplicate_group": 2,
+      "is_representative": true,
+      "match_rules": null,
+      "proxy_group_id": null,
+      "proxy_group_name": null,
+      "proxy_rules": null
+    }
+  ]
+}

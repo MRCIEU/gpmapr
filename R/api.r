@@ -3,30 +3,113 @@ max_retry_attempts <- 5
 retry_base_delay_seconds <- 1
 retry_max_delay_seconds <- 32
 
-#' @title GET request with retry on rate limiting
-#' @description Thin wrapper around `httr::GET()` that transparently retries
-#'   with exponential backoff when the API responds with 429 (Too Many
-#'   Requests), so callers succeed without needing to handle rate limiting
-#'   themselves.
+#' @title GET request to the GPMap API
+#' @description Wrapper around `httr::GET()` used by every API call. It checks
+#'   once per session that this gpmapr version supports the API (see
+#'   `ensure_api_compatible()`), retries with exponential backoff when the API
+#'   responds with 429 (Too Many Requests), and turns an unreachable API or an
+#'   HTTP error into an informative error.
 #' @param ... Passed on to `httr::GET()`
+#' @param check_version If `FALSE`, skip the API version check (used by the
+#'   version and health endpoints themselves).
 #' @return An `httr` response object
 #' @keywords internal
 #' @noRd
-api_get <- function(...) {
-  return(request_with_backoff(httr::GET, ...))
+api_get <- function(..., check_version = TRUE) {
+  return(api_request(httr::GET, ..., check_version = check_version))
 }
 
-#' @title POST request with retry on rate limiting
-#' @description Thin wrapper around `httr::POST()` that transparently retries
-#'   with exponential backoff when the API responds with 429 (Too Many
-#'   Requests), so callers succeed without needing to handle rate limiting
-#'   themselves.
+#' @title POST request to the GPMap API
+#' @description As `api_get()`, for `httr::POST()`.
 #' @param ... Passed on to `httr::POST()`
+#' @param check_version If `FALSE`, skip the API version check.
 #' @return An `httr` response object
 #' @keywords internal
 #' @noRd
-api_post <- function(...) {
-  return(request_with_backoff(httr::POST, ...))
+api_post <- function(..., check_version = TRUE) {
+  return(api_request(httr::POST, ..., check_version = check_version))
+}
+
+api_request <- function(verb, ..., check_version = TRUE) {
+  if (check_version) {
+    ensure_api_compatible()
+  }
+  response <- request_with_backoff(verb, ...)
+  stop_for_api_status(response)
+  return(response)
+}
+
+# Session cache of the API URLs whose version this gpmapr version supports.
+.api_state <- new.env(parent = emptyenv())
+
+#' @title Check that this gpmapr version supports the selected API
+#' @description Fetches the API version once per session per API URL and
+#'   stops, with upgrade instructions, when this gpmapr version is not listed
+#'   for it in `api_to_package_version`. When the API cannot be reached nothing
+#'   is cached and the request itself reports the problem.
+#' @return `TRUE` (invisibly) when compatible, `FALSE` when the version could
+#'   not be fetched.
+#' @keywords internal
+#' @noRd
+ensure_api_compatible <- function() {
+  url <- getOption("gpmap_url")
+  if (isTRUE(.api_state$compatible[[url]])) {
+    return(invisible(TRUE))
+  }
+  api_version <- tryCatch(fetch_api_version(url), error = function(e) NULL)
+  if (is.null(api_version)) {
+    return(invisible(FALSE))
+  }
+  package_version <- installed_package_version()
+  if (!package_version %in% api_to_package_version[[api_version]]) {
+    stop(
+      "gpmapr ", package_version, " does not support version ", api_version,
+      " of the GPMap API at ", url, ". Please update gpmapr with ",
+      "install.packages(\"gpmapr\") (or pak::pak(\"MRCIEU/gpmapr\") for the ",
+      "development version).",
+      call. = FALSE
+    )
+  }
+  .api_state$compatible[[url]] <- TRUE
+  return(invisible(TRUE))
+}
+
+installed_package_version <- function() {
+  return(as.character(utils::packageVersion("gpmapr")))
+}
+
+fetch_api_version <- function(url) {
+  response <- httr::GET(paste0(url, "/v1/info/version"), httr::timeout(10))
+  if (httr::status_code(response) >= 400) {
+    return(NULL)
+  }
+  version <- jsonlite::fromJSON(httr::content(response, "text", encoding = "UTF-8"))
+  return(version$version)
+}
+
+#' @title Stop with an informative error for an HTTP error response
+#' @param response An `httr` response object
+#' @return `response`, invisibly, when its status is below 400
+#' @keywords internal
+#' @noRd
+stop_for_api_status <- function(response) {
+  status <- httr::status_code(response)
+  if (status < 400) {
+    return(invisible(response))
+  }
+  body <- tryCatch(
+    jsonlite::fromJSON(httr::content(response, "text", encoding = "UTF-8")),
+    error = function(e) NULL
+  )
+  detail <- if (is.list(body) && !is.null(body$detail)) {
+    paste(unlist(body$detail), collapse = "; ")
+  } else {
+    httr::http_status(response)$message
+  }
+  stop(structure(
+    class = c("gpmap_api_error", "error", "condition"),
+    list(message = paste0("GPMap API request failed (HTTP ", status, "): ", detail), call = NULL, status = status)
+  ))
 }
 
 #' @title Retry a request with exponential backoff when rate-limited
@@ -50,7 +133,13 @@ request_with_backoff <- function(verb, ...,
                                  base_delay = retry_base_delay_seconds,
                                  max_delay = retry_max_delay_seconds,
                                  attempt = 0) {
-  response <- verb(...)
+  response <- tryCatch(verb(...), error = function(e) {
+    stop(
+      "Could not reach the GPMap API at ", getOption("gpmap_url"), ": ",
+      conditionMessage(e),
+      call. = FALSE
+    )
+  })
   if (httr::status_code(response) != 429L) {
     return(response)
   }
@@ -93,6 +182,26 @@ retry_delay_seconds <- function(attempt, response,
   return(stats::runif(1, min = 0, max = capped_delay))
 }
 
+#' @title Is the GPMap API available?
+#' @description Checks whether the GPMap API can be reached and is a version this
+#'   version of gpmapr supports, without raising an error. Useful before running
+#'   code that needs the API, for example in examples, vignettes or tests.
+#' @return `TRUE` if the API's health endpoint responds and its version is
+#'   supported, otherwise `FALSE`.
+#' @examples
+#' gpmap_available()
+#' @export
+gpmap_available <- function() {
+  response <- tryCatch(
+    httr::GET(paste0(getOption("gpmap_url"), "/health"), httr::timeout(10)),
+    error = function(e) NULL
+  )
+  if (is.null(response) || httr::status_code(response) >= 400) {
+    return(FALSE)
+  }
+  return(isTRUE(tryCatch(ensure_api_compatible(), error = function(e) FALSE)))
+}
+
 #' @title Select API
 #' @description Select the API to use
 #' @param api A character string specifying the API to use. Default is "production".
@@ -112,10 +221,12 @@ select_api <- function(api = "dev") {
 #' @title Get API Health
 #' @description Get the health status of the API
 #' @return A list containing the health status
+#' @examplesIf gpmap_available()
+#' health_api()$status
 #' @export
 health_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/health")
-  health <- api_get(url)
+  health <- api_get(url, check_version = FALSE)
   health <- httr::content(health, "text", encoding = "UTF-8")
   health <- jsonlite::fromJSON(health)
   return(health)
@@ -128,7 +239,7 @@ health_api <- function() {
 #' @noRd
 version_api <- function() {
   url <- paste0(getOption("gpmap_url"), "/v1/info/version")
-  version <- api_get(url)
+  version <- api_get(url, check_version = FALSE)
   version <- httr::content(version, "text", encoding = "UTF-8")
   version <- jsonlite::fromJSON(version)
   return(version$version)
@@ -500,10 +611,7 @@ ld_proxies_by_variant_id_api <- function(variant_ids) {
 ld_matrix_by_variant_api <- function(variants) {
   variants <- paste(variants, collapse = "&variants=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/matrix?variants=", variants)
-  ld_matrix <- api_get(url)
-  ld_matrix <- httr::content(ld_matrix, "text", encoding = "UTF-8")
-  ld_matrix <- jsonlite::fromJSON(ld_matrix)
-  return(ld_matrix)
+  return(get_ld_matrix(url))
 }
 
 #' @title Get LD Matrix by SNP ID API
@@ -514,6 +622,11 @@ ld_matrix_by_variant_api <- function(variants) {
 ld_matrix_by_variant_id_api <- function(variant_ids) {
   variant_ids <- paste(variant_ids, collapse = "&variant_ids=")
   url <- paste0(getOption("gpmap_url"), "/v1/ld/matrix?variant_ids=", variant_ids)
+  return(get_ld_matrix(url))
+}
+
+# An LD matrix response; `lds` is empty when none of the variants are stored as a lead and its proxy.
+get_ld_matrix <- function(url) {
   ld_matrix <- api_get(url)
   ld_matrix <- httr::content(ld_matrix, "text", encoding = "UTF-8")
   ld_matrix <- jsonlite::fromJSON(ld_matrix)
@@ -611,7 +724,7 @@ get_gwas_summary_stats_api <- function(gwas_id) {
 #' @param p_value_threshold The p-value threshold for the GWAS
 #' @param column_names A validated named list of column names, e.g. list(CHR = "chr", BP = "pos"...)
 #' @param email The email of the user
-#' @param category The category of the GWAS.  Only "continuous" and "categorical" are accepted.
+#' @param variable_type The type of variable the GWAS is of.  Only "continuous" and "categorical" are accepted.
 #' @param is_published Whether the GWAS is published
 #' @param doi The DOI of the GWAS
 #' @param should_be_added Whether the GWAS should be added to the API
@@ -626,7 +739,7 @@ upload_gwas_api <- function(file,
                             p_value_threshold,
                             column_names,
                             email,
-                            category,
+                            variable_type,
                             is_published = FALSE,
                             doi = NA,
                             should_be_added = FALSE,
@@ -644,7 +757,7 @@ upload_gwas_api <- function(file,
     reference_build = reference_build,
     email = email,
     name = name,
-    category = category,
+    variable_type = variable_type,
     is_published = is_published,
     doi = doi,
     should_be_added = should_be_added,

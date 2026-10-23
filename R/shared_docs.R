@@ -9,19 +9,34 @@
 #'   \item study_extraction_id: the id of the study extraction
 #'   \item variant_id: the id of the SNP
 #'   \item ld_block_id: the id of the LD block
+#'   \item h4_connectedness: the proportion of the pairs of studies in the group that colocalise
+#'     (posterior probability of H4, one shared causal variant, of at least 0.8)
+#'   \item h3_connectedness: the proportion of the pairs of studies in the group with a posterior probability
+#'     of H3 (two distinct causal variants) of at least 0.8
 #'   \item chr: the chromosome of the SNP
 #'   \item bp: the base pair position of the SNP
 #'   \item min_p: the minimum p-value related to the study_extraction_id
 #'   \item cis_trans: the cis/trans status of the SNP
 #'   \item ld_block: the LD block of the SNP
 #'   \item display_snp: the display SNP name
-#'   \item gene: the gene associated with the SNP
+#'   \item rsid: the rsID of the SNP
+#'   \item gene: the gene whose expression, splicing or protein level the study measures (for molecular QTLs)
 #'   \item gene_id: the id of the gene
+#'   \item situated_gene: the gene the measured site is in, for methylation studies (which have no `gene`)
+#'   \item situated_gene_id: the id of the situated gene
 #'   \item trait_id: the id of the trait
 #'   \item trait_name: the name of the trait
 #'   \item trait_category: the category of the trait
 #'   \item data_type: the data type of the trait
 #'   \item tissue: the tissue of the trait
+#'   \item cell_type: the cell type of the trait
+#'   \item source_id: the id of the source the study comes from
+#'   \item source_name: the name of the source the study comes from
+#'   \item source_url: a link to the study at its source
+#'   \item beta, se, p, eaf, imputed: (with `include_associations = TRUE`) the association of the study at the SNP
+#'   \item source, gwas_upload_id: (GWAS upload results only) whether the row is from an uploaded GWAS
+#'     ("upload", with the upload's id in `gwas_upload_id`) or already in the GPMap ("existing").  Identify a
+#'     study extraction by `source` and `study_extraction_id` together.
 #' }
 #' @keywords internal
 coloc_groups_doc <- function() {}
@@ -54,6 +69,12 @@ coloc_groups_doc <- function() {}
 #'   \item trait_category: the category of the trait
 #'   \item data_type: the data type of the trait
 #'   \item tissue: the tissue of the trait
+#'   \item beta, se, p, eaf, imputed: (with `include_associations = TRUE`) the study's association at the
+#'     study extraction's own lead variant
+#'   \item source, gwas_upload_id: (GWAS upload results only) whether the study extraction is from an
+#'     uploaded GWAS ("upload", with the upload's id in `gwas_upload_id`) or already in the GPMap
+#'     ("existing").  Upload and existing study extractions have separate ids, so identify a study
+#'     extraction by `source` and `id` together.
 #' }
 #' @keywords internal
 study_extractions_doc <- function() {}
@@ -93,6 +114,12 @@ rare_results_doc <- function() {}
 #' \itemize{
 #'   \item study_extraction_a_id: the id of the study extraction associated with this coloc pair
 #'   \item study_extraction_b_id: the id of the study extraction associated with this coloc pair
+#'   \item source_a, source_b: (GWAS upload results only) whether each study extraction is from an uploaded
+#'     GWAS ("upload") or already in the GPMap ("existing")
+#'   \item trait_name_a, data_type_a, tissue_a, gene_a: the trait name, data type, tissue and gene of
+#'     study extraction a (and the same with `_b` for study extraction b), joined from `study_extractions`.
+#'     Not added to the coloc pairs of `trait()`, whose endpoint doesn't return the study extractions
+#'     its pairs refer to.
 #'   \item ld_block_id: the id of the LD block
 #'   \item h3: the h3 value for this coloc pair
 #'   \item h4: the h4 value for this coloc pair
@@ -115,6 +142,26 @@ coloc_pairs_doc <- function() {}
 #'   \item eaf: the estimated allele frequency of the association
 #'   \item imputed: whether the association is imputed
 #' }
+#' Associations of variants a study did not report are placeholders in the GPMap (beta 0, se 1, p 1),
+#' and are returned with `beta`, `se`, `p` and `eaf` set to `NA` (and `imputed` TRUE).
+#' @section Which associations are stored:
+#' The GPMap does not store every study's association at every variant. It stores:
+#' \itemize{
+#'   \item at the variant of every coloc group and rare result: the association of every study with a study
+#'     extraction in that LD block, whether or not the study is in the group. A coloc group's variant can be
+#'     looked up across all of those studies.
+#'   \item at a study extraction's own lead variant (its `display_snp`): that study's association only.
+#' }
+#' So other studies have no association at a study extraction's lead variant, unless that variant is also the
+#' variant of a coloc group or rare result somewhere in the map. To compare studies at a locus, use the
+#' variant of their coloc group, not the study extractions' lead variants. Asking [associations()] for a
+#' variant and study with nothing stored returns no row for that pair.
+#'
+#' `trait(include_full_associations = TRUE)` returns the stored associations at the trait's coloc group, rare
+#' result and study extraction variants, for the trait's own studies and the studies that colocalise with
+#' it. Within those, the rules above apply: at its coloc groups' variants most of those studies have an
+#' association; at the lead variant of one of its study extractions that is in none of its coloc groups,
+#' usually only the trait's own study does.
 #' @keywords internal
 associations_doc <- function() {}
 
@@ -187,6 +234,7 @@ genes_in_region_doc <- function() {}
 #'   \item proxy_variant_id: the id of the variant SNP
 #'   \item ld_block_id: the id of the LD block
 #'   \item r: the r value between the lead and variant SNPs
+#'   \item rsq: the r-squared between the lead and variant SNPs, rounded to 2 decimal places
 #' }
 #' @keywords internal
 ld_doc <- function() {}
@@ -199,8 +247,20 @@ ld_doc <- function() {}
 #' \itemize{
 #'   \item gene_id: the id of the gene
 #'   \item gene: the name of the gene
-#'   \item : distinct_trait_categories the number of trait categories that the gene is associated with via coloc groups
-#'   \item : distinct_protein_coding_genes the number of genes that the gene is associated with via coloc groups
+#'   \item distinct_trait_categories: the number of distinct trait categories in the coloc groups the gene's own
+#'     QTLs are in
+#'     (the same as distinct_trait_categories_cis_trans_all)
+#'   \item distinct_protein_coding_genes: the number of distinct protein coding genes in the coloc groups the
+#'     gene's own QTLs are in
+#'     (the same as distinct_protein_coding_genes_cis_trans_all)
+#'   \item distinct_trait_categories_cis_gws, distinct_trait_categories_cis_all,
+#'     distinct_trait_categories_cis_trans_gws, distinct_trait_categories_cis_trans_all: the number of distinct
+#'     trait categories, counting only cis results (\code{_cis_}) or cis and trans results (\code{_cis_trans_}),
+#'     and only genome-wide significant study extractions, with p <= 5e-8 (\code{_gws}), or all of them
+#'     (\code{_all})
+#'   \item distinct_protein_coding_genes_cis_gws, distinct_protein_coding_genes_cis_all,
+#'     distinct_protein_coding_genes_cis_trans_gws, distinct_protein_coding_genes_cis_trans_all: the number of
+#'     distinct protein coding genes, with the same cis / cis_trans and gws / all variants
 #' }
 #' @keywords internal
 gene_pleiotropies_doc <- function() {}
@@ -212,9 +272,19 @@ gene_pleiotropies_doc <- function() {}
 #' It has the following columns:
 #' \itemize{
 #'   \item variant_id: the id of the SNP
-#'   \item snp: the name of the SNP
-#'   \item : distinct_trait_categories the number of trait categories that the SNP is associated with via coloc groups
-#'   \item : distinct_protein_coding_genes the number of genes that the SNP is associated with via coloc groups
+#'   \item display_snp: the display name of the SNP
+#'   \item distinct_trait_categories: the number of distinct trait categories in the coloc groups at the SNP
+#'     (the same as distinct_trait_categories_cis_trans_all)
+#'   \item distinct_protein_coding_genes: the number of distinct protein coding genes in the coloc groups at the SNP
+#'     (the same as distinct_protein_coding_genes_cis_trans_all)
+#'   \item distinct_trait_categories_cis_gws, distinct_trait_categories_cis_all,
+#'     distinct_trait_categories_cis_trans_gws, distinct_trait_categories_cis_trans_all: the number of distinct
+#'     trait categories, counting only cis results (\code{_cis_}) or cis and trans results (\code{_cis_trans_}),
+#'     and only genome-wide significant study extractions, with p <= 5e-8 (\code{_gws}), or all of them
+#'     (\code{_all})
+#'   \item distinct_protein_coding_genes_cis_gws, distinct_protein_coding_genes_cis_all,
+#'     distinct_protein_coding_genes_cis_trans_gws, distinct_protein_coding_genes_cis_trans_all: the number of
+#'     distinct protein coding genes, with the same cis / cis_trans and gws / all variants
 #' }
 #' @keywords internal
 variant_pleiotropies_doc <- function() {}
