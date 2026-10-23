@@ -56,8 +56,8 @@ trait id. When supplied, \code{\link[=module_rg]{module_rg()}} is run on every l
 returned as \code{module_rg}. Also required to build the locus bridge for any
 pair involving an uploaded GWAS trait: its own coloc_group_id numbering is
 private to that upload (see \code{.needs_locus_bridge()}), so loci are matched
-first by the upload's own coloc record of the other trait
-(\code{existing_study_extraction_id}), then by exact \code{variant_id}, then by
+first by the upload's own coloc record of the other trait (its rows with
+\code{source == "existing"} and their \code{study_extraction_id}), then by exact \code{variant_id}, then by
 \code{ld_proxies()} LD looked up from both traits' leads.}
 
 \item{ld_proxies_fn}{Function used to look up LD proxies for the locus

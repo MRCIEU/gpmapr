@@ -18,3 +18,9 @@ Invisibly, a list containing the API response message
 Permanently delete a GWAS upload and all of its results and files.
 The email must match the one used for the upload, and uploads that are still processing cannot be deleted.
 }
+\examples{
+\dontrun{
+# Permanently deletes an upload; needs the email address used to upload it.
+delete_gwas("00000000-0000-0000-0000-000000000000", email = "you@example.com")
+}
+}

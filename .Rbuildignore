@@ -6,5 +6,17 @@
 ^\.lintr$
 ^doc$
 ^Meta$
+^CITATION\.cff$
+^cran-comments\.md$
+^RELEASING\.md$
+^NEWS\.Rmd$
+^\.claude$
+^\.cursorrules$
+^\.Rprofile$
 ^data-raw$
 ^article$
+^vignettes/.*\.Rmd\.orig$
+^vignettes/precompile\.R$
+_cache$
+^vignettes/.*\.html$
+^vignettes/.*\.csv$

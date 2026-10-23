@@ -9,13 +9,51 @@ get_gwas(gwas_id, include_associations = FALSE, include_summary_stats = FALSE)
 \arguments{
 \item{gwas_id}{The ID of the GWAS}
 
-\item{include_associations}{Whether to include associations}
+\item{include_associations}{Whether to add each study's association at its variant (beta, se, p, eaf, imputed)
+to the coloc_groups and study_extractions}
 
 \item{include_summary_stats}{Whether to include summary statistics}
 }
 \value{
-A list containing the GWAS information
+A list containing the GWAS information:
+\itemize{
+\item trait: the upload's details, e.g. its \code{id}, \code{guid}, \code{name} and \code{status}
+\item study_extractions: the upload's study extractions and the existing study extractions its coloc
+groups and pairs refer to, in one dataframe.  See below.
+\item coloc_groups: the colocalisation groups the upload's study extractions are in, one row per study
+extraction in each group.  See below.
+\item coloc_pairs: one row per colocalising pair of study extractions.  Each side (\code{a}, \code{b}) is
+\code{study_extraction_a_id} with \code{source_a}, and \code{trait_name_a}, \code{data_type_a}, \code{tissue_a} and \code{gene_a}
+describe it (and the same for \code{b}).
+}
 }
 \description{
 Get a GWAS from the API
+}
+\section{Upload and existing rows}{
+
+The rows of \code{study_extractions} and \code{coloc_groups} (and each side of \code{coloc_pairs}) come either from an
+uploaded GWAS or from a study already in the GPMap, which are kept in separate databases with their own
+ids:
+\itemize{
+\item \code{source} is \code{"upload"} or \code{"existing"}.  A study extraction is identified by \code{source} together
+with its id (\code{id} in \code{study_extractions}, \code{study_extraction_id} in \code{coloc_groups}), as an upload and
+an existing study extraction can have the same id.  Join on both.
+\item \code{gwas_upload_id} is the id of the upload a row comes from, and \code{NA} for existing rows.  Rows from
+another upload this one was compared with (\code{compare_with_upload_guids}) have that upload's id.
+\item The upload's own rows are those with \code{source == "upload" & gwas_upload_id == result$trait$id}.
+\item Upload rows are named after their upload (\code{trait_name}), have \code{data_type} "Phenotype", and have
+no \code{trait_id} or \code{study_id}; their \code{study} is the upload's GUID.
+}
+To line up the upload's effects with another trait's, see \code{\link[=compare_upload]{compare_upload()}}.
+
+Associations of variants a study did not report are placeholders in the GPMap, and are returned with
+\code{beta}, \code{se}, \code{p} and \code{eaf} set to \code{NA} (and \code{imputed} TRUE).
+}
+
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+gwas <- get_gwas("7a289615-c1b4-91f3-3d97-887f60de9155")
+gwas$trait$name
+\dontshow{\}) # examplesIf}
 }

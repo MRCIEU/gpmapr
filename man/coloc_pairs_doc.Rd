@@ -16,6 +16,12 @@ It has the following columns:
 \itemize{
 \item study_extraction_a_id: the id of the study extraction associated with this coloc pair
 \item study_extraction_b_id: the id of the study extraction associated with this coloc pair
+\item source_a, source_b: (GWAS upload results only) whether each study extraction is from an uploaded
+GWAS ("upload") or already in the GPMap ("existing")
+\item trait_name_a, data_type_a, tissue_a, gene_a: the trait name, data type, tissue and gene of
+study extraction a (and the same with \verb{_b} for study extraction b), joined from \code{study_extractions}.
+Not added to the coloc pairs of \code{trait()}, whose endpoint doesn't return the study extractions
+its pairs refer to.
 \item ld_block_id: the id of the LD block
 \item h3: the h3 value for this coloc pair
 \item h4: the h4 value for this coloc pair

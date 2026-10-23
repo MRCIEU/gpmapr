@@ -18,3 +18,8 @@ A list containing the SNP pleiotropies
 \description{
 Get all SNP pleiotropies from the API
 }
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+head(get_all_variant_pleiotropies())
+\dontshow{\}) # examplesIf}
+}

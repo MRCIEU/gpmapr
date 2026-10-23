@@ -1127,7 +1127,12 @@ parse_blocks <- function(blocks) {
     stringsAsFactors = FALSE
   ))
 }
-upload_blocks <- parse_blocks(target$upload_study_extractions$ld_block)
+upload_extractions <- target$study_extractions
+upload_extractions <- upload_extractions[
+  upload_extractions$source == "upload" & upload_extractions$gwas_upload_id %in% target$trait$id, ,
+  drop = FALSE
+]
+upload_blocks <- parse_blocks(upload_extractions$ld_block)
 matrix_snps <- cg |>
   dplyr::filter(as.character(variant_id) %in% colnames(X)) |>
   dplyr::transmute(

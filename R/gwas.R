@@ -2,8 +2,40 @@
 #' @description Get a GWAS from the API
 #' @param gwas_id The ID of the GWAS
 #' @param include_summary_stats Whether to include summary statistics
-#' @param include_associations Whether to include associations
-#' @return A list containing the GWAS information
+#' @param include_associations Whether to add each study's association at its variant (beta, se, p, eaf, imputed)
+#'   to the coloc_groups and study_extractions
+#' @return A list containing the GWAS information:
+#' \itemize{
+#'   \item trait: the upload's details, e.g. its `id`, `guid`, `name` and `status`
+#'   \item study_extractions: the upload's study extractions and the existing study extractions its coloc
+#'     groups and pairs refer to, in one dataframe.  See below.
+#'   \item coloc_groups: the colocalisation groups the upload's study extractions are in, one row per study
+#'     extraction in each group.  See below.
+#'   \item coloc_pairs: one row per colocalising pair of study extractions.  Each side (`a`, `b`) is
+#'     `study_extraction_a_id` with `source_a`, and `trait_name_a`, `data_type_a`, `tissue_a` and `gene_a`
+#'     describe it (and the same for `b`).
+#' }
+#' @section Upload and existing rows:
+#' The rows of `study_extractions` and `coloc_groups` (and each side of `coloc_pairs`) come either from an
+#' uploaded GWAS or from a study already in the GPMap, which are kept in separate databases with their own
+#' ids:
+#' \itemize{
+#'   \item `source` is `"upload"` or `"existing"`.  A study extraction is identified by `source` together
+#'     with its id (`id` in `study_extractions`, `study_extraction_id` in `coloc_groups`), as an upload and
+#'     an existing study extraction can have the same id.  Join on both.
+#'   \item `gwas_upload_id` is the id of the upload a row comes from, and `NA` for existing rows.  Rows from
+#'     another upload this one was compared with (`compare_with_upload_guids`) have that upload's id.
+#'   \item The upload's own rows are those with `source == "upload" & gwas_upload_id == result$trait$id`.
+#'   \item Upload rows are named after their upload (`trait_name`), have `data_type` "Phenotype", and have
+#'     no `trait_id` or `study_id`; their `study` is the upload's GUID.
+#' }
+#' To line up the upload's effects with another trait's, see [compare_upload()].
+#'
+#' Associations of variants a study did not report are placeholders in the GPMap, and are returned with
+#' `beta`, `se`, `p` and `eaf` set to `NA` (and `imputed` TRUE).
+#' @examplesIf gpmap_available()
+#' gwas <- get_gwas("7a289615-c1b4-91f3-3d97-887f60de9155")
+#' gwas$trait$name
 #' @export
 get_gwas <- function(gwas_id, include_associations = FALSE, include_summary_stats = FALSE) {
   gwas_info <- get_gwas_api(
@@ -11,6 +43,7 @@ get_gwas <- function(gwas_id, include_associations = FALSE, include_summary_stat
     include_summary_stats = include_summary_stats,
     include_associations = include_associations
   )
+  gwas_info <- fold_upload_associations(gwas_info)
   gwas_info <- cleanup_api_object(gwas_info)
   return(gwas_info)
 }
@@ -26,7 +59,7 @@ get_gwas <- function(gwas_id, include_associations = FALSE, include_summary_stat
 #' A named list of column names in the format of: list(CHR = "chr", BP = "pos"...).
 #' Accepted names are SNP, RSID, CHR, BP, EA, OA, P, EAF, BETA, SE, OR, OR_LB (or LB) and OR_UB (or UB).
 #' @param email The email of the user
-#' @param category The category of the GWAS.  Only "continuous" and "categorical" are accepted.
+#' @param variable_type The type of variable the GWAS is of.  Only "continuous" and "categorical" are accepted.
 #' @param is_published Whether the GWAS is published
 #' @param doi The DOI of the GWAS
 #' @param should_be_added Whether the GWAS should be added to the API
@@ -47,14 +80,24 @@ get_gwas <- function(gwas_id, include_associations = FALSE, include_summary_stat
 #' @param or_ub_col The name of the odds ratio upper confidence bound column
 #' @param snp_col The name of the SNP identifier column (optional)
 #' @param rsid_col The name of the rsID column (optional)
+#' @param category Deprecated, use `variable_type` instead.
 #' @return A list containing the GWAS information, including the `guid` used to fetch results
+#' @examples
+#' \dontrun{
+#' # Uploads summary statistics to the GPMap server; needs an email address.
+#' result <- upload_gwas(
+#'   "my_gwas.tsv", name = "My GWAS", email = "you@example.com", sample_size = 10000,
+#'   chr_col = "chr", bp_col = "pos", ea_col = "ea", oa_col = "oa",
+#'   p_col = "p", beta_col = "beta", se_col = "se"
+#' )
+#' }
 #' @export
 upload_gwas <- function(file,
                         name,
                         p_value_threshold = 5e-8,
                         column_names = NULL,
                         email = NA,
-                        category = "continuous",
+                        variable_type = "continuous",
                         is_published = FALSE,
                         doi = NA,
                         should_be_added = FALSE,
@@ -74,14 +117,21 @@ upload_gwas <- function(file,
                         or_lb_col = NULL,
                         or_ub_col = NULL,
                         snp_col = NULL,
-                        rsid_col = NULL) {
+                        rsid_col = NULL,
+                        category = NULL) {
+  if (!is.null(category)) {
+    warning("`category` is deprecated, use `variable_type` instead", call. = FALSE)
+    variable_type <- category
+  }
 
   if (is.na(file) || !file.exists(file) || file.info(file)$size > 1024^3) {
     stop("file must be a valid file and less than 1GB")
   }
   if (is.na(name)) stop("name is required")
   if (is.na(email)) stop("email is required")
-  if (is.na(category) || !category %in% c("continuous", "categorical")) stop("category is required")
+  if (length(variable_type) != 1 || is.na(variable_type) || !variable_type %in% c("continuous", "categorical")) {
+    stop("variable_type must be \"continuous\" or \"categorical\"")
+  }
   if (is.na(ancestry) || !ancestry %in% c("EUR")) stop("ancestry is required")
   if (is.na(reference_build) || !reference_build %in% c("GRCh37", "GRCh38")) stop("reference_build is required")
   if (is.na(p_value_threshold) || !is.numeric(p_value_threshold) || p_value_threshold > 1e-5) {
@@ -109,7 +159,7 @@ upload_gwas <- function(file,
     p_value_threshold,
     column_names,
     email,
-    category,
+    variable_type,
     is_published,
     doi,
     should_be_added,
@@ -127,6 +177,11 @@ upload_gwas <- function(file,
 #' @param gwas_id The GUID of the GWAS upload
 #' @param email The email address used for the upload
 #' @return Invisibly, a list containing the API response message
+#' @examples
+#' \dontrun{
+#' # Permanently deletes an upload; needs the email address used to upload it.
+#' delete_gwas("00000000-0000-0000-0000-000000000000", email = "you@example.com")
+#' }
 #' @export
 delete_gwas <- function(gwas_id, email) {
   if (missing(gwas_id) || length(gwas_id) != 1 || is.na(gwas_id) || !is_guid(gwas_id)) {

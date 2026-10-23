@@ -1,6 +1,7 @@
 api_to_package_version <- list(
   "1.0.0" = c("0.0.0.9000"),
-  "1.0.1" = c("0.0.1.0", "0.0.2.0")
+  "1.0.1" = c("0.0.1.0", "0.0.2.0", "0.1.0"),
+  "1.1.0" = c("1.0.0")
 )
 
 #' Check if a string is a GUID
@@ -19,103 +20,151 @@ is_guid <- function(id) {
 #' @param coloc_groups A dataframe of coloc groups
 #' @param rare_results A dataframe of rare results
 #' @param associations A dataframe of associations
-#' @return An updated list of coloc info with associations merged in
+#' @param study_extractions A dataframe of study extractions
+#' @return A list of `coloc_groups`, `rare_results` and `study_extractions`, each with the association
+#'   of its study at its variant joined on
 #' @keywords internal
 #' @noRd
-merge_associations <- function(coloc_groups, rare_results, associations) {
-  if (is.null(associations)) return(coloc_groups = coloc_groups, rare_results = rare_results)
-
-  join_keys <- c("study_id", "variant_id")
-  if (!all(join_keys %in% colnames(associations))) {
-    return(list(coloc_groups = coloc_groups, rare_results = rare_results))
-  }
-  associations <- dplyr::distinct(associations, dplyr::across(dplyr::all_of(join_keys)), .keep_all = TRUE)
-
-  if (is.data.frame(coloc_groups) && nrow(coloc_groups) > 0) {
-    coloc_groups <- dplyr::left_join(coloc_groups, associations, by = join_keys)
-  }
-  if (is.data.frame(rare_results) && nrow(rare_results) > 0) {
-    rare_results <- dplyr::left_join(rare_results, associations, by = join_keys)
-  }
-
-  return(list(coloc_groups = coloc_groups, rare_results = rare_results))
+merge_associations <- function(coloc_groups, rare_results, associations, study_extractions = NULL) {
+  return(list(
+    coloc_groups = join_associations(coloc_groups, associations),
+    rare_results = join_associations(rare_results, associations),
+    study_extractions = join_associations(study_extractions, associations)
+  ))
 }
 
-#' Merge associations into coloc info for GWAS upload results
+# Association columns joined onto coloc groups, rare results and study extractions.
+association_value_columns <- c("beta", "se", "p", "eaf", "imputed")
+
+#' Join associations onto a table by study and variant
 #'
-#' Joins associations using study_id when study_id is not NA, or existing_study_id
-#' when existing_study_id is not NA. GWAS uploads do not have rare results.
-#'
-#' @param coloc_groups A dataframe of coloc groups
+#' @param table A dataframe with a study id column and `variant_id`
 #' @param associations A dataframe of associations
-#' @return Coloc groups with associations merged in
+#' @param study_key The study id column of `table`, named by the matching column of `associations`
+#' @return `table` with the association columns joined on, or unchanged when either has no rows or
+#'   lacks the join columns
 #' @keywords internal
 #' @noRd
-merge_gwas_upload_associations <- function(coloc_groups, associations) {
-  if (is.null(associations)) return(coloc_groups)
-  if (!is.data.frame(coloc_groups) || nrow(coloc_groups) == 0) return(coloc_groups)
-
-  study_rows <- coloc_groups[!is.na(coloc_groups[["study_id"]]), , drop = FALSE]
-  existing_rows <- coloc_groups[
-    is.na(coloc_groups[["study_id"]]) & !is.na(coloc_groups[["existing_study_id"]]),
-    , drop = FALSE
-  ]
-  other_rows <- coloc_groups[
-    is.na(coloc_groups[["study_id"]]) & is.na(coloc_groups[["existing_study_id"]]),
-    , drop = FALSE
-  ]
-  parts <- list()
-
-  assoc_cols <- c("beta", "se", "p", "eaf", "imputed")
-  assoc_cols <- intersect(assoc_cols, colnames(associations))
-
-  if (nrow(study_rows) > 0 && "study_id" %in% colnames(associations)) {
-    assoc <- dplyr::distinct(associations, dplyr::across(dplyr::all_of(c("study_id", "variant_id"))), .keep_all = TRUE)
-    assoc <- dplyr::select(assoc, dplyr::all_of(c("study_id", "variant_id", assoc_cols)))
-    parts[[length(parts) + 1L]] <- dplyr::left_join(study_rows, assoc, by = c("study_id", "variant_id"))
+join_associations <- function(table, associations, study_key = c(study_id = "study_id")) {
+  table_study <- unname(study_key)
+  association_study <- names(study_key)
+  if (!is.data.frame(table) || nrow(table) == 0 || !is.data.frame(associations) || nrow(associations) == 0) {
+    return(table)
   }
-  if (nrow(existing_rows) > 0 && "existing_study_id" %in% colnames(associations)) {
-    assoc <- dplyr::distinct(
-      associations,
-      dplyr::across(dplyr::all_of(c("existing_study_id", "variant_id"))),
-      .keep_all = TRUE
-    )
-    assoc <- dplyr::select(assoc, dplyr::all_of(c("existing_study_id", "variant_id", assoc_cols)))
-    parts[[length(parts) + 1L]] <- dplyr::left_join(existing_rows, assoc, by = c("existing_study_id", "variant_id"))
+  if (!all(c(table_study, "variant_id") %in% names(table)) ||
+        !all(c(association_study, "variant_id") %in% names(associations))) {
+    return(table)
   }
-  if (nrow(other_rows) > 0) {
-    parts[[length(parts) + 1L]] <- other_rows
-  }
+  associations <- mask_padded_associations(associations)
+  value_columns <- setdiff(intersect(association_value_columns, names(associations)), names(table))
+  associations <- associations[!is.na(associations[[association_study]]), , drop = FALSE]
+  associations <- associations[, c(association_study, "variant_id", value_columns), drop = FALSE]
+  associations <- dplyr::distinct(
+    associations, dplyr::across(dplyr::all_of(c(association_study, "variant_id"))), .keep_all = TRUE
+  )
+  by <- c(stats::setNames(association_study, table_study), variant_id = "variant_id")
+  return(dplyr::left_join(table, associations, by = by))
+}
 
-  if (length(parts) > 0) {
-    return(dplyr::bind_rows(parts))
+#' Fold an api object's associations into its tables
+#'
+#' Joins `associations` onto `coloc_groups`, `rare_results` and `study_extractions`, then drops it.
+#'
+#' @param api_object A list of api info
+#' @return `api_object` without `associations`
+#' @keywords internal
+#' @noRd
+fold_associations <- function(api_object) {
+  merged <- merge_associations(
+    api_object$coloc_groups, api_object$rare_results, api_object$associations, api_object$study_extractions
+  )
+  for (name in names(merged)) {
+    if (!is.null(merged[[name]])) api_object[[name]] <- merged[[name]]
   }
-  return(coloc_groups)
+  api_object$associations <- NULL
+  return(api_object)
+}
+
+#' Fold a GWAS upload's associations into its tables
+#'
+#' Joins `associations` onto the upload's `coloc_groups` and `study_extractions`, then drops it.  Rows
+#' are keyed by `source`: existing studies by `study_id`, the uploads' own studies by `gwas_upload_id`.
+#'
+#' @param api_object A list of GWAS upload info, as returned by the api
+#' @return `api_object` without `associations`
+#' @keywords internal
+#' @noRd
+fold_upload_associations <- function(api_object) {
+  associations <- api_object$associations
+  if (is.data.frame(associations) && nrow(associations) > 0) {
+    api_object$coloc_groups <- join_upload_associations(api_object$coloc_groups, associations)
+    api_object$study_extractions <- join_upload_associations(api_object$study_extractions, associations)
+  }
+  api_object$associations <- NULL
+  return(api_object)
+}
+
+# Join GWAS upload associations onto a table with a `source` column, keeping its row order.
+join_upload_associations <- function(table, associations) {
+  if (!is.data.frame(table) || nrow(table) == 0 || !"source" %in% names(table)) {
+    return(table)
+  }
+  table$.row <- seq_len(nrow(table))
+  is_upload <- table$source %in% "upload"
+  existing <- join_associations(
+    table[!is_upload, , drop = FALSE], associations[associations$source %in% "existing", , drop = FALSE]
+  )
+  upload <- join_associations(
+    table[is_upload, , drop = FALSE], associations[associations$source %in% "upload", , drop = FALSE],
+    c(gwas_upload_id = "gwas_upload_id")
+  )
+  table <- dplyr::bind_rows(existing, upload)
+  table <- table[order(table$.row), , drop = FALSE]
+  table$.row <- NULL
+  rownames(table) <- NULL
+  return(table)
+}
+
+#' Treat placeholder associations as missing
+#'
+#' The GPMap pipeline stores `beta = 0, se = 1, p = 1` (with `imputed = TRUE`) for variants a study
+#' did not report, with `eaf` taken from the LD reference panel.  These rows are kept, with `beta`,
+#' `se`, `p` and `eaf` set to `NA`.
+#'
+#' @param associations A dataframe of associations
+#' @return `associations` with placeholder values set to `NA`
+#' @keywords internal
+#' @noRd
+mask_padded_associations <- function(associations) {
+  if (!is.data.frame(associations) || !all(c("beta", "se") %in% names(associations))) {
+    return(associations)
+  }
+  padded <- associations$beta %in% 0 & associations$se %in% 1
+  if ("p" %in% names(associations)) padded <- padded & associations$p %in% 1
+  if ("imputed" %in% names(associations)) padded <- padded & associations$imputed %in% TRUE
+  for (column in intersect(c("beta", "se", "p", "eaf"), names(associations))) {
+    associations[[column]][padded] <- NA
+  }
+  return(associations)
 }
 
 
 #' Attach GWAS-upload associations and a stable trait_id
 #'
-#' Upload coloc rows are keyed by the upload's own `study_id`, not the GUID used
-#' to fetch them. Stamp that GUID onto the upload's own rows so downstream
-#' filters of the form `trait_id == <user id>` work for numeric traits and uploads.
+#' Folds the upload's associations into its tables (see `fold_upload_associations()`), then stamps the GUID
+#' used to fetch the upload onto its own coloc_groups rows' `trait_id`, so downstream filters of the form
+#' `trait_id == <user id>` work for numeric traits and uploads alike.
 #'
 #' @param upload A GWAS upload result from `get_gwas_api()`.
 #' @param guid The GUID used to fetch the upload.
-#' @param include_associations Whether associations were requested.
-#' @return The upload with associations merged and `trait_id` stamped.
+#' @return The upload with associations folded in and `trait_id` stamped.
 #' @keywords internal
 #' @noRd
-.decorate_gwas_upload <- function(upload, guid, include_associations = FALSE) {
+.decorate_gwas_upload <- function(upload, guid) {
   if (is.null(upload)) {
     return(upload)
   }
-  if (isTRUE(include_associations) && !is.null(upload$associations)) {
-    upload$coloc_groups <- merge_gwas_upload_associations(
-      upload$coloc_groups,
-      upload$associations
-    )
-  }
+  upload <- fold_upload_associations(upload)
 
   trait_name <- NULL
   if (!is.null(upload$trait)) {
@@ -128,6 +177,7 @@ merge_gwas_upload_associations <- function(coloc_groups, associations) {
 
   upload$coloc_groups <- .stamp_gwas_upload_trait_id(
     coloc_groups = upload$coloc_groups,
+    upload_id = upload$trait$id,
     lookup_id = guid,
     trait_name = trait_name
   )
@@ -137,18 +187,19 @@ merge_gwas_upload_associations <- function(coloc_groups, associations) {
 
 #' Stamp a lookup id onto a GWAS upload's own coloc_groups rows
 #'
-#' The upload's own rows are those with a `study_id` and no `existing_study_id`;
-#' rows from existing GPMap studies keep their numeric `trait_id`. The API sets
-#' `gwas_upload_id` on every row of an upload result, background studies
-#' included, so it cannot identify the upload's own rows.
+#' The upload's own rows are those with `source == "upload"` and the upload's own `gwas_upload_id` (rows from
+#' an upload it was compared with have that upload's id); rows from existing GPMap studies keep their numeric
+#' `trait_id`.
 #'
 #' @param coloc_groups A coloc_groups dataframe.
+#' @param upload_id The upload's own id (`trait$id` of the upload result).
 #' @param lookup_id The id callers use (usually the upload GUID).
 #' @param trait_name Optional display name for own rows missing `trait_name`.
 #' @return `coloc_groups` with `trait_id` set on the upload's own rows.
 #' @keywords internal
 #' @noRd
 .stamp_gwas_upload_trait_id <- function(coloc_groups,
+                                        upload_id,
                                         lookup_id,
                                         trait_name = NULL) {
   if (!is.data.frame(coloc_groups) || nrow(coloc_groups) == 0) {
@@ -160,8 +211,8 @@ merge_gwas_upload_associations <- function(coloc_groups, associations) {
   coloc_groups$trait_id <- as.character(coloc_groups$trait_id)
 
   own_rows <- rep(FALSE, nrow(coloc_groups))
-  if ("study_id" %in% names(coloc_groups) && "existing_study_id" %in% names(coloc_groups)) {
-    own_rows <- !is.na(coloc_groups$study_id) & is.na(coloc_groups$existing_study_id)
+  if (all(c("source", "gwas_upload_id") %in% names(coloc_groups)) && !is.null(upload_id)) {
+    own_rows <- coloc_groups$source %in% "upload" & coloc_groups$gwas_upload_id %in% upload_id
   }
   coloc_groups$trait_id[own_rows] <- as.character(lookup_id)
 
@@ -200,11 +251,81 @@ create_source_url <- function(study_name) {
 #' Clean up an api object
 #'
 #' @param api_object A list of api info, as returned by the api
-#' @return An updated list of api info with null, empty, and NA elements removed
+#' @return An updated list of api info with null and empty elements removed, and coloc pairs
+#'   described (see `add_coloc_pair_details()`)
 #' @keywords internal
 #' @noRd
 cleanup_api_object <- function(api_object) {
   api_object <- api_object[!sapply(api_object, is.null)]
   api_object <- api_object[!sapply(api_object, length) == 0]
+  api_object <- add_coloc_pair_details(api_object)
   return(api_object)
+}
+
+# Study extraction columns copied onto each side of a coloc pair, as <column>_a and <column>_b.
+coloc_pair_detail_columns <- c("trait_name", "data_type", "tissue", "gene")
+
+#' Add the details of each side of a coloc pair
+#'
+#' Joins the study extraction referred to by each side of a coloc pair onto it, so each pair says which
+#' traits it links without a manual join.  A side is identified by `study_extraction_*_id` together with
+#' `source_*` (GWAS upload results, where upload and existing study extractions have separate ids), or by
+#' `study_extraction_*_id` alone (other results, where every study extraction is an existing one).
+#'
+#' @param api_object A list of api info containing `coloc_pairs` and the `study_extractions` it refers to
+#' @return `api_object` with `<column>_a` / `<column>_b` columns added to `coloc_pairs` after its id
+#'   columns, `NA` where a study extraction isn't in the response
+#' @keywords internal
+#' @noRd
+add_coloc_pair_details <- function(api_object) {
+  pairs <- api_object$coloc_pairs
+  if (!is.data.frame(pairs) || nrow(pairs) == 0) {
+    return(api_object)
+  }
+  extractions <- as_table(api_object$study_extractions)
+  extraction_key <- paste(row_sources(extractions), extractions$id)
+
+  new_columns <- c()
+  for (side in c("a", "b")) {
+    pair_id <- pairs[[paste0("study_extraction_", side, "_id")]]
+    if (is.null(pair_id)) next
+    pair_source <- pairs[[paste0("source_", side)]]
+    if (is.null(pair_source)) pair_source <- rep("existing", nrow(pairs))
+    row <- match(paste(pair_source, pair_id), extraction_key)
+    details <- lapply(coloc_pair_detail_columns, function(column) {
+      if (!column %in% names(extractions)) {
+        return(rep(NA, nrow(pairs)))
+      }
+      return(extractions[[column]][row])
+    })
+    names(details) <- paste0(coloc_pair_detail_columns, "_", side)
+    pairs[names(details)] <- details
+    new_columns <- c(new_columns, names(details))
+  }
+
+  id_columns <- grep("^(study_extraction_[ab]_id|source_[ab])$", names(pairs), value = TRUE)
+  if (length(id_columns) > 0 && length(new_columns) > 0) {
+    pairs <- dplyr::relocate(pairs, dplyr::all_of(new_columns), .after = dplyr::all_of(utils::tail(id_columns, 1)))
+  }
+  api_object$coloc_pairs <- pairs
+  return(api_object)
+}
+
+# The source of each row of a table: its `source` column, or "existing" for tables without one.
+row_sources <- function(table) {
+  if ("source" %in% names(table)) {
+    return(table$source)
+  }
+  return(rep("existing", nrow(table)))
+}
+
+# A data frame from an api element that may be a data frame, a list of data frames or NULL.
+as_table <- function(x) {
+  if (is.data.frame(x)) {
+    return(x)
+  }
+  if (is.list(x) && length(x) > 0 && all(vapply(x, is.data.frame, logical(1)))) {
+    return(dplyr::bind_rows(x))
+  }
+  return(data.frame())
 }

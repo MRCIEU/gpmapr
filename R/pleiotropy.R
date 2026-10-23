@@ -7,6 +7,8 @@
 #'     \item distinct_trait_categories: the number of trait categories that the gene is associated with via coloc groups
 #'     \item distinct_protein_coding_genes: the number of genes that the gene is associated with via coloc groups
 #'   }
+#' @examplesIf gpmap_available()
+#' head(get_all_gene_pleiotropies())
 #' @export
 get_all_gene_pleiotropies <- function() {
   gene_pleiotropies <- gene_pleiotropies_api()
@@ -22,6 +24,8 @@ get_all_gene_pleiotropies <- function() {
 #'     \item distinct_trait_categories: the number of trait categories that the SNP is associated with via coloc groups
 #'     \item distinct_protein_coding_genes: the number of genes that the SNP is associated with via coloc groups
 #'   }
+#' @examplesIf gpmap_available()
+#' head(get_all_variant_pleiotropies())
 #' @export
 get_all_variant_pleiotropies <- function() {
   variant_pleiotropies <- variant_pleiotropies_api()

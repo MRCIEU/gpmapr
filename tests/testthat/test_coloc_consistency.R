@@ -1,39 +1,12 @@
 library(testthat)
 
-test_that("health() returns expected output", {
-  result <- health_api()
-  expect_type(result, "list")
-  expect_true(result$status %in% c("healthy", "unhealthy"))
-})
+# Tests of the coloc-consistency research functions (EBMF, enrichment, pathways, pleiotropy matrices,
+# GWAS-upload stamping). The pathway tests call the GPMap API and skip without it (helper-live-api.R).
 
-test_that("search_gpmap() returns expected output", {
-  result <- search_gpmap("haemoglobin")
-  expect_type(result, "list")
-  expect_true(nrow(result) > 0)
-  expected_names <- c(
-    "call", "name", "type", "type_id", "num_coloc_groups",
-    "num_coloc_studies", "num_rare_results", "num_study_extractions"
-  )
-  expect_true(all(expected_names %in% names(result)))
-})
-
-test_that("trait() returns expected output", {
-  trait_id <- 5020
-  result <- trait(trait_id)
-  expect_type(result, "list")
-  expect_true(result$trait$id == trait_id)
-  expect_true(nrow(result$coloc_groups) > 0)
-})
-
-test_that("trait() returns full_associations when requested", {
-  trait_id <- 5020
-  result <- trait(trait_id, include_full_associations = TRUE)
-  expect_type(result, "list")
-  expect_true(is.data.frame(result$full_associations))
-  expect_true(nrow(result$full_associations) > 0)
-  expected_names <- c("variant_id", "study_id", "beta", "se", "p", "eaf", "imputed")
-  expect_true(all(expected_names %in% names(result$full_associations)))
-})
+pleiotropy_matrix_for <- function(trait_id, coloc_groups) {
+  locus_data <- gpmapr:::.prepare_pleiotropy_locus_data(trait_id, coloc_groups)
+  return(gpmapr:::.finalize_pleiotropy_from_locus(locus_data, as.character(trait_id)))
+}
 
 test_that("compress_effect_matrix() soft-compresses extremes without hard clip", {
   x <- matrix(
@@ -53,82 +26,25 @@ test_that("compress_effect_matrix() soft-compresses extremes without hard clip",
   expect_gt(abs(y_gentle[1, 2]), abs(y[1, 2]))
 })
 
-test_that("variant() returns expected output", {
-  variant_id <- 5553693
-  result <- variant(variant_id)
-  expect_type(result, "list")
-  expect_true(result$variant$id == variant_id)
-  expect_true(nrow(result$coloc_groups) > 0)
-})
-
-test_that("gene() returns expected output", {
-  gene_id <- "WNT7B"
-  result <- gene(gene_id)
-  expect_type(result, "list")
-  expect_true(result$gene$gene == gene_id)
-  expect_true(nrow(result$coloc_groups) > 0)
-})
-
-test_that("associations() returns expected output", {
-  variant_ids <- c(80750)
-  study_ids <- c(5020, 4870)
-  result <- associations(variant_ids, study_ids)
-  expect_type(result, "list")
-  expect_true(all(result$variant_id %in% variant_ids))
-  expect_true(all(result$study_id %in% study_ids))
-})
-
-test_that("get_all_gene_pleiotropies() returns expected output", {
-  result <- get_all_gene_pleiotropies()
-  expect_type(result, "list")
-  expect_true(nrow(result) > 0)
-})
-
-test_that("get_all_variant_pleiotropies() returns expected output", {
-  result <- get_all_variant_pleiotropies()
-  expect_type(result, "list")
-  expect_true(nrow(result) > 0)
-})
-
-test_that("all_genes() returns expected output", {
-  result <- all_genes()
-  expect_type(result, "list")
-  expect_true(nrow(result) > 0)
-})
-
-test_that("all_traits() returns expected output", {
-  result <- all_traits()
-  expect_type(result, "list")
-  expect_true(nrow(result) > 0)
-})
-
-test_that("traits(trait_ids) returns expected output", {
-  trait_ids <- c(4405, 4872)
-  result <- traits(trait_ids = trait_ids, include_associations = TRUE)
-  expect_type(result, "list")
-  expect_true(all(result$traits$id %in% trait_ids))
-  expect_true(nrow(result$coloc_groups) > 0)
-  expect_true(!is.null(result$study_extractions))
-  expect_true(nrow(result$study_extractions) > 0)
-})
-
 test_that("GWAS upload own coloc rows are stamped with the lookup GUID", {
   guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
-  # As returned by the API: gwas_upload_id is set on every row, background
-  # studies included. The last row is a background study whose GPMap trait id
-  # happens to equal the upload id and must not be stamped.
+  # As returned by API 1.1.0: the upload's own rows have source "upload" and its gwas_upload_id (55); a
+  # compared upload's rows have its own id (77); existing studies have their trait_id. The last existing
+  # row's GPMap trait id happens to equal the upload id and must not be stamped.
   cg <- data.frame(
-    study_id = c(10, NA, 10, NA),
-    existing_study_id = c(NA, 99, NA, 98),
-    gwas_upload_id = c(55, 55, 55, 55),
-    trait_id = c(NA, 2527, 55, 55),
-    trait_name = c(NA, "Allergic rhinitis", NA, "Other trait"),
-    variant_id = c(1, 1, 2, 2),
+    source = c("upload", "existing", "upload", "existing", "upload"),
+    gwas_upload_id = c(55, NA, 55, NA, 77),
+    study_id = c(NA, 99, NA, 98, NA),
+    study_extraction_id = c(1, 5, 2, 6, 3),
+    trait_id = c(NA, 2527, NA, 55, NA),
+    trait_name = c(NA, "Allergic rhinitis", NA, "Other trait", "Compared"),
+    variant_id = c(1, 1, 2, 2, 1),
     stringsAsFactors = FALSE
   )
   associations <- data.frame(
-    study_id = c(10, 10),
-    existing_study_id = c(NA, NA),
+    source = c("upload", "upload"),
+    study_id = c(NA, NA),
+    gwas_upload_id = c(55, 55),
     variant_id = c(1, 2),
     beta = c(0.2, -0.1),
     se = c(0.05, 0.04),
@@ -139,38 +55,21 @@ test_that("GWAS upload own coloc rows are stamped with the lookup GUID", {
     coloc_groups = cg,
     associations = associations
   )
-  decorated <- .decorate_gwas_upload(upload, guid, include_associations = TRUE)
-  expect_true(all(c("beta", "se") %in% names(decorated$coloc_groups)))
-  own <- !is.na(decorated$coloc_groups$study_id) &
-    decorated$coloc_groups$study_id == 10
-  expect_equal(decorated$coloc_groups$trait_id[own], c(guid, guid))
-  expect_equal(
-    decorated$coloc_groups$trait_id[is.na(decorated$coloc_groups$study_id)],
-    c("2527", "55")
-  )
-})
-
-test_that("genes(gene_ids) returns expected output", {
-  gene_ids <- c("WNT7B", "WNT7A")
-  result <- genes(gene_ids = gene_ids, include_associations = TRUE)
-  expect_type(result, "list")
-  expect_true(all(result$genes$gene %in% gene_ids))
-  expect_true(nrow(result$coloc_groups) > 0)
-  expect_true(!is.null(result$study_extractions))
-  expect_true(nrow(result$study_extractions) > 0)
-})
-
-test_that("variants() returns expected output", {
-  variant_ids <- c(5553693, 5553694)
-  result <- variants(variants = variant_ids, include_associations = TRUE, expand = TRUE)
-  expect_type(result, "list")
-  expect_true(all(result$variants$variant_id %in% variant_ids))
-  expect_true(nrow(result$coloc_groups) > 0)
-  expect_true(!is.null(result$study_extractions))
-  expect_true(nrow(result$study_extractions) > 0)
+  decorated <- .decorate_gwas_upload(upload, guid)
+  groups <- decorated$coloc_groups
+  expect_null(decorated$associations)
+  expect_true(all(c("beta", "se") %in% names(groups)))
+  own <- groups$source == "upload" & groups$gwas_upload_id %in% 55
+  expect_equal(groups$trait_id[own], c(guid, guid))
+  expect_equal(groups$trait_name[own], c("Atopic", "Atopic"))
+  expect_equal(groups$beta[own], c(0.2, -0.1))
+  expect_equal(groups$trait_id[groups$source == "existing"], c("2527", "55"))
+  expect_true(is.na(groups$trait_id[groups$gwas_upload_id %in% 77]))
+  expect_equal(decorated$trait$guid, guid)
 })
 
 test_that("pathway_enrichment() returns expected output with gene IDs", {
+  skip_if_no_api()
   genes <- all_genes()
   gene_ids <- genes[genes$gene %in% c("TREM2", "APOE"), "id"]
 
@@ -199,6 +98,7 @@ test_that("pathway_enrichment() returns expected output with gene IDs", {
 })
 
 test_that("pathway_enrichment() accepts gene names", {
+  skip_if_no_api()
   result <- pathway_enrichment(
     c("TREM2", "APOE"),
     minimum_count_in_network = 1
@@ -334,7 +234,6 @@ test_that("summarise_module_specific_traits() returns no groups below min_group_
   expect_equal(keep_three$by_group[[1]]$group, "1")
 })
 
-
 test_that("enrich_snp_set() tests tissues against the rest of the trait's SNPs", {
   coloc_groups <- data.frame(
     variant_id = c("s1", "s1", "s2", "s2", "s3", "s3", "s4", "s4"),
@@ -365,7 +264,6 @@ test_that("enrich_snp_set() tests tissues against the rest of the trait's SNPs",
   expect_equal(out$tissue[1], "Adipose")
 })
 
-
 test_that("enrich_snp_set() removes the set from the background", {
   coloc_groups <- data.frame(
     variant_id = c("s1", "s1", "s2", "s2", "s3", "s3", "s4", "s4"),
@@ -385,13 +283,6 @@ test_that("enrich_snp_set() removes the set from the background", {
   expect_true("trait_category" %in% names(with_set))
   expect_equal(nrow(enrich_snp_set("s1", c("s1", "s2"), coloc_groups)), 0L)
 })
-
-
-# The traits x SNPs matrix run_univariate_clustering() builds before filtering.
-pleiotropy_matrix_for <- function(trait_id, coloc_groups) {
-  locus_data <- gpmapr:::.prepare_pleiotropy_locus_data(trait_id, coloc_groups)
-  return(gpmapr:::.finalize_pleiotropy_from_locus(locus_data, as.character(trait_id)))
-}
 
 test_that("the pleiotropy matrix keeps the target trait's SNPs from shared coloc_groups", {
   coloc_groups <- data.frame(
@@ -514,6 +405,7 @@ test_that("genes_at_snps can include situated genes", {
 })
 
 test_that("enrich_snp_set_pathways() reports the top term per source", {
+  skip_if_no_api()
   genes <- all_genes()
   gene_ids <- genes[genes$gene %in% c("TREM2", "APOE", "FTO", "MC4R", "LPL"), c("id", "gene")]
   coloc_groups <- data.frame(
@@ -534,79 +426,4 @@ test_that("enrich_snp_set_pathways() reports the top term per source", {
 
   too_small <- enrich_snp_set_pathways(c("s1", "s2"), coloc_groups)
   expect_equal(nrow(too_small$pathways), 0L)
-})
-
-test_that("search_gpmap() orders results by coloc groups and rare results", {
-  result <- search_gpmap("haemoglobin")
-  importance <- result$num_coloc_groups + result$num_rare_results
-  expect_false(is.unsorted(rev(importance)))
-})
-
-test_that("trait_duplicates() returns expected output", {
-  result <- trait_duplicates()
-  expect_true(is.data.frame(result))
-  expect_true(nrow(result) > 0)
-  # Older API versions name each duplicate's parent; newer ones list duplicate
-  # groups with a representative. remove_duplicate_traits() reads both.
-  parent_shape <- c("trait_id", "trait_name", "parent_trait_id", "parent_trait_name")
-  group_shape <- c("trait_id", "trait_name", "duplicate_group", "is_representative")
-  expect_true(all(parent_shape %in% names(result)) || all(group_shape %in% names(result)))
-})
-
-test_that("delete_gwas() validates its inputs", {
-  guid <- "00000000-0000-0000-0000-000000000000"
-  expect_error(delete_gwas("not-a-guid", "user@example.com"), "GUID")
-  expect_error(delete_gwas(guid), "email is required")
-  expect_error(delete_gwas(guid, ""), "email is required")
-})
-
-test_that("delete_gwas() surfaces API errors", {
-  expect_error(
-    delete_gwas("00000000-0000-0000-0000-000000000000", "user@example.com"),
-    "not found"
-  )
-})
-
-test_that("upload_gwas() validates column arguments", {
-  file <- tempfile(fileext = ".tsv")
-  writeLines(c("chr\tpos\tea\toa\tp\tbeta\tse", "1\t100\tA\tG\t1e-9\t0.1\t0.01"), file)
-  on.exit(unlink(file))
-  upload <- function(...) {
-    upload_gwas(file, name = "test", email = "user@example.com", sample_size = 1000, ...)
-  }
-
-  expect_error(
-    upload(chr_col = "chr", bp_col = "pos", ea_col = "ea", oa_col = "oa", beta_col = "beta", se_col = "se"),
-    "Missing required column arguments: p_col"
-  )
-  expect_error(
-    upload(chr_col = "chr", bp_col = "pos", ea_col = "ea", oa_col = "oa", p_col = "p", beta_col = "beta"),
-    "Either beta_col and se_col"
-  )
-  expect_error(
-    upload(chr_col = "chr", bp_col = "pos", ea_col = "ea", oa_col = "oa", p_col = "pval",
-      beta_col = "beta", se_col = "se"),
-    "Columns not found in file: pval"
-  )
-  expect_error(
-    upload(column_names = list(CHR = "chr"), chr_col = "chr"),
-    "not both"
-  )
-  expect_error(
-    suppressWarnings(upload(column_names = list(CHR = "chr", POS = "pos"))),
-    "Unknown column_names: POS"
-  )
-  expect_warning(
-    expect_error(upload(column_names = list(CHR = "chr", BP = "pos")), "Missing required"),
-    "deprecated"
-  )
-})
-
-test_that("legacy column_names are mapped to API column names", {
-  result <- suppressWarnings(build_gwas_column_names(
-    list(chr = "chr", BP = "pos", EA = "ea", OA = "oa", P = "p", OR = "or", LB = "lb", UB = "ub"),
-    list()
-  ))
-  expect_equal(names(result), c("CHR", "BP", "EA", "OA", "P", "OR", "OR_LB", "OR_UB"))
-  expect_equal(result$OR_LB, "lb")
 })

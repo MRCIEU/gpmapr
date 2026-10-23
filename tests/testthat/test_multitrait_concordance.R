@@ -873,14 +873,14 @@ test_that(".ld_best_match looks proxies up from the target side and keeps negati
 test_that(".build_locus_bridge matches an upload to an existing trait by its own coloc record", {
   guid <- "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
   # Upload loci u1-u3; the upload's coloc run recorded trait 1992 in u1 and u2
-  # (existing_study_extraction_id 501, 502). u1's leads are in negative LD,
+  # (its source "existing" rows, study_extraction_id 501, 502). u1's leads are in negative LD,
   # u2's leads have no proxy row, u3 is only reachable by exact variant.
   cg_up <- data.frame(
     trait_id = c(guid, guid, guid, "1992", "1992"),
     coloc_group_id = c("u1", "u2", "u3", "u1", "u2"),
     variant_id = c("100", "200", "300", "100", "200"),
-    existing_study_extraction_id = c(NA, NA, NA, 501, 502),
-    study_extraction_id = c(9001, 9001, 9001, NA, NA),
+    source = c("upload", "upload", "upload", "existing", "existing"),
+    study_extraction_id = c(9001, 9001, 9001, 501, 502),
     stringsAsFactors = FALSE
   )
   cg_ex <- data.frame(

@@ -160,8 +160,8 @@ all: below `min_shared_loci` (default 3) shared high-confidence loci
 **Uploaded GWAS.** An uploaded GWAS numbers its coloc groups privately, so its
 `coloc_group_id`s never equal an existing trait's. For any pair involving an
 upload, a **locus bridge** translates the upload's loci onto the partner's:
-first by the upload's own coloc record of that trait
-(`existing_study_extraction_id`), then by exact `variant_id`, then by LD
+first by the upload's own coloc record of that trait (its `source == "existing"`
+rows' `study_extraction_id`), then by exact `variant_id`, then by LD
 (`ld_proxies()`). Every locus comparison for that pair —
 eligibility, the score, `module_rg()` and the family locus sets — uses the
 same bridge.

@@ -5,31 +5,11 @@ vignette: >
   %\VignetteIndexEntry{GPMap tutorial: Haemoglobin concentration case study}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
-params:
-  api: "prod"
-  anchor_trait_id: 4759
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  message = FALSE,
-  warning = FALSE,
-  eval = TRUE,
-  out.width = "100%",
-  fig.align = "center"
-)
-```
 
-```{r anchor-trait-metadata, include=FALSE}
-gpmapr::select_api(params$api)
-anchor_trait_id <- as.integer(params$anchor_trait_id)
-anchor_trait_result <- gpmapr::trait(anchor_trait_id)
-anchor_trait_name <- anchor_trait_result$trait$trait_name
-```
 
-This is a case study of GPMAP genetic colocalisations with the UK Biobank complex trait "`r anchor_trait_name`", a physiological measure underpinned by well understood biological mechanisms of iron uptake, handling and storage and erythropoiesis, which potentially sits downstream of many disease states.
+This is a case study of GPMAP genetic colocalisations with the UK Biobank complex trait "Haemoglobin concentration", a physiological measure underpinned by well understood biological mechanisms of iron uptake, handling and storage and erythropoiesis, which potentially sits downstream of many disease states.
 
 This vignette is a demonstrative example of Figure 4 in [the GPMap paper](https://doi.org/10.64898/2026.02.19.26346618).
 
@@ -41,25 +21,48 @@ We wish to demonstrate that the GPMap:
 
 ## Trait colocalisations
 
-**Anchor trait:** `r anchor_trait_name` (id: `r anchor_trait_id`)
+**Anchor trait:** Haemoglobin concentration (id: 4759)
 
-```{r find-trait}
+
+``` r
 all_genes <- gpmapr::all_genes()
 all_traits_df <- gpmapr::all_traits()
 all_haemoglobin_traits <- gpmapr::search_gpmap("haemoglobin") |>
   dplyr::select(type_id, type, name, sample_size, num_coloc_groups)
+anchor_trait_id <- 4759
 
-trait_results <- anchor_trait_result
+trait_results <- gpmapr::trait(trait_id = anchor_trait_id)
 haemoglobin_common <- trait_results$coloc_groups
 haemoglobin_rare <- trait_results$rare_results
 knitr::kable(all_haemoglobin_traits)
 ```
 
+
+
+|type_id |type  |name                                                     | sample_size| num_coloc_groups|
+|:-------|:-----|:--------------------------------------------------------|-----------:|----------------:|
+|1983    |trait |Mean corpuscular haemoglobin                             |      572863|              936|
+|1640    |trait |Haemoglobin A1c levels                                   |      437749|              838|
+|920     |trait |Haemoglobin concentration                                |      563946|              828|
+|4761    |trait |Mean corpuscular haemoglobin                             |      430998|              628|
+|1636    |trait |Haemoglobin levels                                       |      445373|              775|
+|931     |trait |Haemoglobin                                              |      408112|              757|
+|2611    |trait |Glycated haemoglobin HbA1c levels (UKB data field 30750) |      389889|              721|
+|2584    |trait |Haemoglobin concentration (UKB data field 30020)         |      396624|              658|
+|4759    |trait |Haemoglobin concentration                                |      430998|              497|
+|922     |trait |Mean corpuscular haemoglobin concentration               |      491553|              297|
+|4762    |trait |Mean corpuscular haemoglobin concentration               |      430998|              137|
+|42778   |trait |Glycated haemoglobin HbA1c (30750)                       |      430998|                0|
+|915     |trait |Glycated haemoglobin levels                              |      146806|               93|
+
+
+
 Exclude duplicate haemoglobin traits and filter on genome-wide significance:
 
-```{r filter-traits}
+
+``` r
 # Identify other haemoglobin traits to exclude
-trait_ids_hgb <- dplyr::filter(all_haemoglobin_traits, type_id != anchor_trait_id)
+trait_ids_hgb <- dplyr::filter(all_haemoglobin_traits, type_id != 4759)
 traits_out <- trait_ids_hgb$type_id
 
 # Exclude coloc groups where the anchor trait has no genome-wide significant hit in the region
@@ -89,7 +92,8 @@ haemoglobin_rare <- haemoglobin_rare |> dplyr::filter(!(rare_result_group_id %in
 
 Colocalising signals across the genome, annotated by variant class and number of colocalising studies:
 
-```{r genome-view, fig.width=15, fig.height=3.5}
+
+``` r
 n_per_locus_common <- haemoglobin_common |>
   dplyr::group_by(display_snp, chr, bp) |>
   dplyr::summarise(n_studies = dplyr::n(), .groups = "drop")
@@ -168,13 +172,19 @@ colocs_per_position |>
   )
 ```
 
-This is a recreation of the data you can see on the GPMap website at https://gpmap.opengwas.io/trait.html?id=`r anchor_trait_id`
+<div class="figure" style="text-align: center">
+<img src="figures/tutorial-case-study-genome-view-1.png" alt="plot of chunk genome-view" width="100%" />
+<p class="caption">plot of chunk genome-view</p>
+</div>
+
+This is a recreation of the data you can see on the GPMap website at https://gpmap.opengwas.io/trait.html?id=4759
 
 ### Complex trait colocalisations
 
 Traits across which trait categories show the greatest proportion of GWS hits colocalising with the anchor trait:
 
-```{r traitcategory-view, fig.width=20, fig.height=6}
+
+``` r
 pull_trait_ids_common <- haemoglobin_common |>
   dplyr::filter(data_type %in% c("Cell Trait", "Plasma Protein", "Phenotype")) |>
   dplyr::select(trait_id, trait_name, data_type, trait_category) |>
@@ -241,6 +251,11 @@ common_colocs_per_trait |>
                   size = ggplot2::guide_legend(ncol = 1))
 ```
 
+<div class="figure" style="text-align: center">
+<img src="figures/tutorial-case-study-traitcategory-view-1.png" alt="plot of chunk traitcategory-view" width="100%" />
+<p class="caption">plot of chunk traitcategory-view</p>
+</div>
+
 
 ## Investigating a specific colocalisation group
 
@@ -248,7 +263,8 @@ common_colocs_per_trait |>
 
 TMPRSS6 is a negative regulator of the iron homeostasis hormone hepcidin (HAMP).
 
-```{r TMPRSS6-setup}
+
+``` r
 # Filter to TMPRSS6 coloc groups
 tmprss6_coloc_group_ids <- haemoglobin_common |>
   dplyr::filter(gene == "TMPRSS6") |>
@@ -285,10 +301,11 @@ meta_tmprss6 <- haemoglobin_tmprss6 |>
   dplyr::distinct()
 ```
 
-The GPMap found the candidate SNP to be `r tmprss6_variant$variant$snp`, which VEP has annotated as an `r tmprss6_variant$variant$consequence` of `r tmprss6_variant$variant$symbol`.
+The GPMap found the candidate SNP to be 22:37100807_C_T, which VEP has annotated as an intron_variant of TMPRSS6.
 
 ### Region plot: scaled LBF values across all studies in the coloc group
-```{r TMPRSS6-region, fig.width=8, fig.height=2}
+
+``` r
 
 tmprss6_gene <- all_genes |>
   dplyr::filter(gene == "TMPRSS6")
@@ -332,9 +349,15 @@ plot_region(se_tmprss6,
 )
 ```
 
+<div class="figure" style="text-align: center">
+<img src="figures/tutorial-case-study-TMPRSS6-region-1.png" alt="plot of chunk TMPRSS6-region" width="100%" />
+<p class="caption">plot of chunk TMPRSS6-region</p>
+</div>
+
 We can also plot the effect estimates at the candidate SNP across the colocalising studies.
 
-```{r TMPRSS6-betas, fig.width=6, fig.height=3}
+
+``` r
 # Effect estimates at candidate SNP across colocalising studies
 plot_coloc_betas <- function(betas, title) {
   if (nrow(betas) == 0 || !"trait_category" %in% names(betas)) {
@@ -379,11 +402,17 @@ plot_coloc_betas(betas_tmprss6,
                  title = "Co-localising variant:\nrs9619658 (22:37100807 C/T)")
 ```
 
+<div class="figure" style="text-align: center">
+<img src="figures/tutorial-case-study-TMPRSS6-betas-1.png" alt="plot of chunk TMPRSS6-betas" width="100%" />
+<p class="caption">plot of chunk TMPRSS6-betas</p>
+</div>
+
 ## Trait clustering
 
 Of all the traits that colocalise with the anchor, how many coloc groups do each pair of traits share?
 
-```{r trait-clustering, fig.width=6, fig.height=6, cache=TRUE}
+
+``` r
 # Remove duplicates crudely by name
 traits_keep <- common_colocs_per_trait |>
   dplyr::mutate(name_cut = sub(" \\(.*\\)", "", trait_name)) |>
@@ -431,8 +460,14 @@ ggplot2::ggplot(mx_colocs_melt,
                  axis.text = ggplot2::element_blank())
 ```
 
+<div class="figure" style="text-align: center">
+<img src="figures/tutorial-case-study-trait-clustering-1.png" alt="plot of chunk trait-clustering" width="100%" />
+<p class="caption">plot of chunk trait-clustering</p>
+</div>
+
 We can also view the specific clusters that were found.
-```{r trait-clustering-table}
+
+``` r
 # Define how many clusters you want (adjust 'k' as needed)
 n_clusters <- 10
 cluster_assignments <- stats::cutree(mx_clust, k = n_clusters)
@@ -463,3 +498,20 @@ grouped_summary <- trait_clusters |>
 
 knitr::kable(grouped_summary)
 ```
+
+
+
+|cluster_id |traits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+|:----------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+|1          |Coronary artery disease, Glomerular filtration rate (creatinine), Glomerular filtration rate in non diabetics (creatinine), Granulocyte percentage of myeloid white cells, Eosinophil percentage of granulocytes, Neutrophil percentage of granulocytes, Sum eosinophil basophil counts, Lymphocyte counts, Basophil percentage of granulocytes, Squamous cell lung carcinoma, Fasting blood glucose, Offspring birth weight, Total body bone mineral density, Atrial fibrillation, Cognitive performance, Parent... |
+|2          |Sum neutrophil eosinophil counts, Granulocyte count, Sum basophil neutrophil counts, Myeloid white cell count, Appendicular lean mass, Lymphocyte count, Monocyte count, Neutrophil count, Lymphocyte percentage of white cells, Bilirubin levels, White blood cell count (lymphocyte), Mean platelet volume, Platelet distribution width, Height, Diastolic blood pressure, Systolic blood pressure, Total bilirubin levels (UKB data field 30840), High blood pressure (UKB data field 6150) (SPA correction), ... |
+|3          |Hematocrit                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+|4          |Red blood cell count, Red blood cell erythrocyte count (UKB data field 30010)                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+|5          |Red cell distribution width, Plateletcrit, Mean reticulocyte volume, Platelet count, Mean corpuscular volume (UKB data field 30040), Red blood cell (erythrocyte) distribution width, Platelet crit, Immature reticulocyte fraction                                                                                                                                                                                                                                                                                  |
+|6          |High light scatter reticulocyte percentage of red cells, Mean spheric corpuscular volume, Reticulocyte fraction of red cells, Immature fraction of reticulocytes, Reticulocyte count, High light scatter reticulocyte count, Mean sphered cell volume, Reticulocyte percentage, High light scatter reticulocyte percentage                                                                                                                                                                                           |
+|7          |Low density lipoprotein cholesterol levels, Liver enzyme levels (alanine transaminase), Gamma glutamyl transpeptidase, HDL cholesterol, Triglycerides, Apolipoprotein A1 levels, HDL cholesterol levels, Gamma glutamyl transferase levels, Cholesteryl ester levels in HDL, Free cholesterol levels in HDL, Total lipid levels in HDL, Phospholipid levels in HDL, Average diameter for HDL particles, Triglyceride levels in HDL, Cholesterol to total lipids ratio in IDL, Cholesteryl esters to total lipids ... |
+|8          |Sex hormone-binding globulin levels adjusted for BMI, Serum alkaline phosphatase levels, Total cholesterol levels, Direct low density lipoprotein cholesterol levels, Sex hormone-binding globulin levels, Insulin-like growth factor 1 levels, Serum albumin levels, Waist-to-hip ratio adjusted for BMI, Waist-hip ratio, Cardiovascular disease, High cholesterol, Ratio of apolipoprotein B to apolipoprotein A1 levels, Total cholines levels, Concentration of HDL particles, Cholesterol levels in IDL, Ch... |
+|9          |Blood urea nitrogen levels, Serum uric acid levels, Serum creatinine levels, Serum urea levels, Estimated glomerular filtration rate (creatinine), Urea levels (UKB data field 30670), Creatinine levels (UKB data field 30700), Cystatin C levels (UKB data field 30720), Urate levels (UKB data field 30880)                                                                                                                                                                                                       |
+|10         |Haematocrit percentage                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+
+

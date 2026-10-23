@@ -1,0 +1,59 @@
+{
+  "traits": [
+    {
+      "id": 1,
+      "data_type": "Phenotype",
+      "pipeline_id": "ebi-a-GCST000922",
+      "trait_name": "Openness",
+      "trait_category": "Psychiatric Measures",
+      "variant_type": "Common",
+      "sample_size": 17375,
+      "variable_type": "continuous",
+      "ancestry": "EUR",
+      "heritability": null,
+      "heritability_se": null,
+      "num_study_extractions": 72,
+      "num_coloc_groups": 1,
+      "num_coloc_studies": 13,
+      "num_rare_results": 0
+    },
+    {
+      "id": 2,
+      "data_type": "Phenotype",
+      "pipeline_id": "ebi-a-GCST000998",
+      "trait_name": "Coronary heart disease",
+      "trait_category": "Disease Of Circulatory System",
+      "variant_type": "Common",
+      "sample_size": 86995,
+      "variable_type": "categorical",
+      "ancestry": "EUR",
+      "heritability": null,
+      "heritability_se": null,
+      "num_study_extractions": 295,
+      "num_coloc_groups": 29,
+      "num_coloc_studies": 1547,
+      "num_rare_results": 0
+    },
+    {
+      "id": 3,
+      "data_type": "Phenotype",
+      "pipeline_id": "ebi-a-GCST001212",
+      "trait_name": "Proinsulin levels",
+      "trait_category": "Physiological Measures",
+      "variant_type": "Common",
+      "sample_size": 10701,
+      "variable_type": "continuous",
+      "ancestry": "EUR",
+      "heritability": null,
+      "heritability_se": null,
+      "num_study_extractions": 101,
+      "num_coloc_groups": 12,
+      "num_coloc_studies": 218,
+      "num_rare_results": 0
+    }
+  ],
+  "coloc_groups": null,
+  "rare_results": null,
+  "study_extractions": null,
+  "associations": null
+}

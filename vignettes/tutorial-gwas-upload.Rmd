@@ -7,13 +7,7 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r, include = FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  eval = TRUE
-)
-```
+
 
 The GPMap API allows you to upload your own GWAS summary statistics and receive colocalisation results against the existing GPMap. This vignette covers how to upload a GWAS, retrieve your results, interpret them, and compare your upload with another trait (including another upload) to find insights.
 
@@ -21,7 +15,8 @@ The GPMap API allows you to upload your own GWAS summary statistics and receive 
 
 Use `gpmapr::upload_gwas()` to submit your summary statistics. You need a file with standard GWAS columns and metadata such as sample size and ancestry.
 
-```{r upload-example, eval = FALSE}
+
+``` r
 # Example: upload a GWAS file
 result <- gpmapr::upload_gwas(
   file = "path/to/your_gwas.tsv.gz",
@@ -36,7 +31,7 @@ result <- gpmapr::upload_gwas(
   beta_col = "beta",
   se_col = "se",
   email = "your@email.com",
-  category = "continuous",
+  variable_type = "continuous",
   ancestry = "EUR",
   sample_size = 50000,
   reference_build = "GRCh38"
@@ -49,249 +44,162 @@ You can also compare your upload with another upload by passing the GUIDs of the
 
 The response includes a **GUID** (a UUID such as `a1b2c3d4-e5f6-7890-abcd-ef1234567890`). Save this GUID; you use it to fetch your results once they are ready.
 
-```{r guid-example, eval = FALSE}
+
+``` r
 # The GUID is returned in the response
 my_guid <- result$guid
 ```
 
 ## Fetching your results
 
-Processing can take some time. Use the GUID with `trait()` to check status and retrieve results.  Here we will use an GWAS that has already been uploaded to the GPMap.
+Processing can take some time. Use the GUID with `trait()` (or `get_gwas()`) to check status and retrieve results.  Here we will use a GWAS that has already been uploaded to the GPMap.
 
 This is of Atopic Dermatitis.
 
-```{r fetch-results, cache = TRUE}
+
+``` r
 my_guid <- "7a289615-c1b4-91f3-3d97-887f60de9155"
 my_results <- gpmapr::trait(my_guid, include_associations = TRUE)
 ```
 
-When processing is complete, the result includes `trait`, `coloc_groups`, `study_extractions`, `upload_study_extractions`, and optionally `associations` and `coloc_pairs`.
+When processing is complete, the result has the same tables as any trait: `trait` (your upload's details), `study_extractions`, `coloc_groups` and `coloc_pairs`. With `include_associations = TRUE`, each study's association at its variant (`beta`, `se`, `p`, `eaf`, `imputed`) is added to the coloc groups and study extractions.
 
 ## Interpreting your results
 
-Much of the same analysis that is shown in the [case study](https://mrcieu.r-universe.dev/articles/gpmapr/tutorial-case-study.html) can be applied to your upload results.  If you are interested in the relationship between your upload and another trait, you can filter the coloc groups by trait id.
+Much of the same analysis that is shown in the [case study](https://mrcieu.r-universe.dev/articles/gpmapr/tutorial-case-study.html) can be applied to your upload results.
 
-Your upload results use the same structure as traits in the database. Here are the main components and what they mean.
+### Your upload's rows and everyone else's
 
-### Study extractions
+Your results mix rows for your upload with rows for the studies already in the GPMap that it colocalises with. The `source` column says which:
 
-The difference between study_extractions and upload_study_extractions is that upload_study_extractions are the individual finemapped regions (LD blocks) that were found from the uploaded GWAS, while study_extractions are the existing finemapped loci that your upload colocalises with.
+* `source == "upload"`: a study extraction from an uploaded GWAS. `gwas_upload_id` is the id of that upload: yours (`my_results$trait$id`), or another upload you compared with.
+* `source == "existing"`: a study extraction already in the GPMap, with its `trait_id` and `study_id`. `gwas_upload_id` is `NA`.
 
-Key columns include `study`, `snp`, `gene`, `chr`, `bp`, `min_p`, and trait metadata (`trait_name`, `data_type`, `tissue`).
+Uploaded and existing study extractions are numbered separately, so the same id can mean one of each: always identify a study extraction by `source` and its id together. Your upload's own rows are the ones with `source == "upload"` and `gwas_upload_id == my_results$trait$id`.
 
-```{r study-extractions-demo}
-# Study extractions (structure may vary - list of dataframes or single dataframe)
-uploaded_study_extractions <- my_results$upload_study_extractions
-paste("Number of uploaded study extractions:", nrow(uploaded_study_extractions))
-study_extractions <- my_results$study_extractions
-paste("Number of study extractions associated with your upload:", nrow(study_extractions))
+
+``` r
+own_extractions <- my_results$study_extractions |>
+  dplyr::filter(source == "upload", gwas_upload_id == my_results$trait$id)
+paste("Study extractions from your upload:", nrow(own_extractions))
+#> [1] "Study extractions from your upload: 144"
+paste("Existing study extractions it colocalises with:", sum(my_results$study_extractions$source == "existing"))
+#> [1] "Existing study extractions it colocalises with: 3854"
 ```
 
-### Coloc groups and coloc pairs
+### Comparing your upload with another trait
 
-Although coloc groups provide a more robust view of the relationship between your trait and other traits, coloc pairs can be useful for identifying the specific regions that are driving the colocalisation, espeically if the loci is less powered, and therefore less likely to be captured by the coloc groups.
+**Coloc groups** identify genomic regions (LD blocks) where your trait colocalises with other studies in the map; each row is a study extraction in the group. **Coloc pairs** give the pairwise colocalisation probabilities between two study extractions:
 
-**Coloc groups** identify genomic regions (LD blocks) where your trait colocalises with other studies in the map. Each row is a study extraction that shares a colocalisation signal with your trait at that region.
+- **h4**: both traits share **one common causal variant**
+- **h3**: both traits associate at the region through **two distinct causal variants**
+
+Coloc groups give the more robust view of the relationship between your trait and another, but coloc pairs can show loci that are less powered and so not captured by a coloc group.
+
+`compare_upload()` lines your upload up with another trait (here allergic rhinitis, trait 2527). For every coloc group containing both, it gives each one's effect at the group's variant, taken from your upload's results so that both are on the same alleles; it also lists the coloc pairs between them.
 
 
-If you are interested in the relationship between your trait and another specific trait, you can filter the coloc groups by trait id.
-
-```{r coloc-groups-demo, fig.width=8, fig.height=10, out.width="100%"}
+``` r
 trait_to_compare <- 2527L # Allergic rhinitis
-upload_id   <- my_results$trait$id
+comparison <- gpmapr::compare_upload(my_results, trait_to_compare)
 upload_name <- as.character(my_results$trait$name)[[1L]]
+compare_name <- if (nrow(comparison$coloc_groups) > 0) comparison$coloc_groups$trait_name[[1L]] else "Comparison trait"
 
-compare_name <- {
-  nm <- my_results$coloc_groups |>
-    dplyr::filter(trait_id == trait_to_compare) |>
-    dplyr::distinct(trait_name) |>
-    dplyr::pull(trait_name)
-  if (length(nm) >= 1L) nm[[1L]] else "Comparison trait"
-}
-
-shared_coloc_groups <- my_results$coloc_groups |>
-  dplyr::filter(trait_id == trait_to_compare) |>
-  dplyr::pull(coloc_group_id) |>
-  unique()
-
-compare_coloc_groups <- my_results$coloc_groups |>
-  dplyr::filter(
-    coloc_group_id %in% shared_coloc_groups,
-    trait_id == trait_to_compare | gwas_upload_id == upload_id
-  )
-
-compare_coloc_groups <- compare_coloc_groups |>
-  dplyr::group_by(coloc_group_id) |>
-  dplyr::filter(!any(se == 1)) |>
-  dplyr::ungroup()
+knitr::kable(
+  head(comparison$coloc_groups[, c("display_snp", "upload_beta", "upload_se", "trait_beta", "trait_se")], 10),
+  digits = 3
+)
+```
 
 
-# Strongest hit (smallest min_p) per group per side
-pick_lead <- function(dat, grp_col) {
-  dat |>
-    dplyr::filter(!is.na(beta), !is.na(se), se > 0, !is.na(min_p)) |>
-    dplyr::group_by(dplyr::across(dplyr::all_of(grp_col))) |>
-    dplyr::slice_min(order_by = min_p, n = 1L, with_ties = FALSE) |>
-    dplyr::ungroup()
-}
 
-trait_colours <- c("#2166ac", "#d6604d")
-names(trait_colours) <- c(upload_name, compare_name)
+|display_snp      | upload_beta| upload_se| trait_beta| trait_se|
+|:----------------|-----------:|---------:|----------:|--------:|
+|1:154453788 C/T  |      -0.062|     0.008|     -0.038|    0.005|
+|1:173178644 T/C  |       0.065|     0.008|      0.046|    0.002|
+|10:6052734 C/T   |      -0.114|     0.012|     -0.105|    0.004|
+|10:62622599 A/C  |      -0.042|     0.007|     -0.032|    0.005|
+|10:6579811 T/C   |      -0.039|     0.008|     -0.031|    0.002|
+|11:128317488 T/C |      -0.055|     0.007|     -0.028|    0.005|
+|11:65784486 A/G  |      -0.088|     0.007|     -0.051|    0.005|
+|11:76582761 G/C  |       0.079|     0.007|      0.091|    0.002|
+|12:56930729 T/G  |      -0.044|     0.013|     -0.071|    0.004|
+|17:40608272 T/A  |       0.222|     0.037|      0.274|    0.008|
 
-make_forest_plot <- function(df, panel_labels, title_str) {
-  lbl_fn <- function(x) {
-    m <- match(as.character(x), as.character(panel_labels$group_id))
-    out <- panel_labels$strip_lbl[m]
-    dplyr::if_else(is.na(out), as.character(x), out)
-  }
-  ggplot2::ggplot(df, ggplot2::aes(x = beta, y = trait_lbl, colour = trait_lbl)) +
+
+
+``` r
+
+forest_rows <- comparison$coloc_groups |>
+  utils::head(5) |>
+  dplyr::mutate(panel = factor(display_snp, levels = unique(display_snp)))
+forest_df <- dplyr::bind_rows(
+  forest_rows |> dplyr::transmute(panel, beta = upload_beta, se = upload_se, trait_lbl = upload_name),
+  forest_rows |> dplyr::transmute(panel, beta = trait_beta, se = trait_se, trait_lbl = compare_name)
+) |>
+  dplyr::mutate(trait_lbl = factor(trait_lbl, levels = c(upload_name, compare_name)))
+
+trait_colours <- stats::setNames(c("#2166ac", "#d6604d"), c(upload_name, compare_name))
+
+if (nrow(forest_df) > 0) {
+  ggplot2::ggplot(forest_df, ggplot2::aes(x = beta, y = trait_lbl, colour = trait_lbl)) +
     ggplot2::geom_vline(xintercept = 0, colour = "red", lty = 2) +
-    ggplot2::geom_hline(yintercept = 1.5, colour = "grey85", linewidth = 0.5) +
     ggplot2::geom_errorbar(
       ggplot2::aes(xmin = beta - 1.96 * se, xmax = beta + 1.96 * se),
       width = 0.12, linewidth = 0.35
     ) +
     ggplot2::geom_point(size = 2.5) +
-    ggplot2::facet_grid(
-      rows = ggplot2::vars(coloc_panel),
-      scales = "fixed", space = "fixed", switch = "y",
-      labeller = ggplot2::labeller(coloc_panel = lbl_fn)
-    ) +
-    ggplot2::scale_y_discrete(expand = ggplot2::expansion(add = 0.65)) +
-    ggplot2::scale_colour_manual(values = trait_colours,
-                                 breaks = c(upload_name, compare_name)) +
+    ggplot2::facet_grid(rows = ggplot2::vars(panel), switch = "y") +
+    ggplot2::scale_colour_manual(values = trait_colours) +
     ggplot2::theme_bw() +
     ggplot2::theme(
-      panel.grid      = ggplot2::element_blank(),
-      panel.border    = ggplot2::element_blank(),
-      panel.spacing.y = grid::unit(1.5, "lines"),
+      panel.grid = ggplot2::element_blank(),
       strip.background = ggplot2::element_rect(colour = NA),
-      strip.placement  = "outside",
-      plot.title       = ggplot2::element_text(hjust = 0.5, size = 12),
-      legend.position  = "bottom",
-      axis.text.y      = ggplot2::element_blank(),
-      axis.ticks.y     = ggplot2::element_blank()
+      strip.placement = "outside",
+      plot.title = ggplot2::element_text(hjust = 0.5, size = 12),
+      legend.position = "bottom",
+      axis.text.y = ggplot2::element_blank(),
+      axis.ticks.y = ggplot2::element_blank()
     ) +
-    ggplot2::labs(x = "Study beta", y = NULL, colour = NULL, title = title_str)
-}
-
-make_strip_labels <- function(df) {
-  df |>
-    dplyr::group_by(group_id) |>
-    dplyr::summarise(
-      strip_lbl = paste(unique(stats::na.omit(display_snp)), collapse = " · "),
-      .groups = "drop"
-    ) |>
-    dplyr::mutate(strip_lbl = dplyr::if_else(
-      nzchar(strip_lbl), strip_lbl, as.character(group_id)
-    ))
-}
-
-build_forest_df <- function(upload_rows, compare_rows, max_groups = 5L) {
-  df <- dplyr::bind_rows(
-    upload_rows  |> dplyr::mutate(trait_lbl = upload_name),
-    compare_rows |> dplyr::mutate(trait_lbl = compare_name)
-  ) |>
-    dplyr::mutate(trait_lbl = factor(trait_lbl, levels = c(upload_name, compare_name)))
-
-  ids_both <- df |>
-    dplyr::count(group_id, name = "n") |>
-    dplyr::filter(n == 2L) |>
-    dplyr::slice_head(n = max_groups) |>
-    dplyr::pull(group_id)
-
-  df |>
-    dplyr::filter(group_id %in% ids_both) |>
-    dplyr::mutate(coloc_panel = factor(group_id))
-}
-
-# --- Section 1: Coloc groups ---
-cg_upload <- compare_coloc_groups |>
-  dplyr::filter(gwas_upload_id == upload_id) |>
-  pick_lead("coloc_group_id") |>
-  dplyr::mutate(group_id = as.character(coloc_group_id))
-
-cg_compare <- compare_coloc_groups |>
-  dplyr::filter(trait_id == trait_to_compare) |>
-  pick_lead("coloc_group_id") |>
-  dplyr::mutate(group_id = as.character(coloc_group_id))
-
-cg_df <- build_forest_df(cg_upload, cg_compare)
-
-if (nrow(cg_df) > 0) {
-  print(make_forest_plot(
-    cg_df, make_strip_labels(cg_df),
-    "Colocalisation groups"
-  ))
-}
-
-# --- Section 2: Coloc pairs only (h4 > 0.8, locus not in shared coloc groups) ---
-pairs_all <- my_results$coloc_pairs
-
-if (!is.null(pairs_all) && nrow(pairs_all) > 0 && "h4" %in% names(pairs_all) &&
-    "ld_block_id" %in% names(pairs_all)) {
-  covered_ld <- compare_coloc_groups |>
-    dplyr::pull(ld_block_id) |>
-    unique()
-
-  sig_ld <- pairs_all |>
-    dplyr::filter(h4 > 0.8, !ld_block_id %in% covered_ld) |>
-    dplyr::pull(ld_block_id) |>
-    unique()
-
-  if (length(sig_ld) > 0) {
-    cp_upload <- my_results$coloc_groups |>
-      dplyr::filter(gwas_upload_id == upload_id, ld_block_id %in% sig_ld) |>
-      pick_lead("ld_block_id") |>
-      dplyr::mutate(group_id = as.character(ld_block_id))
-
-    cp_compare <- my_results$coloc_groups |>
-      dplyr::filter(trait_id == trait_to_compare, ld_block_id %in% sig_ld) |>
-      pick_lead("ld_block_id") |>
-      dplyr::mutate(group_id = as.character(ld_block_id))
-
-    cp_df <- build_forest_df(cp_upload, cp_compare)
-
-    if (nrow(cp_df) > 0) {
-      print(make_forest_plot(
-        cp_df, make_strip_labels(cp_df),
-        "Coloc pairs only (h4 > 0.8, not in a shared coloc group)"
-      ))
-    }
-  }
+    ggplot2::labs(x = "Effect (beta) with 95% CI", y = NULL, colour = NULL, title = "Shared colocalisation groups")
 }
 ```
 
-**Coloc pairs** give pairwise colocalisation probabilities between study extractions:
+<div class="figure">
+<img src="figures/tutorial-gwas-upload-coloc-groups-demo-1.png" alt="plot of chunk coloc-groups-demo" width="100%" />
+<p class="caption">plot of chunk coloc-groups-demo</p>
+</div>
 
-- **h4**: Both traits share **one common causal variant**
-- **h3**: Both traits associate at the region through **two distinct causal variants**
+The coloc pairs between your upload and the trait include loci with no shared coloc group (`in_shared_coloc_group` is `FALSE`):
 
-The forest plot above already includes loci with h4 > 0.8 that are not captured by any shared coloc group. The raw pair scores for all significant pairs are shown below.
 
-```{r coloc-pairs-demo}
-truncate_results <- 20L
-
-pairs <- my_results$coloc_pairs
-if (!is.null(pairs) && nrow(pairs) > 0) {
-  cols <- intersect(names(pairs), c(
-    "study_extraction_id_a", "study_extraction_id_b",
-    "existing_study_extraction_id_a", "existing_study_extraction_id_b",
-    "ld_block_id", "h3", "h4", "false_positive", "spurious"
-  ))
-  knitr::kable(
-    head(dplyr::filter(pairs[, cols, drop = FALSE], h4 > 0.8), truncate_results),
-    digits = 3
-  )
-} else {
-  "No coloc pairs for these traits"
-}
+``` r
+knitr::kable(
+  head(dplyr::filter(comparison$coloc_pairs, h4 > 0.8, !in_shared_coloc_group), 20),
+  digits = 3
+)
 ```
+
+
+
+| ld_block_id| upload_study_extraction_id|upload_display_snp |trait_name                           | trait_study_extraction_id|trait_display_snp |    h3|    h4|in_shared_coloc_group |
+|-----------:|--------------------------:|:------------------|:------------------------------------|-------------------------:|:-----------------|-----:|-----:|:---------------------|
+|        1000|                       7243|12:122161325 A/G   |Allergic rhinitis (Firth correction) |                   3271358|12:122177244 C/T  | 0.038| 0.960|FALSE                 |
+|        1064|                       7257|14:35399308 C/T    |Allergic rhinitis (Firth correction) |                   3458752|14:35395672 G/T   | 0.007| 0.989|FALSE                 |
+|        1246|                       7283|18:62342581 C/T    |Allergic rhinitis (Firth correction) |                   4323482|18:62343215 A/C   | 0.014| 0.977|FALSE                 |
+|         121|                       7331|2:28413873 A/G     |Allergic rhinitis (Firth correction) |                    502135|2:28407025 T/C    | 0.055| 0.927|FALSE                 |
+|        1349|                       7323|22:36914912 A/G    |Allergic rhinitis (Firth correction) |                   4897281|22:36918137 A/T   | 0.075| 0.924|FALSE                 |
+|         479|                       7360|5:142112420 C/T    |Allergic rhinitis (Firth correction) |                   1501532|5:142159774 C/A   | 0.127| 0.836|FALSE                 |
+
+
+
+All of your upload's coloc pairs are in `my_results$coloc_pairs`. Each side (`a`, `b`) is identified by `study_extraction_a_id` and `source_a`, with its trait name, data type, tissue and gene alongside (`trait_name_a`, ...).
 
 ## Deleting an upload
 
 If you no longer want an upload stored in the GPMap, you can permanently delete it, along with all of its results, using `delete_gwas()`. You need to provide the same email address that you used for the upload. Uploads that are still processing can't be deleted.
 
-```{r delete-example, eval = FALSE}
+
+``` r
 gpmapr::delete_gwas(my_guid, email = "your@email.com")
 ```

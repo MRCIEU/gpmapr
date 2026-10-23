@@ -1,3 +1,5 @@
 *.html
 *.R
+!precompile.R
+*_cache/
 bivariate-param-grid/

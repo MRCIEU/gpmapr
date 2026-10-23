@@ -109,8 +109,8 @@
 #'   returned as `module_rg`. Also required to build the locus bridge for any
 #'   pair involving an uploaded GWAS trait: its own coloc_group_id numbering is
 #'   private to that upload (see `.needs_locus_bridge()`), so loci are matched
-#'   first by the upload's own coloc record of the other trait
-#'   (`existing_study_extraction_id`), then by exact `variant_id`, then by
+#'   first by the upload's own coloc record of the other trait (its rows with
+#'   `source == "existing"` and their `study_extraction_id`), then by exact `variant_id`, then by
 #'   `ld_proxies()` LD looked up from both traits' leads.
 #' @param ld_proxies_fn Function used to look up LD proxies for the locus
 #'   bridge. Defaults to [ld_proxies()]; tests substitute a stub.
@@ -1009,9 +1009,9 @@ module_rg <- function(result,
 
 
 # Upload <-> existing-trait locus matches recorded by the upload's own coloc
-# run: each row of the upload's table for the existing trait carries that
-# trait's existing_study_extraction_id, which is the study_extraction_id of a
-# row in the existing trait's own table -- and so names its coloc_group_id.
+# run: each row of the upload's table for the existing trait (source "existing")
+# carries that trait's study_extraction_id, which is also the study_extraction_id
+# of a row in the existing trait's own table -- and so names its coloc_group_id.
 # Exact and coloc-backed (38/38 shared loci recovered for a T2D upload vs
 # triglycerides, against 34/38 by variant/LD matching alone). Returns
 # upload_cg, existing_cg and each side's own lead variant_id; empty when either
@@ -1022,14 +1022,15 @@ module_rg <- function(result,
     upload_variant = character(0), existing_variant = character(0),
     stringsAsFactors = FALSE
   )
-  if (!"existing_study_extraction_id" %in% names(cg_upload) ||
+  if (!all(c("source", "study_extraction_id") %in% names(cg_upload)) ||
         !"study_extraction_id" %in% names(cg_existing)) {
     return(empty)
   }
   partner <- cg_upload[
     !is.na(cg_upload$trait_id) &
       as.character(cg_upload$trait_id) == as.character(existing_trait) &
-      !is.na(cg_upload$existing_study_extraction_id) &
+      cg_upload$source %in% "existing" &
+      !is.na(cg_upload$study_extraction_id) &
       !is.na(cg_upload$coloc_group_id),
     ,
     drop = FALSE
@@ -1041,7 +1042,7 @@ module_rg <- function(result,
     return(empty)
   }
   hit <- match(
-    as.character(partner$existing_study_extraction_id),
+    as.character(partner$study_extraction_id),
     as.character(own_existing$study_extraction_id)
   )
   partner <- partner[!is.na(hit), , drop = FALSE]

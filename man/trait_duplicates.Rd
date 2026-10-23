@@ -21,3 +21,8 @@ proxy-group columns
 \description{
 Get all traits that have been marked as a duplicate of another trait
 }
+\examples{
+\dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+head(trait_duplicates())
+\dontshow{\}) # examplesIf}
+}
