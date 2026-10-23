@@ -21,14 +21,14 @@ test_that("a supported API version passes and is cached for the session", {
   expect_equal(lookups, 1)
 })
 
-test_that("gpmapr 0.1.1 needs API 1.1.0, and older versions are told to update for 1.1.0", {
+test_that("gpmapr 1.0.0 needs API 1.1.0, and older versions are told to update for 1.1.0", {
   reset_api_state()
-  local_mocked_bindings(installed_package_version = function() "0.1.1")
+  local_mocked_bindings(installed_package_version = function() "1.0.0")
   local_mocked_bindings(fetch_api_version = function(url) "1.1.0")
   expect_true(ensure_api_compatible())
   reset_api_state()
   local_mocked_bindings(fetch_api_version = function(url) "1.0.1")
-  expect_error(ensure_api_compatible(), "gpmapr 0.1.1 does not support version 1.0.1")
+  expect_error(ensure_api_compatible(), "gpmapr 1.0.0 does not support version 1.0.1")
   reset_api_state()
   on.exit(reset_api_state())
   local_mocked_bindings(fetch_api_version = function(url) "1.1.0")
@@ -93,7 +93,7 @@ test_that("gpmap_available() is FALSE for an API version this gpmapr doesn't sup
   reset_api_state()
   on.exit(reset_api_state())
   local_mocked_bindings(GET = function(...) fake_api_response('{"status": "healthy"}'), .package = "httr")
-  local_mocked_bindings(installed_package_version = function() "0.1.1")
+  local_mocked_bindings(installed_package_version = function() "1.0.0")
   local_mocked_bindings(fetch_api_version = function(url) "1.1.0")
   expect_true(gpmap_available())
   reset_api_state()

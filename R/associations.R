@@ -4,6 +4,7 @@
 #' @param study_ids A vector of numeric values specifying the Study IDs
 #' @return A dataframe containing the associations
 #' @inheritSection associations_doc associations_dataframe
+#' @inheritSection associations_doc Which associations are stored
 #' @examplesIf gpmap_available()
 #' associations(variant_ids = 80717, study_ids = c(926, 927))
 #' @export

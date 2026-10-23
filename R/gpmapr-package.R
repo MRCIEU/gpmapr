@@ -15,6 +15,11 @@
 #' blocks.  With `include_associations = TRUE`, each study's association at the row's variant (`beta`, `se`,
 #' `p`, `eaf`, `imputed`) is added to `coloc_groups`, `rare_results` and `study_extractions`.
 #'
+#' Associations are not stored for every study at every variant. Every study with a study extraction in an
+#' LD block has an association at the variants of that block's coloc groups and rare results, but at a study
+#' extraction's own lead variant only that study does. Compare studies at the variant of their coloc group;
+#' see "Which associations are stored" in [associations()].
+#'
 #' GWAS upload results ([get_gwas()], or [trait()] with a GUID) have the same tables, mixing the upload's
 #' own rows with rows for studies already in the GPMap.  Their `source` column ("upload" or "existing")
 #' says which: identify a study extraction by `source` and its id together, and find the upload's own rows

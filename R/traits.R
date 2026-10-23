@@ -52,8 +52,9 @@ trait_duplicates <- function() {
 #' @param trait_id A numeric value or GUID (from GWAS upload) specifying the trait id
 #' @param include_associations A logical value specifying whether to add each study's association at its
 #' variant (beta, se, p, eaf, imputed) to the coloc_groups, rare_results and study_extractions, defaults to FALSE
-#' @param include_full_associations A logical value specifying whether to include full
-#' trait associations from \code{/associations-full}, defaults to FALSE
+#' @param include_full_associations A logical value specifying whether to include the stored associations
+#' of the trait's studies and the studies that colocalise with it, at the trait's coloc group, rare result and
+#' study extraction variants (see "Which associations are stored"), defaults to FALSE
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8
 #' @return A list which contains the following elements:
@@ -66,8 +67,8 @@ trait_duplicates <- function() {
 #' See below for details.
 #'   \item rare_results: (optional) a list of dataframes containing the rare results for this trait
 #'   \item coloc_pairs: (optional) a dataframe containing all pairwise coloc results for this trait.
-#'   \item full_associations: (optional) a dataframe of full trait associations from
-#' \code{/associations-full}.
+#'   \item full_associations: (optional) a dataframe of associations (`variant_id`, `study_id`, `beta`, `se`,
+#' `p`, ...): see "Which associations are stored" below for which variants and studies it covers.
 #' }
 #' See below for details.
 #' @details
@@ -77,6 +78,7 @@ trait_duplicates <- function() {
 #' @inheritSection rare_results_doc rare_results_dataframe
 #' @inheritSection coloc_pairs_doc coloc_pairs_dataframe
 #' @inheritSection variants_doc variants_dataframe
+#' @inheritSection associations_doc Which associations are stored
 #' @examplesIf gpmap_available()
 #' result <- trait(5020)
 #' head(result$coloc_groups)

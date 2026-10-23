@@ -34,9 +34,9 @@ should not stop released versions before a fixed one is accepted. Either:
   versions, release it, then deploy; or
 - serve the change under a new path (e.g. `/v2/`) so older clients keep working.
 
-0.1.1, the first CRAN release, did neither: it requires API 1.1.0, and the
+1.0.0, the first CRAN release, did neither: it requires API 1.1.0, and the
 version gate stops every earlier gpmapr. With no CRAN users yet, the order was
-API 1.1.0 deployed first, then 0.1.1 released.
+API 1.1.0 deployed first, then 1.0.0 released.
 
 ## Testing against a local API
 
@@ -75,8 +75,11 @@ for, so live tests against production fail until the matching API is deployed).
 
 ## After acceptance
 
-1. `usethis::use_github_release()`.
-2. `usethis::use_dev_version()` (e.g. 0.1.0 -> 0.1.0.9000).
+1. `usethis::use_github_release()`. This tags `v<version>` on the commit recorded in
+   `CRAN-SUBMISSION` and creates the GitHub release from `NEWS.md`. Tag only once CRAN has
+   accepted the release, so the tag always matches what is on CRAN; nothing tags
+   automatically.
+2. `usethis::use_dev_version()` (e.g. 1.0.0 -> 1.0.0.9000).
 3. Add the dev version to `api_to_package_version`, so development installs
    keep working.
 4. After the first release, add the CRAN badge to the README:

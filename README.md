@@ -17,8 +17,8 @@ You can:
 Install the package from GitHub:
 
 ``` r
-# install.packages("remotes")
-remotes::install_github("MRCIEU/gpmapr")
+# install.packages("pak")
+pak::pak("MRCIEU/gpmapr")
 ```
 
 ## Usage
@@ -43,7 +43,7 @@ version of the GPMap API. If the API has changed, you'll see an error asking
 you to update. Update with:
 
 ``` r
-remotes::install_github("MRCIEU/gpmapr")
+pak::pak("MRCIEU/gpmapr")
 ```
 
 then restart R.

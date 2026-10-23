@@ -18,8 +18,9 @@ trait(
 \item{include_associations}{A logical value specifying whether to add each study's association at its
 variant (beta, se, p, eaf, imputed) to the coloc_groups, rare_results and study_extractions, defaults to FALSE}
 
-\item{include_full_associations}{A logical value specifying whether to include full
-trait associations from \code{/associations-full}, defaults to FALSE}
+\item{include_full_associations}{A logical value specifying whether to include the stored associations
+of the trait's studies and the studies that colocalise with it, at the trait's coloc group, rare result and
+study extraction variants (see "Which associations are stored"), defaults to FALSE}
 
 \item{include_coloc_pairs}{A logical value specifying whether to include coloc pairs, defaults to FALSE}
 
@@ -36,8 +37,8 @@ See below for details.
 See below for details.
 \item rare_results: (optional) a list of dataframes containing the rare results for this trait
 \item coloc_pairs: (optional) a dataframe containing all pairwise coloc results for this trait.
-\item full_associations: (optional) a dataframe of full trait associations from
-\code{/associations-full}.
+\item full_associations: (optional) a dataframe of associations (\code{variant_id}, \code{study_id}, \code{beta}, \code{se},
+\code{p}, ...): see "Which associations are stored" below for which variants and studies it covers.
 }
 See below for details.
 }
@@ -118,6 +119,8 @@ It has the following columns:
 \item trait_category: the category of the trait
 \item data_type: the data type of the trait
 \item tissue: the tissue of the trait
+\item beta, se, p, eaf, imputed: (with \code{include_associations = TRUE}) the study's association at the
+study extraction's own lead variant
 \item source, gwas_upload_id: (GWAS upload results only) whether the study extraction is from an
 uploaded GWAS ("upload", with the upload's id in \code{gwas_upload_id}) or already in the GPMap
 ("existing").  Upload and existing study extractions have separate ids, so identify a study
@@ -179,6 +182,27 @@ It has the following columns, along side many more columns from VEP:
 \item gene_id: the id of the gene as predicted by VEP
 \item gene: the gene name as predicted by VEP
 }
+}
+
+\section{Which associations are stored}{
+
+The GPMap does not store every study's association at every variant. It stores:
+\itemize{
+\item at the variant of every coloc group and rare result: the association of every study with a study
+extraction in that LD block, whether or not the study is in the group. A coloc group's variant can be
+looked up across all of those studies.
+\item at a study extraction's own lead variant (its \code{display_snp}): that study's association only.
+}
+So other studies have no association at a study extraction's lead variant, unless that variant is also the
+variant of a coloc group or rare result somewhere in the map. To compare studies at a locus, use the
+variant of their coloc group, not the study extractions' lead variants. Asking \code{\link[=associations]{associations()}} for a
+variant and study with nothing stored returns no row for that pair.
+
+\code{trait(include_full_associations = TRUE)} returns the stored associations at the trait's coloc group, rare
+result and study extraction variants, for the trait's own studies and the studies that colocalise with
+it. Within those, the rules above apply: at its coloc groups' variants most of those studies have an
+association; at the lead variant of one of its study extractions that is in none of its coloc groups,
+usually only the trait's own study does.
 }
 
 \examples{

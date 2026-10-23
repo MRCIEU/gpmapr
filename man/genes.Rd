@@ -107,6 +107,8 @@ It has the following columns:
 \item trait_category: the category of the trait
 \item data_type: the data type of the trait
 \item tissue: the tissue of the trait
+\item beta, se, p, eaf, imputed: (with \code{include_associations = TRUE}) the study's association at the
+study extraction's own lead variant
 \item source, gwas_upload_id: (GWAS upload results only) whether the study extraction is from an
 uploaded GWAS ("upload", with the upload's id in \code{gwas_upload_id}) or already in the GPMap
 ("existing").  Upload and existing study extractions have separate ids, so identify a study

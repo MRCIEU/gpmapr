@@ -1,4 +1,4 @@
-# gpmapr 0.1.1
+# gpmapr 1.0.0
 
 First CRAN release. Requires version 1.1.0 of the GPMap API.
 

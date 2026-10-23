@@ -26,6 +26,11 @@ Join \code{coloc_groups$study_extraction_id} (and the pair ids) to \code{study_e
 blocks.  With \code{include_associations = TRUE}, each study's association at the row's variant (\code{beta}, \code{se},
 \code{p}, \code{eaf}, \code{imputed}) is added to \code{coloc_groups}, \code{rare_results} and \code{study_extractions}.
 
+Associations are not stored for every study at every variant. Every study with a study extraction in an
+LD block has an association at the variants of that block's coloc groups and rare results, but at a study
+extraction's own lead variant only that study does. Compare studies at the variant of their coloc group;
+see "Which associations are stored" in \code{\link[=associations]{associations()}}.
+
 GWAS upload results (\code{\link[=get_gwas]{get_gwas()}}, or \code{\link[=trait]{trait()}} with a GUID) have the same tables, mixing the upload's
 own rows with rows for studies already in the GPMap.  Their \code{source} column ("upload" or "existing")
 says which: identify a study extraction by \code{source} and its id together, and find the upload's own rows
