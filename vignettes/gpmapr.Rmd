@@ -232,14 +232,14 @@ knitr::kable(head(slc44a1$coloc_groups[, c("coloc_group_id", "trait_name", "data
 
 
 
-| coloc_group_id|trait_name                                                            |data_type       |tissue                          |
-|--------------:|:---------------------------------------------------------------------|:---------------|:-------------------------------|
-|          94144|SLC44A1 Brain Spinal cord cervical c 1 sQTL chr9:105299309:105299743  |Splice Variant  |Brain Spinal cord cervical c 1  |
-|          94137|Diagnoses - main ICD10: J33.9 Nasal polyp, unspecified                |Phenotype       |NA                              |
-|          94116|Red blood cell count                                                  |Phenotype       |NA                              |
-|          94136|SLC44A1 Skin Not Sun Exposed Suprapubic sQTL chr9:105385502:105438281 |Splice Variant  |Skin Not Sun Exposed Suprapubic |
-|          94144|SLC44A1 Artery Aorta eQTL                                             |Gene Expression |Artery Aorta                    |
-|          94137|Diagnoses - secondary ICD10: K66.0 Peritoneal adhesions               |Phenotype       |NA                              |
+| coloc_group_id|trait_name                                                     |data_type       |tissue                     |
+|--------------:|:--------------------------------------------------------------|:---------------|:--------------------------|
+|          94123|Concentration of large HDL particles                           |Phenotype       |NA                         |
+|          94144|SLC44A1 Muscle Skeletal eQTL                                   |Gene Expression |Muscle Skeletal            |
+|          94137|Diagnoses - secondary ICD10: K66.0 Peritoneal adhesions        |Phenotype       |NA                         |
+|          94137|Diagnoses - main ICD10: I84.6 Residual haemorrhoidal skin tags |Phenotype       |NA                         |
+|          94123|Phospholipid levels in large HDL                               |Phenotype       |NA                         |
+|          94144|SLC44A1 Skin Sun Exposed Lower leg eQTL                        |Gene Expression |Skin Sun Exposed Lower leg |
 
 
 
@@ -268,14 +268,14 @@ knitr::kable(head(slc44a1_no_trans$coloc_groups[, c("coloc_group_id", "trait_nam
 
 
 
-| coloc_group_id|trait_name                                                            |data_type       |tissue                          |
-|--------------:|:---------------------------------------------------------------------|:---------------|:-------------------------------|
-|          94144|SLC44A1 Brain Spinal cord cervical c 1 sQTL chr9:105299309:105299743  |Splice Variant  |Brain Spinal cord cervical c 1  |
-|          94136|SLC44A1 Skin Not Sun Exposed Suprapubic sQTL chr9:105385502:105438281 |Splice Variant  |Skin Not Sun Exposed Suprapubic |
-|          94144|SLC44A1 Artery Aorta eQTL                                             |Gene Expression |Artery Aorta                    |
-|          94116|SLC44A1 Blood eQTL                                                    |Gene Expression |Blood                           |
-|          94136|SLC44A1 Skin Sun Exposed Lower leg sQTL chr9:105385502:105438281      |Splice Variant  |Skin Sun Exposed Lower leg      |
-|          94144|SLC44A1 Skin Sun Exposed Lower leg eQTL                               |Gene Expression |Skin Sun Exposed Lower leg      |
+| coloc_group_id|trait_name                                                           |data_type       |tissue                         |
+|--------------:|:--------------------------------------------------------------------|:---------------|:------------------------------|
+|          94144|SLC44A1 Muscle Skeletal eQTL                                         |Gene Expression |Muscle Skeletal                |
+|          94144|SLC44A1 Skin Sun Exposed Lower leg eQTL                              |Gene Expression |Skin Sun Exposed Lower leg     |
+|          94136|SLC44A1 Skin Sun Exposed Lower leg sQTL chr9:105385502:105389033     |Splice Variant  |Skin Sun Exposed Lower leg     |
+|          94144|SLC44A1 Adipose Subcutaneous eQTL                                    |Gene Expression |Adipose Subcutaneous           |
+|          94136|SLC44A1 Skin Sun Exposed Lower leg sQTL chr9:105385502:105438281     |Splice Variant  |Skin Sun Exposed Lower leg     |
+|          94144|SLC44A1 Brain Spinal cord cervical c 1 sQTL chr9:105299309:105299743 |Splice Variant  |Brain Spinal cord cervical c 1 |
 
 
 
@@ -588,8 +588,7 @@ ggplot2::ggplot(trem2_forest, ggplot2::aes(x = beta, y = row_label, colour = dat
 #> Warning: `geom_errorbarh()` was deprecated in ggplot2 4.0.0.
 #> ℹ Please use the `orientation` argument of `geom_errorbar()` instead.
 #> This warning is displayed once per session.
-#> Call `lifecycle::last_lifecycle_warnings()` to see where this warning was
-#> generated.
+#> Call `lifecycle::last_lifecycle_warnings()` to see where this warning was generated.
 #> `height` was translated to `width`.
 ```
 

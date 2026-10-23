@@ -18,5 +18,4 @@
 * Tests that need the API are skipped on CRAN with `skip_on_cran()`. The tests that run on CRAN use recorded API responses (tests/testthat/fixtures) and need no network access.
 * Examples that call the API are wrapped in `@examplesIf gpmap_available()`.
   - `upload_gwas()` and `delete_gwas()` are in `\dontrun{}` because they change data on the server and need the user's email address.
-  - `ld_matrix()` is also in `\dontrun{}`.
 * The vignettes are precomputed, so building them needs no network access.
