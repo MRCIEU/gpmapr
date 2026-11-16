@@ -1,3 +1,11 @@
+# gpmapr 1.0.1
+
+* `trait()` and `traits()` now request coloc pairs and full associations in
+  the API's columnar format (`format=columnar`), which is smaller and faster
+  to serialise and parse for large traits. Columns keep their types, so
+  `imputed`, `false_positive`, `false_negative` and `in_coloc_group` are now
+  logical rather than 0/1.
+
 # gpmapr 1.0.0
 
 First CRAN release. Requires version 1.1.0 of the GPMap API.

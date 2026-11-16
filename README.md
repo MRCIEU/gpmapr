@@ -2,6 +2,7 @@
 # gpmapr
 
 <!-- badges: start -->
+[![CRAN status](https://www.r-pkg.org/badges/version/gpmapr)](https://CRAN.R-project.org/package=gpmapr)
 [![R-CMD-check](https://github.com/MRCIEU/gpmapr/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/MRCIEU/gpmapr/actions/workflows/R-CMD-check.yaml)
 <!-- badges: end -->
 

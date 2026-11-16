@@ -1,18 +1,22 @@
+## Update
+
+This is a patch release (1.0.0 -> 1.0.1). gpmapr now requests coloc pairs and full associations in
+the API's columnar format, which is smaller and faster for large traits. See NEWS.md.
+
 ## R CMD check results
 
-0 errors | 0 warnings | 1 note
-
-* This is a new release.
-* Possibly misspelled words in DESCRIPTION: "colocalisation", "colocalising" and "pleiotropy" are
-  spelled correctly (British spelling of standard genetics terms).
+0 errors | 0 warnings | 0 notes
 
 ## Test environments
 
-* local macOS, R release: 0 errors | 0 warnings | 1 note ("unable to verify current time", from the
-  local network)
-* win-builder, R-devel (2026-10-22 r90748 ucrt), x86_64-w64-mingw32: 0 errors | 0 warnings | 1 note
-  (the note above)
-* R-hub: linux, macos, macos-arm64, windows (R-devel)
+* local macOS, R release: 0 errors | 0 warnings | 0 notes (with the network blocked, 1 note:
+  "unable to verify current time")
+* win-builder, R-devel: TODO
+* R-hub: linux, macos, macos-arm64, windows (R-devel): TODO
+
+## Reverse dependencies
+
+There are no reverse dependencies.
 
 ## Notes for the reviewer
 

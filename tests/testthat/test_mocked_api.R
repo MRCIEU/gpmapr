@@ -47,6 +47,58 @@ test_that("trait(include_full_associations = TRUE) adds the full associations", 
   result <- trait(5020, include_full_associations = TRUE)
   expect_s3_class(result$full_associations, "data.frame")
   expect_true(all(c("variant_id", "study_id", "beta", "se", "p") %in% names(result$full_associations)))
+  expect_equal(nrow(result$full_associations), 3)
+  expect_type(result$full_associations$beta, "double")
+  expect_type(result$full_associations$imputed, "logical")
+})
+
+test_that("trait(include_coloc_pairs = TRUE) adds the coloc pairs from the columnar response", {
+  local_mock_api()
+  result <- trait(5020, include_coloc_pairs = TRUE)
+  expect_s3_class(result$coloc_pairs, "data.frame")
+  expect_equal(
+    names(result$coloc_pairs),
+    c("variant_id", "study_extraction_a_id", "study_extraction_b_id", "ld_block_id", "h3", "h4",
+      "false_positive", "false_negative", "in_coloc_group")
+  )
+  expect_equal(nrow(result$coloc_pairs), 3)
+  expect_type(result$coloc_pairs$h4, "double")
+  expect_type(result$coloc_pairs$in_coloc_group, "logical")
+})
+
+test_that("tabular_response_to_dataframe() reads columnar and row responses alike", {
+  columnar <- jsonlite::fromJSON(
+    '{"coloc_pair_column_names": ["variant_id", "h4", "in_coloc_group"],
+      "coloc_pair_columns": {"in_coloc_group": [true, false], "variant_id": [1, 2], "h4": [0.9, null]}}'
+  )
+  rows <- jsonlite::fromJSON(
+    '{"coloc_pair_column_names": ["variant_id", "h4", "in_coloc_group"],
+      "coloc_pair_rows": [[1, 0.9, true], [2, null, false]]}'
+  )
+  from_columns <- tabular_response_to_dataframe(columnar, "coloc_pair")
+  from_rows <- tabular_response_to_dataframe(rows, "coloc_pair")
+
+  expect_equal(names(from_columns), c("variant_id", "h4", "in_coloc_group"))
+  expect_equal(from_columns$variant_id, c(1, 2))
+  expect_equal(from_columns$h4, c(0.9, NA))
+  expect_equal(from_columns$in_coloc_group, c(TRUE, FALSE))
+  expect_equal(names(from_rows), names(from_columns))
+  expect_equal(from_rows$variant_id, from_columns$variant_id)
+  expect_equal(from_rows$h4, from_columns$h4)
+})
+
+test_that("tabular_response_to_dataframe() returns an empty data frame for an empty response", {
+  columnar <- jsonlite::fromJSON('{"associations_full_column_names": [], "associations_full_columns": {}}')
+  rows <- jsonlite::fromJSON('{"associations_full_column_names": [], "associations_full_rows": []}')
+  expect_equal(dim(tabular_response_to_dataframe(columnar, "associations_full")), c(0, 0))
+  expect_equal(dim(tabular_response_to_dataframe(rows, "associations_full")), c(0, 0))
+
+  no_rows <- jsonlite::fromJSON(
+    '{"associations_full_column_names": ["variant_id", "p"], "associations_full_columns": {"variant_id": [], "p": []}}'
+  )
+  result <- tabular_response_to_dataframe(no_rows, "associations_full")
+  expect_equal(names(result), c("variant_id", "p"))
+  expect_equal(nrow(result), 0)
 })
 
 test_that("traits() returns the requested traits with their coloc groups", {

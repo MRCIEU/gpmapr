@@ -4,7 +4,7 @@
   "/v1/traits/duplicates": "response-03.json",
   "/v1/traits/5020?include_associations=FALSE": "response-04.json",
   "/v1/traits/5020?include_associations=TRUE": "response-05.json",
-  "/v1/traits/5020/associations-full": "response-06.json",
+  "/v1/traits/5020/associations-full?format=columnar": "response-06.json",
   "/v1/traits?ids=4405&ids=4872&include_associations=TRUE": "response-07.json",
   "/v1/genes": "response-08.json",
   "/v1/genes/WNT7B?include_associations=FALSE&include_coloc_pairs=FALSE&include_trans=TRUE&h4_threshold=0.8": "response-09.json",
@@ -21,5 +21,6 @@
   "/v1/search/variant/rs9939609?rsquared_threshold=0.8": "response-20.json",
   "/v1/search/options": "response-21.json",
   "/v1/gwas/7a289615-c1b4-91f3-3d97-887f60de9155": "gwas-upload.json",
-  "/v1/gwas/7a289615-c1b4-91f3-3d97-887f60de9155?include_associations=true": "gwas-upload-associations.json"
+  "/v1/gwas/7a289615-c1b4-91f3-3d97-887f60de9155?include_associations=true": "gwas-upload-associations.json",
+  "/v1/traits/5020/coloc-pairs?h4_threshold=0.8&format=columnar": "response-22.json"
 }

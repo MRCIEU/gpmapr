@@ -349,14 +349,13 @@ trait_coloc_pairs_api <- function(trait_id, h4_threshold = 0.8) {
   url <- paste0(
     getOption("gpmap_url"),
     "/v1/traits/", trait_id, "/coloc-pairs",
-    "?h4_threshold=", h4_threshold
+    "?h4_threshold=", h4_threshold,
+    "&format=columnar"
   )
   trait_coloc_pairs <- api_get(url, httr::timeout(timeout_seconds))
   trait_coloc_pairs <- httr::content(trait_coloc_pairs, "text", encoding = "UTF-8")
   trait_coloc_pairs <- jsonlite::fromJSON(trait_coloc_pairs)
-  to_dataframe <- as.data.frame(trait_coloc_pairs$coloc_pair_rows)
-  names(to_dataframe) <- trait_coloc_pairs$coloc_pair_column_names
-  return(to_dataframe)
+  return(tabular_response_to_dataframe(trait_coloc_pairs, "coloc_pair"))
 }
 
 #' @title Get Trait Full Associations API
@@ -367,14 +366,45 @@ trait_coloc_pairs_api <- function(trait_id, h4_threshold = 0.8) {
 trait_associations_full_api <- function(trait_id) {
   url <- paste0(
     getOption("gpmap_url"),
-    "/v1/traits/", trait_id, "/associations-full"
+    "/v1/traits/", trait_id, "/associations-full",
+    "?format=columnar"
   )
   response <- api_get(url, httr::timeout(timeout_seconds))
   response <- httr::content(response, "text", encoding = "UTF-8")
   response <- jsonlite::fromJSON(response)
-  to_dataframe <- as.data.frame(response$associations_full_rows)
-  names(to_dataframe) <- response$associations_full_column_names
-  return(to_dataframe)
+  return(tabular_response_to_dataframe(response, "associations_full"))
+}
+
+#' @title Build a data frame from a tabular API response
+#' @description The coloc pairs and full associations endpoints are requested
+#'   with `format=columnar`, which returns `<prefix>_column_names` and
+#'   `<prefix>_columns` (one array per column). This is smaller and faster to
+#'   parse than the row format, and keeps each column's type (e.g. logical
+#'   `imputed`, `in_coloc_group`). The row format (`<prefix>_rows`, one array
+#'   per row), which an API without `format` support returns, is still read.
+#' @param response The parsed JSON response, from `jsonlite::fromJSON()`
+#' @param prefix The response's field prefix: `"coloc_pair"` or
+#'   `"associations_full"`
+#' @return A data frame with one column per column name, in order
+#' @keywords internal
+#' @noRd
+tabular_response_to_dataframe <- function(response, prefix) {
+  column_names <- unlist(response[[paste0(prefix, "_column_names")]])
+  columns <- response[[paste0(prefix, "_columns")]]
+  if (is.null(columns)) {
+    to_dataframe <- as.data.frame(response[[paste0(prefix, "_rows")]])
+    names(to_dataframe) <- column_names
+    return(to_dataframe)
+  }
+  if (length(column_names) == 0) {
+    return(data.frame())
+  }
+  columns <- lapply(columns[column_names], function(column) {
+    # An empty JSON array parses to list()
+    if (length(column) == 0) return(logical(0))
+    return(column)
+  })
+  return(as.data.frame(columns, check.names = FALSE, stringsAsFactors = FALSE))
 }
 
 #' @title Get Gene Information
