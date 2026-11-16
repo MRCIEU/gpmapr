@@ -212,7 +212,7 @@ test_that("get_gwas() returns an uploaded GWAS", {
   expect_s3_class(result$coloc_groups, "data.frame")
 })
 
-test_that("search_gpmap() finds traits by name, most colocalised first", {
+test_that("search_gpmap() finds traits by name, most colocalized first", {
   local_mock_api()
   rm(list = ls(.search_cache), envir = .search_cache)
   result <- search_gpmap("haemoglobin")

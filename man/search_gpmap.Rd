@@ -12,7 +12,7 @@ search_gpmap(search_text, rsquared_threshold = 0.8)
 \item{rsquared_threshold}{A numeric value specifying the rsquared threshold for proxy variants, defaults to 0.8}
 }
 \value{
-A dataframe containing the search results, ordered by the number of colocalisation groups plus rare
+A dataframe containing the search results, ordered by the number of colocalization groups plus rare
 results (most first).  For variant searches the searched variant is always first.  Columns include:
 \itemize{
 \item type: the type of the search result: "original_variant", "proxy_variant", "trait", "gene"
@@ -21,8 +21,8 @@ results (most first).  For variant searches the searched variant is always first
 \item rsq: (variant searches only) the r-squared between a proxy variant and the searched variant; \code{NA} for
 the searched variant itself
 \item num_study_extractions: the number of study extractions (\code{NA} for variants)
-\item num_coloc_groups: the number of colocalisation groups
-\item num_coloc_studies: the number of colocalising studies
+\item num_coloc_groups: the number of colocalization groups
+\item num_coloc_studies: the number of colocalizing studies
 \item num_rare_results: the number of rare results
 \item call: the call to get the search result: "variant(type_id)", "trait(type_id)", "gene(type_id)"
 }

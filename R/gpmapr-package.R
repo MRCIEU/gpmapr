@@ -3,10 +3,10 @@
 #' \itemize{
 #'   \item `study_extractions`: a study's association signal in one LD block (a "study extraction"),
 #'     identified by `id`.
-#'   \item `coloc_groups`: groups of study extractions that colocalise, one row per study extraction in
+#'   \item `coloc_groups`: groups of study extractions that colocalize, one row per study extraction in
 #'     each group, identified by `coloc_group_id` and pointing at their study extraction with
 #'     `study_extraction_id`.
-#'   \item `coloc_pairs`: pairwise colocalisation results between two study extractions,
+#'   \item `coloc_pairs`: pairwise colocalization results between two study extractions,
 #'     `study_extraction_a_id` and `study_extraction_b_id`, with their trait names alongside.
 #'   \item `rare_results`: rare-variant results, grouped by `rare_result_group_id`.
 #' }

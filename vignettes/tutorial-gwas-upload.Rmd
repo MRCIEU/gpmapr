@@ -9,7 +9,7 @@ vignette: >
 
 
 
-The GPMap API allows you to upload your own GWAS summary statistics and receive colocalisation results against the existing GPMap. This vignette covers how to upload a GWAS, retrieve your results, interpret them, and compare your upload with another trait (including another upload) to find insights.
+The GPMap API allows you to upload your own GWAS summary statistics and receive colocalization results against the existing GPMap. This vignette covers how to upload a GWAS, retrieve your results, interpret them, and compare your upload with another trait (including another upload) to find insights.
 
 ## Uploading a GWAS
 
@@ -70,7 +70,7 @@ Much of the same analysis that is shown in the [case study](https://mrcieu.r-uni
 
 ### Your upload's rows and everyone else's
 
-Your results mix rows for your upload with rows for the studies already in the GPMap that it colocalises with. The `source` column says which:
+Your results mix rows for your upload with rows for the studies already in the GPMap that it colocalizes with. The `source` column says which:
 
 * `source == "upload"`: a study extraction from an uploaded GWAS. `gwas_upload_id` is the id of that upload: yours (`my_results$trait$id`), or another upload you compared with.
 * `source == "existing"`: a study extraction already in the GPMap, with its `trait_id` and `study_id`. `gwas_upload_id` is `NA`.
@@ -83,13 +83,13 @@ own_extractions <- my_results$study_extractions |>
   dplyr::filter(source == "upload", gwas_upload_id == my_results$trait$id)
 paste("Study extractions from your upload:", nrow(own_extractions))
 #> [1] "Study extractions from your upload: 144"
-paste("Existing study extractions it colocalises with:", sum(my_results$study_extractions$source == "existing"))
-#> [1] "Existing study extractions it colocalises with: 3854"
+paste("Existing study extractions it colocalizes with:", sum(my_results$study_extractions$source == "existing"))
+#> [1] "Existing study extractions it colocalizes with: 3854"
 ```
 
 ### Comparing your upload with another trait
 
-**Coloc groups** identify genomic regions (LD blocks) where your trait colocalises with other studies in the map; each row is a study extraction in the group. **Coloc pairs** give the pairwise colocalisation probabilities between two study extractions:
+**Coloc groups** identify genomic regions (LD blocks) where your trait colocalizes with other studies in the map; each row is a study extraction in the group. **Coloc pairs** give the pairwise colocalization probabilities between two study extractions:
 
 - **h4**: both traits share **one common causal variant**
 - **h3**: both traits associate at the region through **two distinct causal variants**
@@ -161,7 +161,7 @@ if (nrow(forest_df) > 0) {
       axis.text.y = ggplot2::element_blank(),
       axis.ticks.y = ggplot2::element_blank()
     ) +
-    ggplot2::labs(x = "Effect (beta) with 95% CI", y = NULL, colour = NULL, title = "Shared colocalisation groups")
+    ggplot2::labs(x = "Effect (beta) with 95% CI", y = NULL, colour = NULL, title = "Shared colocalization groups")
 }
 ```
 

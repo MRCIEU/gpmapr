@@ -45,7 +45,7 @@ test_that("compare_upload() skips rows whose association is a placeholder", {
   expect_equal(comparison$coloc_pairs$trait_study_extraction_id, 7223)
 })
 
-test_that("compare_upload() returns empty tables for a trait the upload doesn't colocalise with", {
+test_that("compare_upload() returns empty tables for a trait the upload doesn't colocalize with", {
   comparison <- compare_upload(upload_with_associations(), 999999)
   expect_equal(nrow(comparison$coloc_groups), 0)
   expect_equal(nrow(comparison$coloc_pairs), 0)

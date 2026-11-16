@@ -9,9 +9,9 @@
 #'   \item trait: the upload's details, e.g. its `id`, `guid`, `name` and `status`
 #'   \item study_extractions: the upload's study extractions and the existing study extractions its coloc
 #'     groups and pairs refer to, in one dataframe.  See below.
-#'   \item coloc_groups: the colocalisation groups the upload's study extractions are in, one row per study
+#'   \item coloc_groups: the colocalization groups the upload's study extractions are in, one row per study
 #'     extraction in each group.  See below.
-#'   \item coloc_pairs: one row per colocalising pair of study extractions.  Each side (`a`, `b`) is
+#'   \item coloc_pairs: one row per colocalizing pair of study extractions.  Each side (`a`, `b`) is
 #'     `study_extraction_a_id` with `source_a`, and `trait_name_a`, `data_type_a`, `tissue_a` and `gene_a`
 #'     describe it (and the same for `b`).
 #' }

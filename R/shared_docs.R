@@ -4,12 +4,12 @@
 #' The coloc_groups dataframe contains information about which studies have coloc results.
 #' It has the following columns:
 #' \itemize{
-#'   \item coloc_group_id: the unique id for this group of colocalised results
+#'   \item coloc_group_id: the unique id for this group of colocalized results
 #'   \item study_id: the id of the study
 #'   \item study_extraction_id: the id of the study extraction
 #'   \item variant_id: the id of the SNP
 #'   \item ld_block_id: the id of the LD block
-#'   \item h4_connectedness: the proportion of the pairs of studies in the group that colocalise
+#'   \item h4_connectedness: the proportion of the pairs of studies in the group that colocalize
 #'     (posterior probability of H4, one shared causal variant, of at least 0.8)
 #'   \item h3_connectedness: the proportion of the pairs of studies in the group with a posterior probability
 #'     of H3 (two distinct causal variants) of at least 0.8
@@ -158,7 +158,7 @@ coloc_pairs_doc <- function() {}
 #' variant and study with nothing stored returns no row for that pair.
 #'
 #' `trait(include_full_associations = TRUE)` returns the stored associations at the trait's coloc group, rare
-#' result and study extraction variants, for the trait's own studies and the studies that colocalise with
+#' result and study extraction variants, for the trait's own studies and the studies that colocalize with
 #' it. Within those, the rules above apply: at its coloc groups' variants most of those studies have an
 #' association; at the lead variant of one of its study extractions that is in none of its coloc groups,
 #' usually only the trait's own study does.
