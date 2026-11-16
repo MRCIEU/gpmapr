@@ -38,7 +38,7 @@ A list with:
 }
 \description{
 Computes a Jaccard-style consistency score between two traits based on
-colocalisation evidence at shared loci (LD blocks).
+colocalization evidence at shared loci (LD blocks).
 
 PCS = n / (n + m1 + m2)
 where:

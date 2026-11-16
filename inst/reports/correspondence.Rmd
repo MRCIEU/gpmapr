@@ -1,0 +1,213 @@
+---
+title: "Trait correspondence: `r paste(params$x$traits$trait_name, collapse = ', ')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    css: report.css
+params:
+  x: NULL
+  include_traits: false
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.align = "center")
+x <- params$x
+s <- x$settings
+tier_table <- gpmapr:::.report_tier_table(x)
+links_table <- gpmapr:::.report_links_table(x)
+direction_table <- gpmapr:::.report_direction_table(x)
+family_table <- gpmapr:::.report_family_table(x)
+excluded_table <- gpmapr:::.report_excluded_table(gpmapr::excluded(x))
+biology <- gpmapr::annotation(x, "summary")
+```
+
+<p class="note">Written by `create_report()` from a `trait_correspondence()`
+result (gpmapr `r x$gpmapr_version`, run `r format(x$created, "%Y-%m-%d %H:%M")`).</p>
+
+Each trait was decomposed independently into SNP programs. Every cross-trait
+pair of high- and medium-confidence programs was then asked two questions.
+**Same biology?** Are the two programs driven by the same background traits
+in the same proportions (`phi_traits`, the Tucker congruence of their trait
+loadings)? **Same SNPs?** Where the two traits share fine-mapped loci, do the
+programs load on them alike (`alignment`, with a permutation test,
+`q_concordance`)? The answers give each pair a tier; high- and medium-tier
+pairs are **links**, and links are grouped into multi-trait **families**. The
+**direction** of a link (do the alleles raise both traits, or raise one and
+lower the other?) is the sign of `phi_traits`, checked against the traits' own
+allele effects where enough loci are shared (`rg`).
+
+## Traits compared
+
+```{r results = "asis"}
+print(knitr::kable(x$traits, format = "html", caption = "Traits and their programs (high and medium confidence) and loci"))
+```
+
+```{r results = "asis"}
+if (nrow(excluded_table) > 0) {
+  cat(
+    "\n\nProxy traits of each anchor, removed from its fit and left out of every ",
+    "profile comparison involving it (see each trait's decomposition for how closely ",
+    "each tracks its anchor):\n\n", sep = ""
+  )
+  cat('<details><summary>Proxy traits removed</summary><div class="table-wrap">')
+  print(knitr::kable(excluded_table, format = "html"))
+  cat("</div></details>\n\n")
+}
+```
+
+## How many program pairs link
+
+Two traits can only be matched at loci both were fine-mapped to, so
+`n_loci_shared` bounds how much locus evidence exists for a pair of traits.
+
+| tier | profile (`phi_traits`) | loci | reading |
+|---|---|---|---|
+| **high** | strong (\|phi\| >= `r s$phi_high`) | agree | same biology, carried by the same SNPs |
+| **medium** | strong | too few to check | same biology; too few shared loci to check the SNPs |
+| **medium** | moderate (>= `r s$phi_low`) | agree | a weaker profile match, confirmed by the SNPs |
+| **low** | strong / moderate / weak | disagree / too few / agree | not a link |
+
+Loci are **too few** with fewer than `r s$min_shared_loci` shared
+high-confidence loci or fewer than `r s$min_eff_loci` effective loci; they
+**agree** when `alignment` >= `r s$min_alignment` and `q_concordance` <=
+`r s$fdr_threshold`.
+
+```{r results = "asis"}
+print(knitr::kable(tier_table, format = "html", caption = "Program pairs per trait pair, by tier"))
+```
+
+```{r results = "asis"}
+if (is.finite(x$q_floor)) {
+  cat(sprintf(paste0(
+    "<p class=\"note\">With n_perm = %d permutations, a locus p-value cannot fall below ",
+    "1/%d; after correction across all %d scored pairs, pairs at that floor have ",
+    "q = %.3g. If that is close to fdr_threshold (%s), loci cannot agree because there ",
+    "are too few permutations: rerun with a larger n_perm.</p>"
+  ), as.integer(s$n_perm), as.integer(s$n_perm) + 1L, sum(is.finite(x$pairs$q_concordance)),
+  x$q_floor, format(s$fdr_threshold)))
+}
+```
+
+```{r fig.width = 8, fig.height = 4}
+print(gpmapr::plot_phi(x))
+```
+
+## Links
+
+Every pair of tier low or above (green high, orange medium, red low), by tier
+and then by |phi|. `top_traits` are the background traits carrying the
+profile match, with their share (a negative share works against phi's sign).
+`n_eff_traits` is how many traits effectively carry it: a match carried by one
+or two traits is a narrower claim. `comparability` is how much of the two
+programs the shared loci cover. `rg` (with its 95% interval) is the
+correlation of the two traits' own allele effects across the programs' loci;
+`direction_check` says whether it agrees with the profile direction.
+
+```{r results = "asis"}
+if (nrow(links_table) == 0) {
+  cat("No program pair reached the low tier.\n\n")
+} else {
+  cat('<div class="table-wrap">')
+  print(gpmapr::kable_confidence(links_table, tier_col = "tier", caption = "Program pairs of tier low or above"))
+  cat("</div>")
+}
+```
+
+```{r results = "asis"}
+if (nrow(direction_table) > 0) {
+  print(knitr::kable(
+    direction_table, format = "html",
+    caption = "Links per trait pair by profile direction, and whether rg (where it calls a direction) agrees"
+  ))
+}
+```
+
+## Families
+
+Links are grouped into families by community detection on the link graph
+(edges weighted by |phi|). `n_core_loci` are claimed by every member and
+`n_union_loci` by any. `mutual_best` is `r s$mutual_best`: when `FALSE`, a
+program may link to several programs of another trait, because EBMF can split
+one biological module into two programs within a trait; when `TRUE`, only
+links where each program is the other's closest match are kept, so each
+program has at most one partner per other trait.
+
+```{r results = "asis"}
+if (nrow(family_table) == 0) {
+  cat("No program pairs were linked, so there are no families.\n\n")
+} else {
+  cat(sprintf(
+    "%d families from %d linked programs (%d programs have no link); modularity %.2f.\n\n",
+    nrow(family_table), nrow(x$nodes), as.integer(x$n_unlinked), x$modularity
+  ))
+  cat('<div class="table-wrap">')
+  print(knitr::kable(family_table, format = "html", escape = FALSE, caption = "Families"))
+  cat("</div>")
+}
+```
+
+```{r fig.width = 10, fig.height = 8}
+if (nrow(family_table) > 0) print(gpmapr::plot_families(x))
+```
+
+## Do families recover the same biology?
+
+Annotations play no part in forming a link. For each family, the
+high-confidence SNPs of its programs in each trait are enriched separately,
+against that trait's own SNPs, for trait categories and tissues, and for
+Reactome and KEGG pathways through their colocalizing QTL genes. A family
+whose traits independently surface the same category, tissue or pathway has
+support beyond the loadings that created it. A SNP set holding most of its
+trait's SNPs is compared against a background that is largely itself, so
+"none" there is expected.
+
+```{r results = "asis"}
+if (is.null(x$family_enrichment)) {
+  cat("This result was not annotated (`annotate = FALSE`).\n\n")
+} else if (nrow(biology) == 0) {
+  cat("No families to annotate.\n\n")
+} else {
+  shown <- biology[, c("family", "trait_name", "programs", "n_snps", "categories", "tissues", "reactome", "kegg")]
+  cat('<div class="table-wrap">')
+  print(knitr::kable(shown, format = "html", caption = "Enrichment of each family's SNPs, per trait"))
+  cat("</div>")
+}
+```
+
+## Reading the results
+
+- **Profile first, loci second.** Two traits that share few fine-mapped loci
+  can still share programs; their links are usually `too_few_loci`.
+- **`too_few_loci` and `disagree` differ.** The first means the loci cannot
+  check the profile match; the second that they were checked and the shared
+  SNPs do not carry both programs.
+- **Read `top_traits`.** Near-duplicate traits each count separately, so check
+  the names, not just `n_eff_traits`.
+- **The profile sign is a direction.** Each trait is oriented to its own risk
+  allele, so antagonism mirrors the profile (phi < 0). A `direction_check` of
+  `conflict` is worth inspecting.
+- **Cutoffs are judgements.** The phi cutoffs follow factor-analysis
+  conventions, not calibration on genetic loadings.
+- **Sample overlap and winner's curse are not corrected.** Same-cohort traits
+  bias `rg` away from zero, and shared loci are selected by both traits.
+
+## Settings
+
+<details><summary>Analysis settings used</summary>
+
+```{r results = "asis"}
+print(knitr::kable(gpmapr:::.report_settings_table(s), format = "html"))
+```
+
+</details>
+
+```{r results = "asis"}
+if (isTRUE(params$include_traits)) {
+  h <- "###"
+  for (d in x$decompositions) {
+    cat("\n\n## Trait: ", d$trait$name, "\n\n", sep = "")
+    cat(knitr::knit_child("_decomposition.Rmd", envir = environment(), quiet = TRUE))
+  }
+}
+```

@@ -15,6 +15,7 @@ params:
   n_rep: 3
   cores: 5
   remove_duplicates: true
+  auto_proxies: true
 ---
 
 
@@ -317,11 +318,11 @@ knitr::kable(
   data.frame(
     setting = c(
       "api", "gpmap_url", "target_guid", "include_situated_gene", "n_rep",
-      "cores", "remove_duplicates", names(ebmf_settings)
+      "cores", "remove_duplicates", "auto_proxies", names(ebmf_settings)
     ),
     value = c(
       params$api, getOption("gpmap_url"), target_guid, include_situated_gene,
-      n_rep, cores, isTRUE(params$remove_duplicates),
+      n_rep, cores, isTRUE(params$remove_duplicates), isTRUE(params$auto_proxies),
       vapply(ebmf_settings, function(x) paste(format(x), collapse = ", "), character(1))
     ),
     stringsAsFactors = FALSE
@@ -342,8 +343,14 @@ add no information about mechanism. They can also give EBMF extra weight to
 spend on small differences between near-identical rows. They are removed from
 the matrix before fitting.
 
-The list was drawn up by searching `all_traits()` and the upload's coloc
-partners for diabetes-related names, then pruned by hand. It covers:
+The upload is not a GPMap trait, so its proxies are those GPMap groups with its
+own T2D trait (`proxy_trait_id = "114"`, see `anchor_proxies()`): trait 114
+itself, its **duplicate group** (the UK Biobank SPA/Firth versions) and its
+**proxy group** (diagnoses, diabetes medication, metformin, gliclazide, family
+history and diabetes-related eye disease). GPMap files the insulin traits
+under type 1 diabetes, so they are added by hand. With `auto_proxies: false`
+the hand-curated list this vignette used before is applied instead. It
+covers:
 
 - **T2D GWAS:** GPMap's own T2D and the UK Biobank SPA/Firth versions.
 - **Diagnosis:** doctor-diagnosed, self-reported and ICD10 E11.9 diabetes.
@@ -360,88 +367,57 @@ Kept on purpose:
   pressure or diabetes: Blood pressure medication".
 
 ```{r t2d-proxies}
-t2d_proxy_traits <- data.frame(
-  trait_id = c(
-    "114", "2499", "2549",
-    "2863", "3106", "4536",
-    "1494", "3270", "4422", "3333", "4300", "4403",
-    "3428", "3779", "3580",
-    "2814"
-  ),
-  trait_name = c(
-    "Type 2 diabetes",
-    "Type 2 diabetes (Firth correction)",
-    "Type 2 diabetes (SPA correction)",
-    "Diabetes diagnosed by doctor",
-    "Non-cancer illness code, self-reported: diabetes",
-    "Diagnoses - secondary ICD10: E11.9 Without complications",
-    "Medication use (drugs used in diabetes)",
-    "Treatment/medication code: metformin",
-    "Treatment/medication code: gliclazide",
-    "Treatment/medication code: insulin product",
-    "Medication for cholesterol, blood pressure or diabetes: Insulin",
-    "Started insulin within one year diagnosis of diabetes",
-    "Illnesses of mother: Diabetes",
-    "Illnesses of father: Diabetes",
-    "Illnesses of siblings: Diabetes",
-    "Eye problems/disorders: Diabetes related eye disease"
-  ),
-  group = c(
-    rep("T2D GWAS", 3), rep("Diagnosis", 3), rep("Treatment", 6),
-    rep("Family history", 3), "Complication"
-  ),
-  stringsAsFactors = FALSE
+# Insulin traits, which GPMap files under type 1 diabetes.
+added_proxies <- c("3333", "4300", "4403")
+# The hand-curated list used before GPMap's proxy groups (auto_proxies: false).
+curated_proxies <- c(
+  "114", "2499", "2549",
+  "2863", "3106", "4536",
+  "1494", "3270", "4422", "3333", "4300", "4403",
+  "3428", "3779", "3580",
+  "2814"
 )
-
-proxy_counts <- target$coloc_groups |>
-  dplyr::mutate(trait_id = as.character(trait_id)) |>
-  dplyr::filter(trait_id %in% t2d_proxy_traits$trait_id) |>
-  dplyr::group_by(trait_id) |>
-  dplyr::summarise(n_coloc_groups = dplyr::n_distinct(coloc_group_id), .groups = "drop")
-
-knitr::kable(
-  t2d_proxy_traits |>
-    dplyr::left_join(proxy_counts, by = "trait_id") |>
-    dplyr::mutate(n_coloc_groups = tidyr::replace_na(n_coloc_groups, 0L)),
-  caption = paste0(
-    "T2D proxy traits removed before building the matrix. n_coloc_groups = ",
-    "the upload's coloc groups that each trait shares."
-  ),
-  row.names = FALSE
-)
-
-target$coloc_groups <- target$coloc_groups |>
-  dplyr::filter(!as.character(trait_id) %in% t2d_proxy_traits$trait_id)
-```
-
-```{r duplicate-traits, include=FALSE}
-# Traits GPMap marks as duplicates of another trait (trait_duplicates(), e.g. a
-# second import of the same GWAS) are dropped, keeping the parent.
-if (isTRUE(params$remove_duplicates)) {
-  target$coloc_groups <- remove_duplicate_traits(
-    target$coloc_groups, trait_duplicates(), keep_trait_ids = target_guid
-  )
-}
+auto_proxies <- isTRUE(params$auto_proxies)
 ```
 
 ### Fit
 
+`decompose_trait()` removes the proxies (and, with `remove_duplicates`, every
+other duplicated background trait), fits EBMF, scores the programs
+(summarised in the next section) and annotates them (Part 3's last section).
+
 ```{r fit}
 set.seed(20240214)
-# Fits EBMF and scores the programs (summarised in the next section).
-pipeline <- run_ebmf_pipeline(
+d <- decompose_trait(
   target,
-  settings = ebmf_settings,
-  target_trait_id = target_guid,
-  n_rep = n_rep,
+  settings = gpmap_settings(ebmf_settings, n_rep = n_rep),
+  proxies = auto_proxies,
+  proxy_trait_id = "114",
+  exclude_trait_ids = if (auto_proxies) added_proxies else curated_proxies,
+  remove_duplicates = isTRUE(params$remove_duplicates),
   cores = cores,
   verbose = FALSE
 )
-ebmf_result <- pipeline$fit
-program_summary <- pipeline$summary
+ebmf_result <- d$fit
+program_summary <- d$summary
 X <- ebmf_result$x_matrix
 S <- ebmf_result$s_matrix
 cg <- ebmf_result$coloc_groups
+
+knitr::kable(
+  excluded(d) |>
+    dplyr::filter(source != "background_duplicate") |>
+    dplyr::transmute(
+      source, trait_id, trait_name, rule = dplyr::coalesce(rule, ""),
+      n_coloc_groups = n_loci, pct_same_sign = round(pct_same_sign), r_z = round(r_z, 2)
+    ),
+  caption = paste0(
+    "T2D proxy traits removed before building the matrix, by where each came ",
+    "from. n_coloc_groups = the upload's coloc groups each trait shares; ",
+    "pct_same_sign and r_z = how closely it tracks T2D there (see anchor_proxies())."
+  ),
+  row.names = FALSE
+)
 
 knitr::kable(
   data.frame(
@@ -611,7 +587,7 @@ brackets. Traits need a specificity of at least `r min_specificity`, and the
 top 8 are listed.
 
 **Loading-based enrichment** of trait categories, tissues and pathways
-(KEGG and Reactome, on the colocalising QTL genes). There is no membership
+(KEGG and Reactome, on the colocalizing QTL genes). There is no membership
 cutoff: every SNP contributes to every program, weighted by its squared EBMF
 loading, in the regression `lm(loading^2 ~ membership)`. A hit needs both
 FDR ≤ 0.05 and R² ≥ 0.05. The FDR is computed across every program tested,
@@ -625,16 +601,8 @@ Suzuki's islet-cell enrichments therefore have no direct counterpart here.
 has_analysis_groups <- nrow(clusters_analysis) > 0
 min_r_squared <- 0.05
 
-group_traits <- summarise_module_specific_traits(
-  trait_matrix = ebmf_result$trait_matrix,
-  groups = clusters_analysis,
-  trait_info = ebmf_result$trait_info,
-  coloc_groups = cg,
-  exclude_trait_ids = target_guid,
-  min_group_size = min_module_size,
-  top_n = top_n_traits,
-  min_specificity = min_specificity
-)
+# Computed by decompose_trait(); read from the result.
+group_traits <- d$annotation$specific_traits
 module_traits_overview <- dplyr::bind_rows(lapply(group_traits$by_group, function(x) {
   passing <- x$traits |>
     dplyr::filter(passes_min_specificity) |>
@@ -695,33 +663,21 @@ if (!has_analysis_groups) {
   tis_by <- list()
   path_by <- list()
 } else {
-  loading_categories <- enrich_program_loadings_trait_categories(
-    clustering_result = ebmf_result,
-    coloc_groups = cg,
-    snp_key = "variant_id"
-  )
-  loading_tissues <- enrich_program_loadings_tissues(
-    clustering_result = ebmf_result,
-    coloc_groups = cg,
-    snp_key = "variant_id"
-  )
-  pathway_universe <- tryCatch(
-    pathway_mappings(),
-    error = function(e) {
-      cat("Pathway mappings endpoint unavailable (", conditionMessage(e), ").\n", sep = "")
-      return(NULL)
-    }
-  )
-  loading_pathways <- if (is.null(pathway_universe)) {
-    NULL
-  } else {
-    enrich_program_loadings_pathways(
+  loading_categories <- d$annotation$categories
+  loading_tissues <- d$annotation$tissues
+  loading_pathways <- d$annotation$pathways
+  if (identical(d$annotation$pathways_status, "unavailable")) {
+    cat("Pathway mappings endpoint unavailable; pathway enrichment skipped.\n")
+  }
+  if (include_situated_gene && !is.null(loading_pathways)) {
+    # decompose_trait() maps SNPs to their colocalizing QTL genes only.
+    loading_pathways <- enrich_program_loadings_pathways(
       clustering_result = ebmf_result,
       coloc_groups = cg,
-      mappings = pathway_universe,
+      mappings = loading_pathways$mappings,
       snp_key = "variant_id",
       sources = c("KEGG", "Reactome"),
-      include_situated_gene = include_situated_gene
+      include_situated_gene = TRUE
     )
   }
   cat_by <- valid_by_program(loading_categories)
@@ -784,7 +740,7 @@ if (!has_analysis_groups) {
 # - Positional: the nearest protein-coding gene to each SNP (0 bp if the SNP
 #   falls inside the gene; all overlapping genes are listed). This is how
 #   Suzuki et al. name their loci.
-# - Colocalising QTL: genes whose molecular QTL colocalises with the SNP
+# - Colocalizing QTL: genes whose molecular QTL colocalizes with the SNP
 #   (genes_at_snps()). Closer to mechanism, but can differ from the locus name
 #   (the FTO signal acts through IRX3/IRX5).
 gene_table <- all_genes() |>
@@ -917,7 +873,7 @@ not interpreted here. The comparison has five parts, after a check of which
 Suzuki traits the matrix contains:
 
 - **4b:** Suzuki's canonical marker genes, found positionally and through
-  colocalising QTLs.
+  colocalizing QTLs.
 - **4c:** each Suzuki index SNV, matched to the GPMap SNP in its LD block, and
   the programs that SNP ended up in.
 - **4d:** each program's mean profile over the Suzuki clustering traits,
@@ -929,7 +885,7 @@ Suzuki traits the matrix contains:
 ### 4a. Trait coverage
 
 The univariate matrix already contains every phenotypic GPMap trait that
-colocalises with the upload's SNPs. `trait_map.csv` records which of those rows
+colocalizes with the upload's SNPs. `trait_map.csv` records which of those rows
 are Suzuki's 37 clustering traits:
 
 - `same_gwas`: the GWAS Suzuki used;
@@ -972,7 +928,7 @@ knitr::kable(
     ),
   caption = paste0(
     "Suzuki clustering traits and their GPMap rows. n_snps_observed = upload ",
-    "SNPs at which the GPMap trait colocalises."
+    "SNPs at which the GPMap trait colocalizes."
   ),
   row.names = FALSE
 )
@@ -986,13 +942,13 @@ in two ways:
 
 - **positional:** the gene is the nearest protein-coding gene to one of the
   program's SNPs, which is how Suzuki named the locus;
-- **QTL:** the gene's molecular QTL colocalises with one of the program's SNPs.
+- **QTL:** the gene's molecular QTL colocalizes with one of the program's SNPs.
 
 A gene found neither way is labelled "low / single-trait program only" if it
 is at a member SNP of a program outside those tiers, "at a matrix SNP, not in
 a program" if some SNP in the pleiotropy matrix carries it, and "not found"
 otherwise. "Not found" usually means the locus has no upload signal that
-colocalises with enough traits to enter the matrix (see 4c).
+colocalizes with enough traits to enter the matrix (see 4c).
 
 ```{r marker-genes}
 marker_genes <- suzuki_clusters |>
@@ -1053,7 +1009,7 @@ knitr::kable(
   caption = paste0(
     "Suzuki Table 1 example-locus genes. positional / qtl list the high or ",
     "medium programs in which the gene is the nearest gene to a member SNP, ",
-    "or a colocalising QTL gene."
+    "or a colocalizing QTL gene."
   ),
   row.names = FALSE
 )
@@ -1103,7 +1059,7 @@ Each Suzuki index SNV is matched to the upload as follows:
   SNP within `r`^2^ ≥ 0.8, has no match. A negative `ld_r` means the two
   variants' alleles are in opposite phase.
 - **Status.** Each SNV then ends up in one of five places: no upload signal
-  in its LD block; an upload signal that is not in the matrix (it colocalises
+  in its LD block; an upload signal that is not in the matrix (it colocalizes
   with too few traits, or no matrix SNP is in strong LD with it); in the
   matrix but in no program; in low or single-trait programs only; or in at
   least one high or medium program.
@@ -1440,7 +1396,7 @@ traits. This compares those profiles directly with each program's.
   member SNPs, on the Suzuki traits that are rows of the matrix (4a). This is
   the matrix EBMF factorises: each SNP is aligned to its T2D risk allele, as
   in Suzuki's profiles, and the z-scores are asinh-compressed. A missing cell
-  (no colocalisation) counts as 0. (, the raw matrix, is not aligned, so
+  (no colocalization) counts as 0. (, the raw matrix, is not aligned, so
   its column means would mix risk and protective alleles.)
 - **Cluster profile:** Suzuki's cluster mean, as `beta / se` (Supplementary
   Table 7).
@@ -1448,7 +1404,7 @@ traits. This compares those profiles directly with each program's.
   1 for the same pattern of signs and relative sizes, 0 for unrelated, −1 for
   opposite.
 
-The two profiles are on different scales (asinh-compressed colocalisation z
+The two profiles are on different scales (asinh-compressed colocalization z
 against the z of a cluster mean), so only the pattern is compared, not the
 size. A program that loads on few of the Suzuki traits gets a noisy cosine.
 Some Suzuki clusters have similar profiles over these traits, so a program
@@ -1544,7 +1500,8 @@ then by similarity, with each child program indented under its parent:
   over (see Program confidence in Part 3).
 - **specific_traits:** the top three module-specific traits.
 - **tissues and pathways:** the top three loading-based hits (FDR ≤ 0.05 and
-  R² ≥ 0.05, largest effect first; Part 3).
+  R² ≥ 0.05, largest effect first; Part 3), pathways per source
+  (`program_cards()`).
 - **suzuki_snvs:** the Suzuki clusters of the index SNVs matched to the
   program's member SNPs (4c), largest first.
 - **suzuki_loci:** those SNVs' loci (Suzuki's names), with the clusters of
@@ -1560,35 +1517,16 @@ then by similarity, with each child program indented under its parent:
 if (length(strong_programs) == 0) {
   cat("No high or medium programs.\n")
 } else {
-  # Top loading-based hits per program, as used in Part 3.
-  top_items <- function(by_program_list, value_col, n = 3L) {
-    return(vapply(by_program_list, function(x) {
-      tab <- x$comparison
-      if (is.null(tab) || nrow(tab) == 0) {
-        return("none")
-      }
-      tab <- tab[is.finite(tab$fdr) & tab$fdr <= 0.05 &
-                   is.finite(tab$r_squared) & tab$r_squared >= min_r_squared, , drop = FALSE]
-      if (nrow(tab) == 0) {
-        return("none")
-      }
-      tab <- tab[order(-tab$enrichment), , drop = FALSE]
-      return(paste(utils::head(tab[[value_col]], n), collapse = "<br>"))
-    }, character(1)))
-  }
-  tissues_top <- top_items(tis_by, "tissue")
-  pathways_top <- top_items(path_by, "description")
-  traits_top <- stats::setNames(
-    vapply(group_traits$by_group, function(x) {
-      passing <- x$traits |> dplyr::filter(passes_min_specificity) |> utils::head(3L)
-      return(if (nrow(passing) == 0) "none" else paste(passing$trait_name, collapse = "<br>"))
-    }, character(1)),
-    vapply(group_traits$by_group, function(x) as.character(x$group), character(1))
-  )
-  lookup <- function(x, key) {
-    out <- if (length(x) == 0) NA_character_ else unname(x[key])
-    return(ifelse(is.na(out), "none", out))
-  }
+  # The generic columns come from program_cards(); this vignette joins its
+  # Suzuki columns and its positional genes onto them.
+  generic_cards <- program_cards(d, n = 3L) |>
+    dplyr::transmute(
+      program, specific_traits, tissues,
+      pathways = paste0("Reactome: ", reactome, "<br>KEGG: ", kegg)
+    ) |>
+    dplyr::mutate(dplyr::across(c(specific_traits, tissues), function(x) {
+      return(gsub("; ", "<br>", x, fixed = TRUE))
+    }))
   suzuki_snv_summary <- snv_crosstab |>
     dplyr::rowwise() |>
     dplyr::mutate(suzuki_snvs = {
@@ -1646,11 +1584,7 @@ if (length(strong_programs) == 0) {
     ) |>
     dplyr::filter(program %in% strong_programs) |>
     dplyr::left_join(program_genes |> dplyr::select(program, n_snps), by = "program") |>
-    dplyr::mutate(
-      specific_traits = lookup(traits_top, program),
-      tissues = lookup(tissues_top, program),
-      pathways = lookup(pathways_top, program)
-    ) |>
+    dplyr::left_join(generic_cards, by = "program") |>
     dplyr::left_join(suzuki_snv_summary, by = "program") |>
     dplyr::left_join(suzuki_loci, by = "program") |>
     dplyr::left_join(profile_best, by = "program") |>
@@ -1839,16 +1773,13 @@ most partner GWAS. Correlated sampling error then inflates apparent sharing
 between the two traits. Sharing that is weak or confined to a single locus
 should be read with this in mind.
 
-**Untested.** The multi-trait vignette has not yet been run with an upload GUID
-as one of its traits. A first run would look like this:
+A first run with a partner trait is one call:
 
 ```{r multitrait-example, eval = FALSE, echo = TRUE}
-rmarkdown::render(
-  "vignettes/multitrait-analysis.Rmd",
-  params = list(
-    api = "production",
-    trait_ids = c("c6d2e20f-6ece-d093-78ee-37534547c466", 1992)
-  ),
-  output_file = "multitrait-analysis-t2dggi-bmi.html"
+x <- trait_correspondence(
+  c("c6d2e20f-6ece-d093-78ee-37534547c466", "1992"),
+  proxy_trait_ids = list("c6d2e20f-6ece-d093-78ee-37534547c466" = "114"),
+  exclude_trait_ids = list("c6d2e20f-6ece-d093-78ee-37534547c466" = c("3333", "4300", "4403"))
 )
+create_report(x)
 ```

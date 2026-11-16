@@ -1,6 +1,6 @@
 #' @title Pleiotropic Consistency Score (PCS)
 #' @description Computes a Jaccard-style consistency score between two traits based on
-#' colocalisation evidence at shared loci (LD blocks).
+#' colocalization evidence at shared loci (LD blocks).
 #'
 #' PCS = n / (n + m1 + m2)
 #' where:
@@ -115,7 +115,7 @@ pcs_matrix <- function(trait_ids, coloc_groups = NULL, p_threshold = 5e-8) {
 
 #' @title Net Directionality Score
 #' @description Computes the net directionality of effect between two traits at shared
-#' colocalised loci. Uses association betas to determine concordance.
+#' colocalized loci. Uses association betas to determine concordance.
 #'
 #' NDS = (n_pos - n_neg) / (n_pos + n_neg)
 #' where:

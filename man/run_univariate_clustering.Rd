@@ -67,7 +67,7 @@ are large relative to noise) or \code{"point_normal"}.}
 \item{ebmf_backfit}{If \code{TRUE} (default), cyclically refit all factors after
 the greedy phase. \code{FALSE} is faster but leaves greedy-order artifacts.}
 
-\item{ebmf_missing_se}{Standard error of an unobserved cell (no colocalising
+\item{ebmf_missing_se}{Standard error of an unobserved cell (no colocalizing
 association), which EBMF fits as an observed 0. See \code{run_ebmf()}.}
 }
 \value{

@@ -41,7 +41,7 @@ variant of their coloc group, not the study extractions' lead variants. Asking \
 variant and study with nothing stored returns no row for that pair.
 
 \code{trait(include_full_associations = TRUE)} returns the stored associations at the trait's coloc group, rare
-result and study extraction variants, for the trait's own studies and the studies that colocalise with
+result and study extraction variants, for the trait's own studies and the studies that colocalize with
 it. Within those, the rules above apply: at its coloc groups' variants most of those studies have an
 association; at the lead variant of one of its study extractions that is in none of its coloc groups,
 usually only the trait's own study does.

@@ -231,7 +231,7 @@ compress_effect_matrix <- function(x_matrix,
 
 
 # Target SNPs (columns) are every target-trait coloc row with a usable beta/SE,
-# named by variant_id; background rows are the other traits colocalising at
+# named by variant_id; background rows are the other traits colocalizing at
 # those loci.
 .prepare_pleiotropy_locus_data <- function(trait_id, coloc_groups) {
   if (is.null(coloc_groups) || nrow(coloc_groups) == 0) {

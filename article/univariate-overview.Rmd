@@ -51,7 +51,7 @@ The grouping method should satisfy:
 
 1. **Handles high sparsity** — Must natively process large, sparse matrices
    (thousands of singleton feature rows). A missing cell means the trait does
-   not colocalise at that SNP, so EBMF fits it as an observed 0 with standard
+   not colocalize at that SNP, so EBMF fits it as an observed 0 with standard
    error `ebmf_missing_se` (canonical 1) rather than leaving it out: which
    cells are observed is most of what separates programs in a matrix this
    sparse, and a fit that skips missing cells collapses into one broad program
@@ -105,15 +105,15 @@ if (requireNamespace("DiagrammeR", quietly = TRUE)) {
 model it because most cells of their matrices are null or weak for most traits,
 and the cross-trait covariance there is mostly correlated sampling error from
 shared participants. This matrix has no such cells: a cell is observed only
-where a background trait has a fine-mapped signal that colocalises with the
+where a background trait has a fine-mapped signal that colocalizes with the
 target signal, and unobserved cells are fixed at 0. Correlated error can shift
 an observed cell's value but cannot create the signal the cell requires.
-Colocalisation itself formally assumes independent samples. Simulations by the
+Colocalization itself formally assumes independent samples. Simulations by the
 HyPrColoc authors (Foley et al. 2021; 10 quantitative traits, complete overlap)
 and the coloc authors (Mitchelmore et al. 2020) found that ignoring overlap had
 little effect, but neither tested case-control traits or SuSiE-based coloc, so
 this is evidence of robustness rather than proof. Rare-variant results, which
-come from UK Biobank exomes and are not colocalised, are not used. Details and
+come from UK Biobank exomes and are not colocalized, are not used. Details and
 references are in Supplementary Note 3 of
 [Supplementary information](supplementary-information.html).
 
@@ -131,7 +131,7 @@ Given:
 
 - `nsnp` = independent SNPs associated with the target trait: all of its coloc
   groups, not only genome-wide-significant ones. A coloc group needs a
-  fine-mapped signal (p < 1.5e-4) that colocalises with at least one other
+  fine-mapped signal (p < 1.5e-4) that colocalizes with at least one other
   study (H4 ≥ 0.8), and almost all of them are genome-wide significant anyway
 - `ntrait` = background studies in GPMap (phenotypic and molecular)
 
@@ -208,8 +208,8 @@ methods such as GFA and GUIDE (see Existing approaches) keep many correlated
 traits and still work, because they factorise full summary statistics: every
 trait has a z-score at every variant, so a lower-powered copy of a trait is a
 scaled version of it, points the same way, and is absorbed into that trait's
-factor. This matrix keeps only colocalising cells, and a lower-powered copy
-colocalises only where the original trait's effect is largest. It stops being a
+factor. This matrix keeps only colocalizing cells, and a lower-powered copy
+colocalizes only where the original trait's effect is largest. It stops being a
 scaled copy and becomes a flag for "large effect on the original trait", a
 new, sparse pattern that EBMF fits as a program of its own. Selecting SNPs on
 the anchor makes this worst for copies of the anchor: every SNP is a target
@@ -222,7 +222,7 @@ a new high-confidence program (20 SNPs, `similarity_z` 16) whose trait loadings
 sat entirely on those traits and whose loci came from every Suzuki cluster.
 High programs fell from 11 to 8, and programs backed by Suzuki's index SNVs
 (enrichment q ≤ 0.10) from 11 of 15 to 7 of 16. The background similarity did
-not move (mean `S` 0.029 in both runs), because those traits colocalise only at
+not move (mean `S` 0.029 in both runs), because those traits colocalize only at
 the strongest loci, so the background check alone would not have caught it.
 
 **Mitigation: two lists.** Traits are removed before the matrix is built using
@@ -589,7 +589,7 @@ or Reactome pathway):
 - \(y_j = F_{jk}^2\), SNP \(j\)'s squared loading on the program;
 - \(x_j = 1\) if SNP \(j\) is linked to the term, else 0. A SNP is linked to a
   category or tissue through its coloc rows, and to a pathway through its
-  colocalising QTL genes.
+  colocalizing QTL genes.
 
 An ordinary least squares regression
 
@@ -812,7 +812,7 @@ independently derived partition of T2D loci: Suzuki *et al.* (2024) clustered
 Metabolic syndrome, two beta-cell clusters, Residual glycaemic, Body fat,
 Liver/lipid metabolism) by k-means over each SNV's standardised associations
 with 37 cardiometabolic traits. Nothing about this partition comes from
-gpmapr: different trait panel (their 37 traits vs. whatever colocalises with
+gpmapr: different trait panel (their 37 traits vs. whatever colocalizes with
 the T2D upload in GPMap), different population (their multi-ancestry
 meta-regression vs. GPMap's EUR fine-mapping), different algorithm (hard
 k-means vs. soft EBMF), different unit (a single index SNV vs. a GPMap SNP
@@ -832,10 +832,10 @@ something comparable, rather than through a single number.
 
 **Bridging SNPs to SNVs.** Suzuki's index SNV and GPMap's lead variant at the
 same locus are usually different variants, but GPMap already treats
-colocalisation within an **LD block** as "the same signal", so that is the
+colocalization within an **LD block** as "the same signal", so that is the
 unit the match is made in: each Suzuki SNV is placed in the LD block of its
 GRCh38 position, and matched to the nearest pleiotropy-matrix SNP in that
-block. A SNV with no upload signal in its block, or one that colocalises with
+block. A SNV with no upload signal in its block, or one that colocalizes with
 too few traits to enter the matrix at all, cannot be matched and says so
 explicitly rather than being silently dropped. Several SNVs, sometimes from
 different clusters, can land on the same matrix SNP (one locus held more than
@@ -877,7 +877,7 @@ Suzuki also publish each cluster's own mean profile over the 37 clustering
 traits (`beta / se`, their Supplementary Table 7). A program's profile is the
 mean of its member SNPs' rows in the same (oriented, asinh-compressed) matrix
 EBMF factorises, restricted to the Suzuki traits GPMap actually has (4a). The
-two profiles are **not on the same scale** — compressed colocalisation
+two profiles are **not on the same scale** — compressed colocalization
 z-scores against the z of a published cluster mean — so only their *pattern*
 across traits is compared, not the size of either: the cosine between them,
 1 for the same pattern of signs and relative sizes, 0 for unrelated, -1 for
@@ -901,7 +901,7 @@ cosine measure different things — discrete locus overlap against continuous
 trait pattern — and can disagree: a program with a clean profile match can
 have too few matched SNVs for the enrichment test to say anything, and vice
 versa. Gene-level anchors (4b: Suzuki's own worked-example loci, checked
-positionally and through colocalising QTLs) and the full SNV-to-program
+positionally and through colocalizing QTLs) and the full SNV-to-program
 table (4c) sit alongside both as further, qualitative evidence. Because no
 single statistic resolves every case, the final call is a hand-written,
 three-level judgement — **clear** (SNV enrichment and profile agree on the

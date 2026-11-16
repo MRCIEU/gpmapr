@@ -3,7 +3,7 @@
 0 errors | 0 warnings | 1 note
 
 * This is a new release.
-* Possibly misspelled words in DESCRIPTION: "colocalisation", "colocalising" and "pleiotropy" are
+* Possibly misspelled words in DESCRIPTION: "colocalization", "colocalizing" and "pleiotropy" are
   spelled correctly (British spelling of standard genetics terms).
 
 ## Test environments

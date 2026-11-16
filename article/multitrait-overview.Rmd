@@ -39,7 +39,7 @@ The runnable implementation is
 [Investigation of multi-trait EBMF program correspondence](../vignettes/multitrait-analysis.html).
 
 This is not a search for how much biology is shared. A trait's candidate SNP
-set is already restricted to that trait's own fine-mapped, colocalising
+set is already restricted to that trait's own fine-mapped, colocalizing
 hits, so two only-moderately-correlated traits will typically share
 a small fraction of that universe — that is expected, not a failure of the
 method. The job of this pipeline is to resolve, cleanly and with calibrated
@@ -394,7 +394,7 @@ SNP universe (not the tiny module itself, and not the other trait), using the
 existing hard-set enrichment functions
 (`enrich_snp_set()` for trait categories and tissues, a one-sided Fisher test
 against the rest of the trait's SNPs, and `enrich_snp_set_pathways()` for
-Reactome and KEGG through the SNPs' colocalising QTL genes). FDR here is the
+Reactome and KEGG through the SNPs' colocalizing QTL genes). FDR here is the
 ordinary BH correction described in
 [SNP biological clustering](univariate-overview.html) —
 corrected across the categories/tissues tested **for that one SNP set**,

@@ -32,7 +32,7 @@ A list with:
 }
 \description{
 Computes the net directionality of effect between two traits at shared
-colocalised loci. Uses association betas to determine concordance.
+colocalized loci. Uses association betas to determine concordance.
 
 NDS = (n_pos - n_neg) / (n_pos + n_neg)
 where:

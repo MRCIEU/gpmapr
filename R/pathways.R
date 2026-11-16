@@ -181,11 +181,11 @@ genes_at_snps <- function(snp_ids,
 
 
 #' @title Pathway Enrichment of a SNP Set
-#' @description Collect the molecular QTL genes colocalising at a set of SNPs
+#' @description Collect the molecular QTL genes colocalizing at a set of SNPs
 #' (via [genes_at_snps()]) and test them for pathway over-representation with
 #' [pathway_enrichment()], one call per source (FDR 0.05, at least two genes
 #' in a pathway). Each gene counts once however many of the set's SNPs it
-#' colocalises at.
+#' colocalizes at.
 #' @param snp_ids Variant ids of the SNP set.
 #' @param coloc_groups Coloc-group dataframe used to map SNPs to genes.
 #' @param sources Pathway sources to query. Defaults to `c("KEGG",

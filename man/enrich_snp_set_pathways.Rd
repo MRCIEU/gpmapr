@@ -35,9 +35,9 @@ none)
 }
 }
 \description{
-Collect the molecular QTL genes colocalising at a set of SNPs
+Collect the molecular QTL genes colocalizing at a set of SNPs
 (via \code{\link[=genes_at_snps]{genes_at_snps()}}) and test them for pathway over-representation with
 \code{\link[=pathway_enrichment]{pathway_enrichment()}}, one call per source (FDR 0.05, at least two genes
 in a pathway). Each gene counts once however many of the set's SNPs it
-colocalises at.
+colocalizes at.
 }

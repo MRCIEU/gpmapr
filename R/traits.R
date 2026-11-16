@@ -112,7 +112,7 @@ remove_duplicate_traits <- function(data, duplicates = trait_duplicates(), keep_
 #' @param include_associations A logical value specifying whether to add each study's association at its
 #' variant (beta, se, p, eaf, imputed) to the coloc_groups, rare_results and study_extractions, defaults to FALSE
 #' @param include_full_associations A logical value specifying whether to include the stored associations
-#' of the trait's studies and the studies that colocalise with it, at the trait's coloc group, rare result and
+#' of the trait's studies and the studies that colocalize with it, at the trait's coloc group, rare result and
 #' study extraction variants (see "Which associations are stored"), defaults to FALSE
 #' @param include_coloc_pairs A logical value specifying whether to include coloc pairs, defaults to FALSE
 #' @param h4_threshold A numeric value specifying the h4 threshold for coloc pairs, defaults to 0.8

@@ -18,7 +18,7 @@ ebmf_backfit: true
 ebmf_lfsr_threshold: 0.02
 ebmf_magnitude_threshold: 0.5
 ebmf_greedy_Kmax: 100
-# An unobserved cell (no colocalising association) is fit as an observed 0 with
+# An unobserved cell (no colocalizing association) is fit as an observed 0 with
 # this standard error (1 = confidently zero; larger = small, sign unknown).
 ebmf_missing_se: 1
 

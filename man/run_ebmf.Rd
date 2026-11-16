@@ -54,7 +54,7 @@ loadings (\eqn{L}, feature contributions), with sparse priors estimated
 from the data.
 
 Observed cells are z-scores, so each enters with standard error 1. An
-unobserved (\code{NA}) cell, meaning no colocalising association, is fit as an
+unobserved (\code{NA}) cell, meaning no colocalizing association, is fit as an
 observed 0 with standard error \code{missing_se}, so the pattern of observed
 cells informs the fit. Because \code{S} carries the noise, no residual
 variance is estimated.

@@ -29,17 +29,17 @@ anchor_trait_result <- gpmapr::trait(anchor_trait_id)
 anchor_trait_name <- anchor_trait_result$trait$trait_name
 ```
 
-This is a case study of GPMAP genetic colocalisations with the UK Biobank complex trait "`r anchor_trait_name`", a physiological measure underpinned by well understood biological mechanisms of iron uptake, handling and storage and erythropoiesis, which potentially sits downstream of many disease states.
+This is a case study of GPMAP genetic colocalizations with the UK Biobank complex trait "`r anchor_trait_name`", a physiological measure underpinned by well understood biological mechanisms of iron uptake, handling and storage and erythropoiesis, which potentially sits downstream of many disease states.
 
 This vignette is a demonstrative example of Figure 4 in [the GPMap paper](https://doi.org/10.64898/2026.02.19.26346618).
 
 We wish to demonstrate that the GPMap:
 
-- Returns relevant colocalising signals between a physiological state and the molecular features/genes involved in regulation of that state
-- Improves understanding of the diverse factors contributing to trait variability by enabling colocalising complex traits to be clustered based on the signals they share
+- Returns relevant colocalizing signals between a physiological state and the molecular features/genes involved in regulation of that state
+- Improves understanding of the diverse factors contributing to trait variability by enabling colocalizing complex traits to be clustered based on the signals they share
 - Can reveal new biology/avenues for therapeutic intervention
 
-## Trait colocalisations
+## Trait colocalizations
 
 **Anchor trait:** `r anchor_trait_name` (id: `r anchor_trait_id`)
 
@@ -87,7 +87,7 @@ haemoglobin_rare <- haemoglobin_rare |> dplyr::filter(!(rare_result_group_id %in
 
 ### Genome view
 
-Colocalising signals across the genome, annotated by variant class and number of colocalising studies:
+Colocalizing signals across the genome, annotated by variant class and number of colocalizing studies:
 
 ```{r genome-view, fig.width=15, fig.height=3.5}
 n_per_locus_common <- haemoglobin_common |>
@@ -149,7 +149,7 @@ colocs_per_position |>
   ggplot2::geom_point(alpha = 0.85) +
   ggplot2::scale_colour_manual(name = "Variant class:",
                                values = c(common = "steelblue", rare = "tomato")) +
-  ggplot2::scale_size_continuous(name = "No. colocalising\nstudy rows\n(at locus)") +
+  ggplot2::scale_size_continuous(name = "No. colocalizing\nstudy rows\n(at locus)") +
   ggplot2::scale_x_continuous(
     breaks = axis_chr$x_mbp_mid,
     labels = axis_chr$chr_lab,
@@ -164,15 +164,15 @@ colocs_per_position |>
   ggplot2::labs(
     x = "Chromosome (cumulative position, Mb)",
     y = "-log10(P), anchor trait",
-    title = "Colocalisation groups for anchor trait"
+    title = "Colocalization groups for anchor trait"
   )
 ```
 
 This is a recreation of the data you can see on the GPMap website at https://gpmap.opengwas.io/trait.html?id=`r anchor_trait_id`
 
-### Complex trait colocalisations
+### Complex trait colocalizations
 
-Traits across which trait categories show the greatest proportion of GWS hits colocalising with the anchor trait:
+Traits across which trait categories show the greatest proportion of GWS hits colocalizing with the anchor trait:
 
 ```{r traitcategory-view, fig.width=20, fig.height=6}
 pull_trait_ids_common <- haemoglobin_common |>
@@ -235,14 +235,14 @@ common_colocs_per_trait |>
                  panel.grid = ggplot2::element_blank(),
                  legend.position = "bottom",
                  legend.text = ggplot2::element_text(size = 12)) +
-  ggplot2::labs(x = "", y = "Proportion of study hits\ncolocalising with anchor trait") +
+  ggplot2::labs(x = "", y = "Proportion of study hits\ncolocalizing with anchor trait") +
   ggplot2::guides(colour = ggplot2::guide_legend(ncol = 6,
                                                  override.aes = list(size = 4)),
                   size = ggplot2::guide_legend(ncol = 1))
 ```
 
 
-## Investigating a specific colocalisation group
+## Investigating a specific colocalization group
 
 ### TMPRSS6: eQTL/mQTL/sQTL and physiological measures
 
@@ -332,10 +332,10 @@ plot_region(se_tmprss6,
 )
 ```
 
-We can also plot the effect estimates at the candidate SNP across the colocalising studies.
+We can also plot the effect estimates at the candidate SNP across the colocalizing studies.
 
 ```{r TMPRSS6-betas, fig.width=6, fig.height=3}
-# Effect estimates at candidate SNP across colocalising studies
+# Effect estimates at candidate SNP across colocalizing studies
 plot_coloc_betas <- function(betas, title) {
   if (nrow(betas) == 0 || !"trait_category" %in% names(betas)) {
     stop("No beta rows or missing trait_category after join to coloc_groups metadata.")
@@ -381,7 +381,7 @@ plot_coloc_betas(betas_tmprss6,
 
 ## Trait clustering
 
-Of all the traits that colocalise with the anchor, how many coloc groups do each pair of traits share?
+Of all the traits that colocalize with the anchor, how many coloc groups do each pair of traits share?
 
 ```{r trait-clustering, fig.width=6, fig.height=6}
 # Remove duplicates crudely by name
@@ -420,7 +420,7 @@ ggplot2::ggplot(mx_colocs_melt,
                   colour = log_coloc_hits
                 )) +
   ggplot2::geom_point(shape = 20, size = 0.2) +
-  ggplot2::scale_colour_gradient2(name = "log10(no. colocalising SNPs)",
+  ggplot2::scale_colour_gradient2(name = "log10(no. colocalizing SNPs)",
                                   low = "#0072B2", high = "#E69F00",
                                   mid = "#F3CF80", midpoint = 1.3,
                                   na.value = "white") +

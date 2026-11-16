@@ -14,6 +14,7 @@ params:
   n_rep: 3
   cores: 5
   remove_duplicates: true
+  auto_proxies: true
 ---
 
 
@@ -108,11 +109,11 @@ knitr::kable(
   data.frame(
     setting = c(
       "api", "gpmap_url", "include_situated_gene", "min_specificity", "n_rep",
-      "cores", "remove_duplicates", names(ebmf_settings)
+      "cores", "remove_duplicates", "auto_proxies", names(ebmf_settings)
     ),
     value = c(
       api, getOption("gpmap_url"), include_situated_gene, min_specificity,
-      n_rep, cores, isTRUE(params$remove_duplicates),
+      n_rep, cores, isTRUE(params$remove_duplicates), isTRUE(params$auto_proxies),
       vapply(ebmf_settings, function(x) paste(format(x), collapse = ", "), character(1))
     ),
     stringsAsFactors = FALSE
@@ -131,7 +132,10 @@ knitr::kable(
 
 Other GWAS of BMI, and diagnoses defined by BMI, repeat the anchor trait at
 every SNP. They add no information about mechanism and are removed in both
-runs.
+runs. They come from GPMap itself (`decompose_trait(proxies = TRUE)`, see
+`anchor_proxies()`): BMI's duplicate group (the other BMI GWAS) and its proxy
+group (obesity diagnoses), which are exactly the four traits below. With
+`auto_proxies: false` the same list is applied by hand.
 
 ```{r bmi-proxies}
 bmi_proxy_traits <- data.frame(
@@ -229,9 +233,6 @@ knitr::kable(
   ),
   row.names = FALSE
 )
-
-coloc_groups_cut <- coloc_groups_all |>
-  dplyr::filter(!as.character(trait_id) %in% body_size_trait_ids)
 ```
 
 ## Step 2: Two runs
@@ -278,29 +279,44 @@ reported but do not affect the tier. A program whose SNPs are at least 90% conta
 program's loci is listed under it as a child.
 
 ```{r two-runs}
-run_bmi_analysis <- function(label, coloc_groups) {
+# decompose_trait() removes the proxies and duplicates itself, so it starts
+# from the trait's own coloc groups; Run B also removes the body-size traits.
+auto_proxies <- isTRUE(params$auto_proxies)
+bmi_proxy_ids <- if (auto_proxies) NULL else bmi_proxy_traits$trait_id
+run_bmi_analysis <- function(label, exclude_trait_ids) {
   set.seed(20240214)
-  res <- run_ebmf_pipeline(
-    list(trait = list(id = target_trait_id), coloc_groups = coloc_groups),
-    settings = ebmf_settings,
-    target_trait_id = target_trait_id,
-    n_rep = n_rep,
+  d <- decompose_trait(
+    target_trait,
+    settings = gpmap_settings(ebmf_settings, n_rep = n_rep),
+    proxies = auto_proxies,
+    exclude_trait_ids = exclude_trait_ids,
+    remove_duplicates = isTRUE(params$remove_duplicates),
     cores = cores,
     verbose = FALSE
   )
-  fit <- res$fit
-  summary <- res$summary
   return(list(
     label = label,
-    coloc_groups = fit$coloc_groups,
-    fit = fit,
-    summary = summary
+    decomposition = d,
+    coloc_groups = d$fit$coloc_groups,
+    fit = d$fit,
+    summary = d$summary
   ))
 }
 
 runs <- list(
-  A = run_bmi_analysis("A: all traits", coloc_groups_all),
-  B = run_bmi_analysis("B: body-size traits removed", coloc_groups_cut)
+  A = run_bmi_analysis("A: all traits", bmi_proxy_ids),
+  B = run_bmi_analysis("B: body-size traits removed", c(bmi_proxy_ids, body_size_trait_ids))
+)
+
+knitr::kable(
+  excluded(runs$A$decomposition) |>
+    dplyr::filter(source != "background_duplicate") |>
+    dplyr::transmute(
+      source, trait_id, trait_name, rule = dplyr::coalesce(rule, ""), n_loci,
+      pct_same_sign = round(pct_same_sign), r_z = round(r_z, 2)
+    ),
+  caption = "BMI proxy traits removed in both runs, by where each came from (see anchor_proxies())",
+  row.names = FALSE
 )
 ```
 
@@ -414,7 +430,7 @@ knitr::kable(
 
 Each run's high- and medium-confidence programs are annotated with
 **continuous loading-based enrichment** of trait categories, tissues and
-pathways (KEGG and Reactome, on the colocalising QTL genes). There is no
+pathways (KEGG and Reactome, on the colocalizing QTL genes). There is no
 membership cutoff: every SNP with a finite EBMF loading contributes to every
 program's test, weighted by its squared loading, in the regression
 `lm(loading^2 ~ membership)` against each annotation's 0/1 indicator
@@ -434,45 +450,27 @@ overlap of their member SNPs.
 min_r_squared <- 0.05
 enrichment_types <- c("trait category", "tissue", "Reactome", "KEGG")
 
-pathway_mapping_universe <- tryCatch(
-  pathway_mappings(),
-  error = function(e) {
-    cat("Pathway mappings endpoint unavailable (", conditionMessage(e), "); ",
-        "skipping continuous pathway enrichment.\n", sep = "")
-    return(NULL)
-  }
-)
-
 valid_programs_of <- function(r) {
   p <- r$summary$programs
   return(as.character(p$program[as.character(p$confidence_tier) %in% c("high", "medium")]))
 }
 
+# Computed by decompose_trait(); read from each run's result.
 run_continuous_enrichment <- function(r) {
-  return(list(
-    categories = enrich_program_loadings_trait_categories(
+  a <- r$decomposition$annotation
+  pathways <- a$pathways
+  if (include_situated_gene && !is.null(pathways)) {
+    # decompose_trait() maps SNPs to their colocalizing QTL genes only.
+    pathways <- enrich_program_loadings_pathways(
       clustering_result = r$fit,
       coloc_groups = r$coloc_groups,
-      snp_key = "variant_id"
-    ),
-    tissues = enrich_program_loadings_tissues(
-      clustering_result = r$fit,
-      coloc_groups = r$coloc_groups,
-      snp_key = "variant_id"
-    ),
-    pathways = if (is.null(pathway_mapping_universe)) {
-      NULL
-    } else {
-      enrich_program_loadings_pathways(
-        clustering_result = r$fit,
-        coloc_groups = r$coloc_groups,
-        mappings = pathway_mapping_universe,
-        snp_key = "variant_id",
-        sources = c("KEGG", "Reactome"),
-        include_situated_gene = include_situated_gene
-      )
-    }
-  ))
+      mappings = pathways$mappings,
+      snp_key = "variant_id",
+      sources = c("KEGG", "Reactome"),
+      include_situated_gene = TRUE
+    )
+  }
+  return(list(categories = a$categories, tissues = a$tissues, pathways = pathways))
 }
 for (run_id in names(runs)) {
   runs[[run_id]]$enrichment <- run_continuous_enrichment(runs[[run_id]])
@@ -719,32 +717,6 @@ is each program's size; the dot matrix marks which programs each intersection
 involves.
 
 ```{r step5-per-run, results = "asis", fig.height = 7, fig.width = 8}
-plot_similarity_heatmap <- function(run_id) {
-  members <- members_by_run[[run_id]]
-  S_run <- runs[[run_id]]$fit$s_matrix
-  if (nrow(members) < 2) {
-    cat("Fewer than 2 SNPs in valid programs; skipping heatmap.\n\n")
-    return(invisible(NULL))
-  }
-  first_program <- members[!duplicated(members$snp_id), , drop = FALSE]
-  snp_order <- first_program$snp_id[order(as.integer(first_program$group))]
-  snp_order <- intersect(snp_order, rownames(S_run))
-  if (length(snp_order) < 2) {
-    cat("Fewer than 2 valid-program SNPs are in the similarity matrix; skipping heatmap.\n\n")
-    return(invisible(NULL))
-  }
-  heatmap(
-    S_run[snp_order, snp_order, drop = FALSE],
-    Rowv = NA,
-    Colv = NA,
-    scale = "none",
-    main = paste0("SNP similarity, Run ", runs[[run_id]]$label),
-    xlab = "SNPs",
-    ylab = "SNPs"
-  )
-  return(invisible(NULL))
-}
-
 plot_program_overlap <- function(run_id) {
   members <- members_by_run[[run_id]]
   n_programs <- dplyr::n_distinct(members$group)
@@ -805,7 +777,8 @@ plot_program_overlap <- function(run_id) {
 
 for (run_id in names(runs)) {
   cat("\n\n### Run ", runs[[run_id]]$label, "\n\n", sep = "")
-  plot_similarity_heatmap(run_id)
+  heatmap_plot <- plot_similarity_heatmap(runs[[run_id]]$decomposition)
+  print(heatmap_plot + ggplot2::labs(title = paste0("SNP similarity, Run ", runs[[run_id]]$label)))
   cat("\n\n")
   plot_program_overlap(run_id)
   cat("\n\n")

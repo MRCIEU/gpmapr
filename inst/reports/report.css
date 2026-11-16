@@ -1,0 +1,21 @@
+/* gpmapr report: wide layout so the result tables fit. */
+.main-container {
+  max-width: 95% !important;
+  margin-left: auto;
+  margin-right: auto;
+}
+table {
+  font-size: 0.85em;
+}
+.table-wrap {
+  overflow-x: auto;
+  margin-bottom: 1.5em;
+}
+.note {
+  color: #555555;
+  font-size: 0.9em;
+}
+details > summary {
+  cursor: pointer;
+  color: #2a78d6;
+}

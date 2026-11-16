@@ -734,7 +734,7 @@ test_that(".shared_locus_axis and .locus_pair_stats bridge a GUID trait's own id
 
 
 # An upload's coloc table carries the upload's own rows and, in the same coloc
-# groups, the rows of every existing trait that colocalised with it -- at the
+# groups, the rows of every existing trait that colocalized with it -- at the
 # upload's lead variant and on the upload's allele. GPMap's own trait tables
 # can report the same variant on the other allele, so module_rg() reads both
 # effects of an upload pair from the upload's table.

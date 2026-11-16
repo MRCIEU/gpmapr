@@ -1,0 +1,122 @@
+```{r include = FALSE}
+# Child section for one decompose_trait() result. Expects `d` (the result) and
+# `h` (the markdown heading prefix, "##" or "###") in the calling environment.
+fit_table <- gpmapr:::.report_fit_table(d)
+excluded_table <- gpmapr:::.report_excluded_table(gpmapr::excluded(d))
+n_background_duplicates <- gpmapr:::.report_background_counts(gpmapr::excluded(d))
+program_table <- gpmapr:::.report_program_table(d)
+cards_table <- gpmapr:::.report_cards_table(d)
+distinctness <- if (is.null(d$annotation)) NULL else d$annotation$distinctness$summary
+```
+
+`r h` The fit
+
+**`r d$trait$name`** (`r d$trait$id`): `r fit_table$n_snps` SNPs (the
+trait's fine-mapped, colocalizing signals) by `r fit_table$n_background_traits`
+background traits, factorised with EBMF into overlapping SNP programs.
+
+```{r results = "asis"}
+cat('<div class="table-wrap">')
+print(knitr::kable(fit_table, format = "html", caption = "Matrix, fit and programs by confidence tier"))
+cat("</div>")
+```
+
+`r h` Traits removed
+
+Traits that measure the anchor itself repeat it at every SNP once SNPs are
+oriented to the anchor's risk allele, so they are removed before fitting:
+GPMap's **duplicate group** of the anchor (other GWAS of the same
+measurement), its **proxy group** (traits defined by it, such as diagnoses,
+medication and family history), the GPMap trait an uploaded GWAS measures
+(**anchor_trait**), and any trait listed by hand (**user**). Each row shows how
+closely the trait tracks the anchor at the anchor's own loci: `coverage` is the
+share of those loci where it is observed, `pct_same_sign` the share with an
+effect in the same direction, and `r_z` the uncentred correlation of its
+oriented z-scores with the anchor's (1 = the same effects up to scale). A true
+proxy is near 100% and near 1. In addition, `r n_background_duplicates`
+duplicated background traits were removed so that each measurement appears
+once.
+
+```{r results = "asis"}
+if (nrow(excluded_table) == 0) {
+  cat("No proxy traits were removed.\n\n")
+} else {
+  cat('<div class="table-wrap">')
+  print(knitr::kable(excluded_table, format = "html", caption = "Proxy traits removed before fitting"))
+  cat("</div>")
+}
+```
+
+`r h` Programs and their confidence
+
+Every program with at least `min_module_size` member SNPs, by confidence tier
+(green high, orange medium, grey single trait, red low), each nested program
+indented under its parent. A program's member SNPs must be more alike than
+random SNP sets of the same size (`similarity_q`); **high** programs also have
+tightly connected members (`connectedness`) or sit far above the random sets
+(`similarity_z`); **single_trait** programs rest on one background trait
+(`effective_n_traits`) and need a closer look; **low** programs are no more
+coherent than chance and can be set aside. `factor_pve_pct` and `replication`
+are reported, not used for the tier.
+
+```{r results = "asis"}
+if (nrow(program_table) == 0) {
+  cat("No programs passed the size filter.\n\n")
+} else {
+  cat('<div class="table-wrap">')
+  print(gpmapr::kable_confidence(program_table, caption = "Programs by confidence tier"))
+  cat("</div>")
+}
+```
+
+```{r fig.width = 8, fig.height = max(3, 0.25 * nrow(program_table) + 1.5)}
+if (nrow(program_table) > 0) print(gpmapr::plot_programs(d))
+```
+
+```{r results = "asis"}
+if (!is.null(distinctness)) {
+  cat(
+    "\n\n**Distinctness.** The largest Tucker congruence between two programs' trait ",
+    "loadings (`max_abs_phi`; 0.85 is fair similarity, 0.95 equal), the number of ",
+    "pairs at or above 0.7, the largest squared correlation between their SNP ",
+    "loadings, and the effective number of distinct programs.\n\n", sep = ""
+  )
+  print(knitr::kable(distinctness, format = "html", digits = 2, caption = "Distinctness of the programs"))
+}
+```
+
+`r h` What the programs are about
+
+One card per high or medium program: the background traits most specific to
+it (most elevated in its SNPs relative to the anchor's other SNPs), its
+loading-based enrichment of trait categories, tissues and pathways (every SNP
+weighted by its squared loading; FDR <= 0.05 and R2 >= 0.05), and the
+colocalizing QTL genes at its SNPs, strongest loading first.
+
+```{r results = "asis"}
+if (is.null(d$annotation)) {
+  cat("This result was not annotated (`annotate = FALSE`).\n\n")
+} else if (nrow(cards_table) == 0) {
+  cat("No high or medium programs to describe.\n\n")
+} else {
+  cat('<div class="table-wrap">')
+  print(gpmapr::kable_confidence(cards_table, caption = "Program cards"))
+  cat("</div>")
+}
+```
+
+```{r fig.width = 7, fig.height = 7}
+if (nrow(cards_table) > 0) print(gpmapr::plot_similarity_heatmap(d))
+```
+
+```{r fig.width = 9, fig.height = 6}
+if (!is.null(d$annotation) && nrow(cards_table) > 0) {
+  for (type in c("categories", "tissues", "pathways")) {
+    print(gpmapr::plot_program_enrichment(d, type))
+  }
+}
+```
+
+<p class="note">The similarity heatmap shows the cosine similarity of the SNPs'
+oriented trait profiles, ordered by program: blocks on the diagonal are
+programs whose SNPs share a profile. Tissues are GTEx-style bulk tissues.</p>

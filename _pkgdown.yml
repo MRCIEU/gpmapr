@@ -2,3 +2,14 @@ url: ~
 template:
   bootstrap: 5
 
+
+reference:
+  - title: Trait decomposition and correspondence
+    desc: >
+      Decompose a trait's SNPs into biological programs, link programs across
+      traits, and explore or report the results.
+    contents:
+      - has_concept("trait decomposition")
+  - title: Everything else
+    contents:
+      - lacks_concepts("trait decomposition")

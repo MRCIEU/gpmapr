@@ -8,7 +8,7 @@
 gpmapr is an R client for the [OpenGWAS Genotype-Phenotype Map](https://gpmap.opengwas.io).
 You can:
 - search the map for traits, genes and variants;
-- fetch their colocalisation groups, rare-variant results and associations;
+- fetch their colocalization groups, rare-variant results and associations;
 - upload your own GWAS to compare against the map.
 
 ## Installation

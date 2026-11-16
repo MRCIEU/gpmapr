@@ -16,7 +16,7 @@ GPMap often holds several genome-wide association studies (GWAS) of the same
 trait, together with traits that are defined by it or that track it closely.
 Phenome-wide factor methods tolerate this redundancy. Our decomposition is more
 sensitive to it, for two reasons that follow from its design: the pleiotropy
-matrix holds only colocalising associations, and its variants are selected on
+matrix holds only colocalizing associations, and its variants are selected on
 the target trait. This note describes the mechanism, the trait filters we apply
 to counter it, and their effect in two traits.
 
@@ -35,21 +35,21 @@ application, a panel of blood-cell traits measured in the same individuals,
 because their highly correlated residuals made the fit numerically unstable;
 it otherwise retains correlated traits [1].
 
-### Why a colocalisation-based matrix does not
+### Why a colocalization-based matrix does not
 
-In our matrix a cell is observed only where the background trait colocalises
+In our matrix a cell is observed only where the background trait colocalizes
 with the target trait at that locus, and an unobserved cell is fitted as an
-observed zero with standard error 1 (Methods). Whether a trait colocalises at a
+observed zero with standard error 1 (Methods). Whether a trait colocalizes at a
 locus depends on its power, because it must carry an association signal there
 strong enough to be fine-mapped. A lower-powered copy of a trait therefore
-colocalises only at the loci where the original trait's effect is largest. Its
+colocalizes only at the loci where the original trait's effect is largest. Its
 row is no longer a scaled copy of the original but a thresholded one, and the
 threshold depends on the copy's power.
 
 Supplementary Table 1 illustrates this with five target-trait loci and a second
 GWAS of the same trait with one third of the power. With full summary
 statistics, the second GWAS has expected z-scores of one third of the
-original's, and the original trait's factor absorbs it. In the colocalisation
+original's, and the original trait's factor absorbs it. In the colocalization
 matrix, if for illustration a fine-mapped signal requires |z| > 5, the second
 GWAS is observed at the first locus only. Its row is then not proportional to
 the original: once the original trait's factor is fitted, the residual is
@@ -67,7 +67,7 @@ and a second GWAS of the same trait with one third of the power.
 |---|---|---|---|---|---|
 | Target trait | 20 | 12 | 8 | 6 | 5 |
 | Second GWAS, full summary statistics | 6.7 | 4.0 | 2.7 | 2.0 | 1.7 |
-| Second GWAS, colocalising cells only | 6.7 | 0 | 0 | 0 | 0 |
+| Second GWAS, colocalizing cells only | 6.7 | 0 | 0 | 0 | 0 |
 
 This effect on the factorisation depends on fitting unobserved cells as zeros.
 If unobserved cells were instead excluded from the likelihood, the observed
@@ -99,7 +99,7 @@ traits and whose loci came from every Suzuki cluster. The number of
 high-confidence programs fell from 11 to 8, and the number of programs
 supported by Suzuki index variants (enrichment q ≤ 0.10) fell from 11 of 15 to
 7 of 16. Mean background similarity did not change (0.029 in both fits),
-because these traits colocalise only at the strongest loci, so a check of
+because these traits colocalize only at the strongest loci, so a check of
 background similarity alone would not have detected the problem.
 
 ### Redundancy among background traits
@@ -121,7 +121,7 @@ separately: variant–variant similarity, connectedness and similarity z sum ove
 traits, and the effective number of traits counts each copy as a distinct
 trait, so a program carried by several versions of one trait need not appear to
 rest on a single trait. This second problem stems partly from the sparsity of
-the colocalisation matrix and partly from the similarity-based validation, which
+the colocalization matrix and partly from the similarity-based validation, which
 has no counterpart in the full-summary-statistic methods.
 
 ### Mitigation
@@ -141,7 +141,7 @@ trait with a parent trait.
   complications of a disease (family history is the basis of GWAS by proxy
   [5]), or body-size measures for BMI. Proxies are removed only when their
   parent is the target trait, and are currently curated by hand for each target
-  from its colocalisation partners. A proxy of a background trait is retained,
+  from its colocalization partners. A proxy of a background trait is retained,
   because it carries biology relevant to the target (body size in a T2D
   analysis), although it still counts more than once in the validation
   statistics.
@@ -195,22 +195,22 @@ decomposition inherits its handling of LD from GPMap, which addresses LD before
 any data enter the matrix [6]. GPMap partitions the genome into 1,357
 approximately LD-independent regions [7], fine-maps each region with SuSiE [8]
 against a European-ancestry UK Biobank LD reference panel, tests pairs of
-fine-mapped signals for colocalisation using coloc on the SuSiE Bayes factors
-[9], and groups colocalising signals across studies.
+fine-mapped signals for colocalization using coloc on the SuSiE Bayes factors
+[9], and groups colocalizing signals across studies.
 
 Two consequences follow. First, each column of the matrix is one fine-mapped
-signal of the target trait (one colocalisation group), not a variant. Each
+signal of the target trait (one colocalization group), not a variant. Each
 signal is therefore represented once, rather than by the many variants that tag
 it, and no clumping or pruning step is needed. Second, a cell is observed only
-when a background trait's fine-mapped signal colocalises with the target signal
+when a background trait's fine-mapped signal colocalizes with the target signal
 (posterior probability of a shared causal variant ≥ 0.8). A background trait
 therefore enters a column through evidence for a shared causal variant, not
 merely through association at a nearby correlated variant.
 
-Some LD-related limitations remain. Colocalisation cannot distinguish a single
+Some LD-related limitations remain. Colocalization cannot distinguish a single
 causal variant shared by two traits from two distinct causal variants in strong
 LD [10, 11], so an observed cell may reflect a distinct but highly correlated
-variant; this limitation applies to any colocalisation-based analysis.
+variant; this limitation applies to any colocalization-based analysis.
 Fine-mapping assumes that distinct signals in a region can be separated [9],
 and signals in the same or neighbouring regions may still be in partial LD. Our
 enrichment analyses treat each signal as an independent observation, so their
@@ -232,17 +232,17 @@ error. GFA estimates this covariance from cross-trait LD score regression
 intercepts and includes it in the model as fixed factors [1], and PathGPS
 subtracts a covariance estimated from variants without association signals [3].
 Our matrix contains no such cells. A cell is observed only where a background
-trait has a fine-mapped association signal that colocalises with the target
+trait has a fine-mapped association signal that colocalizes with the target
 signal, and unobserved cells are fixed at zero rather than estimated.
 Correlated sampling error can shift the value of an observed cell, but it does
-not supply the fine-mapped, colocalising association that a cell requires.
+not supply the fine-mapped, colocalizing association that a cell requires.
 
-The remaining question is whether overlap affects the colocalisation calls
-themselves. Colocalisation methods compute the joint likelihood of two studies
+The remaining question is whether overlap affects the colocalization calls
+themselves. Colocalization methods compute the joint likelihood of two studies
 as the product of their individual likelihoods, which assumes independent
 samples [11, 12]. Simulations suggest that this assumption matters little in
 practice. In HyPrColoc simulations of ten quantitative traits measured in the
-same individuals, ignoring the overlap identified the cluster of colocalised
+same individuals, ignoring the overlap identified the cluster of colocalized
 traits in 97.5% of simulations (residual correlation 0.5), compared with 95.5%
 for traits measured in independent samples, with no increase in false
 positives; results were similar for residual correlations of −0.1 and 0.8, and
@@ -250,7 +250,7 @@ adjusting the likelihood alone for overlap performed worse [12]. For two
 quantitative traits measured in the same individuals, residual correlations up
 to 0.8 likewise had a negligible effect on coloc posterior probabilities [13].
 These simulations used quantitative traits only. They did not test case–control
-traits, colocalisation on SuSiE output, or distinct causal variants in LD under
+traits, colocalization on SuSiE output, or distinct causal variants in LD under
 overlap, and the HyPrColoc authors describe their investigation as brief and
 limited [12]. We did not model sample overlap explicitly.
 
@@ -258,10 +258,10 @@ GPMap's rare-variant results would be more exposed to overlap. They come from
 exome-sequencing analyses of UK Biobank participants (Genebass, Backman et al.
 and the AstraZeneca Genomics Initiative), so different traits' results share
 most of their participants. Because the variants are absent from the LD
-reference panel, these results are not fine-mapped or colocalised, and GPMap
+reference panel, these results are not fine-mapped or colocalized, and GPMap
 instead groups traits that share a significant variant [6]. They would
 therefore lack both protections described above. The decomposition uses only
-common-variant colocalisation results, not rare-variant results.
+common-variant colocalization results, not rare-variant results.
 
 ## References
 

@@ -1,0 +1,36 @@
+---
+title: "Trait decomposition: `r params$x$trait$name`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    css: report.css
+params:
+  x: NULL
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.align = "center")
+d <- params$x
+h <- "##"
+```
+
+<p class="note">Written by `create_report()` from a `decompose_trait()` result
+(gpmapr `r d$gpmapr_version`, run `r format(d$created, "%Y-%m-%d %H:%M")`).
+Each SNP associated with the trait is described by its effects on every other
+GPMap trait it colocalizes with; empirical Bayes matrix factorisation (EBMF)
+groups SNPs whose profiles move together into overlapping **programs**, each a
+candidate biological mechanism behind the trait.</p>
+
+```{r child = "_decomposition.Rmd"}
+```
+
+## Settings
+
+<details><summary>Analysis settings used</summary>
+
+```{r results = "asis"}
+print(knitr::kable(gpmapr:::.report_settings_table(d$settings), format = "html"))
+```
+
+</details>

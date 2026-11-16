@@ -47,7 +47,7 @@
 #'   are large relative to noise) or `"point_normal"`.
 #' @param ebmf_backfit If `TRUE` (default), cyclically refit all factors after
 #'   the greedy phase. `FALSE` is faster but leaves greedy-order artifacts.
-#' @param ebmf_missing_se Standard error of an unobserved cell (no colocalising
+#' @param ebmf_missing_se Standard error of an unobserved cell (no colocalizing
 #'   association), which EBMF fits as an observed 0. See `run_ebmf()`.
 #' @return A list with:
 #'   \itemize{

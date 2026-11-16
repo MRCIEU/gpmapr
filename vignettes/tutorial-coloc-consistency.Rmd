@@ -1,8 +1,8 @@
 ---
-title: "Colocalisation consistency: PCS and NDS"
+title: "Colocalization consistency: PCS and NDS"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Colocalisation consistency: PCS and NDS}
+  %\VignetteIndexEntry{Colocalization consistency: PCS and NDS}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 params:
@@ -46,11 +46,11 @@ ldl_name <- unname(lipid_name_map[as.character(ldl_id)])
 hdl_name <- unname(lipid_name_map[as.character(hdl_id)])
 ```
 
-This vignette shows two summaries of how a pair of traits share colocalising loci in **gpmapr**: the **Pleiotropic Consistency Score (PCS)**, which measures how much the traits' loci overlap, and the **Net Directionality Score (NDS)**, which measures whether effects agree in direction at the loci they share.
+This vignette shows two summaries of how a pair of traits share colocalizing loci in **gpmapr**: the **Pleiotropic Consistency Score (PCS)**, which measures how much the traits' loci overlap, and the **Net Directionality Score (NDS)**, which measures whether effects agree in direction at the loci they share.
 
 We use **`r ldl_name`** (trait id `r ldl_id`) and **`r hdl_name`** (trait id `r hdl_id`) as an illustrative pair of lipid traits that share some, but not all, causal loci.
 
-## Fetch colocalisation data
+## Fetch colocalization data
 
 We fetch both traits in a single call and retain association statistics (`beta`, `se`) for directionality and z-score construction.
 
@@ -60,7 +60,7 @@ dim(cg)
 
 ## Pleiotropic consistency (PCS)
 
-`pleiotropic_consistency_score()` measures how much two traits colocalise at the same LD blocks versus having trait-specific signals. The score is a Jaccard-style ratio:
+`pleiotropic_consistency_score()` measures how much two traits colocalize at the same LD blocks versus having trait-specific signals. The score is a Jaccard-style ratio:
 
 $$\text{PCS} = \frac{n}{n + m_1 + m_2}$$
 
@@ -75,7 +75,7 @@ pcs_result <- pleiotropic_consistency_score(
 pcs_result
 ```
 
-`r ldl_name` and `r hdl_name` share a modest fraction of colocalising loci: most signals are trait-specific.
+`r ldl_name` and `r hdl_name` share a modest fraction of colocalizing loci: most signals are trait-specific.
 
 `pcs_matrix()` extends this to all pairs when comparing more than two traits:
 
@@ -86,7 +86,7 @@ pcs_mat
 
 ## Net directionality (NDS)
 
-At loci where both traits colocalise, `net_directionality_score()` asks whether effect directions agree:
+At loci where both traits colocalize, `net_directionality_score()` asks whether effect directions agree:
 
 $$\text{NDS} = \frac{n_+ - n_-}{n_+ + n_-}$$
 

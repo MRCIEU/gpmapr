@@ -27,11 +27,11 @@ trait's, with \code{ld_block_id}, \code{upload_study_extraction_id}, \code{uploa
 the pair's LD block has a coloc group in \code{coloc_groups}).  Pairs have no effects, as the two study
 extractions are at different variants.
 }
-Both are empty when the upload and the trait don't colocalise.
+Both are empty when the upload and the trait don't colocalize.
 }
 \description{
 Line up a GWAS upload with another trait (or another uploaded GWAS it was compared with) at
-the places they colocalise.
+the places they colocalize.
 
 For each coloc group containing both the upload and the trait, it gives the effect of each at the group's
 variant.  Both effects are read from the upload's own result, where they are on the same alleles, so

@@ -20,3 +20,4 @@
 _cache$
 ^vignettes/.*\.html$
 ^vignettes/.*\.csv$
+^CRAN-SUBMISSION$

@@ -97,7 +97,7 @@
 #' from the data.
 #'
 #' Observed cells are z-scores, so each enters with standard error 1. An
-#' unobserved (`NA`) cell, meaning no colocalising association, is fit as an
+#' unobserved (`NA`) cell, meaning no colocalizing association, is fit as an
 #' observed 0 with standard error \code{missing_se}, so the pattern of observed
 #' cells informs the fit. Because \code{S} carries the noise, no residual
 #' variance is estimated.
@@ -424,7 +424,7 @@ ebmf_posterior_table <- function(clustering_result) {
 # flashier inputs from a features x SNPs z-score matrix: rows and columns with
 # no observed non-zero value are removed (they carry nothing to factorise), and
 # every unobserved cell enters as a 0 with standard error missing_se, observed
-# cells with standard error 1. An unobserved cell means no colocalising
+# cells with standard error 1. An unobserved cell means no colocalizing
 # association, so it is evidence of a small effect; leaving it out (NA) would
 # discard the pattern of observed cells that, on a matrix this sparse, is most
 # of what EBMF has to separate programs by.

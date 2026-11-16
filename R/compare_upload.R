@@ -1,6 +1,6 @@
 #' @title Compare a GWAS upload with a trait
 #' @description Line up a GWAS upload with another trait (or another uploaded GWAS it was compared with) at
-#'   the places they colocalise.
+#'   the places they colocalize.
 #'
 #' For each coloc group containing both the upload and the trait, it gives the effect of each at the group's
 #' variant.  Both effects are read from the upload's own result, where they are on the same alleles, so
@@ -22,7 +22,7 @@
 #'     the pair's LD block has a coloc group in `coloc_groups`).  Pairs have no effects, as the two study
 #'     extractions are at different variants.
 #' }
-#' Both are empty when the upload and the trait don't colocalise.
+#' Both are empty when the upload and the trait don't colocalize.
 #' @examplesIf gpmap_available()
 #' upload <- get_gwas("7a289615-c1b4-91f3-3d97-887f60de9155", include_associations = TRUE)
 #' comparison <- compare_upload(upload, 2527)

@@ -36,14 +36,14 @@ ordered by \code{fdr}: the value (in a column named after \code{annotation}),
 \description{
 Test whether a set of SNPs is enriched for a trait category or
 a tissue compared with the rest of a trait's SNPs. Each SNP is linked to the
-distinct categories (or tissues) of the traits it colocalises with in
+distinct categories (or tissues) of the traits it colocalizes with in
 \code{coloc_groups}; tissue links come from rows with a \code{gene_id} (molecular QTL
 studies). For every annotation value seen in the set, a one-sided Fisher
 exact test compares the set's links (with vs without the value) against the
 background's links, where the background is \code{background_snp_ids} minus the
 set. P-values are BH-adjusted across the values tested.
 
-Links rather than SNPs are counted, so a SNP colocalising with many traits
+Links rather than SNPs are counted, so a SNP colocalizing with many traits
 contributes several links; links from one SNP, and SNPs in LD, are treated
 as independent.
 }

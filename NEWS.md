@@ -1,10 +1,29 @@
+# gpmapr (development version)
+
+* New `decompose_trait()` decomposes a trait's SNPs into overlapping
+  biological programs from one call (proxy and duplicate trait removal, EBMF
+  fit, confidence tiers and annotation), and `trait_correspondence()` links
+  the programs of two or more traits (link tiers, direction, families and
+  family enrichment). Both return objects with `print()`, `summary()` and
+  `plot()` methods, accessors (`programs()`, `links()`, `families()`,
+  `family_loci()`, `annotation()`, `excluded()`) and `program_cards()`;
+  `relink()` re-tiers a correspondence at other cutoffs without rescoring.
+* New `create_report()` writes a self-contained HTML report of either result.
+* New `gpmap_settings()` holds every analysis setting in one list.
+* New `anchor_proxies()` lists an anchor trait's proxy traits from GPMap's
+  duplicate and proxy groups; `decompose_trait()` removes them by default.
+* New plots: `plot_programs()`, `plot_program_profile()`,
+  `plot_similarity_heatmap()`, `plot_program_enrichment()`, `plot_families()`,
+  `plot_phi()`, `plot_link()` and `plot_family_loci()`. ggplot2 is now
+  imported.
+
 # gpmapr 1.0.0
 
 First CRAN release. Requires version 1.1.0 of the GPMap API.
 
 * An R client for the 'OpenGWAS' Genotype-Phenotype Map API
   (<https://gpmap.opengwas.io>): look up traits, genes, variants and regions
-  with their colocalisation groups, rare-variant results and associations;
+  with their colocalization groups, rare-variant results and associations;
   search the map with `search_gpmap()`; fetch LD proxies, pleiotropy summaries
   and duplicate traits; upload, fetch and delete your own GWAS.
 * Requests that hit the API rate limit (HTTP 429) are retried with exponential
@@ -15,7 +34,7 @@ First CRAN release. Requires version 1.1.0 of the GPMap API.
   with instructions to update the package.
 * API errors and connection failures now give an informative error message.
 * New `gpmap_available()` reports whether the API can be reached.
-* `search_gpmap()` for a variant now reports a per-row number of colocalising
+* `search_gpmap()` for a variant now reports a per-row number of colocalizing
   studies and rare results (previously every row showed the first row's
   counts), and gains an `rsq` column with each proxy's r-squared with the
   searched variant. Variant searches no longer download the full list of
@@ -23,7 +42,7 @@ First CRAN release. Requires version 1.1.0 of the GPMap API.
 * Breaking: GWAS upload results (`get_gwas()`, and `trait()` / `traits()` with
   a GUID) have the same tables and column names as other results.
   * One `study_extractions` table holds the upload's study extractions and the
-    existing ones it colocalises with; `upload_study_extractions` is gone.
+    existing ones it colocalizes with; `upload_study_extractions` is gone.
   * Rows of `study_extractions` and `coloc_groups` have a `source` column
     ("upload" or "existing") and a `gwas_upload_id` (the upload the row comes
     from; `NA` for existing rows). Upload and existing study extractions have
