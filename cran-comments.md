@@ -5,24 +5,20 @@ the API's columnar format, which is smaller and faster for large traits. See NEW
 
 ## R CMD check results
 
-0 errors | 0 warnings | 0 notes, except 1 note on win-builder (example timing, see below)
+0 errors | 0 warnings | 1 note
+
+* Possibly misspelled words in DESCRIPTION: "colocalization" and "colocalizing" are spelled
+  correctly (standard genetics terms, as in the associated paper).
 
 ## Test environments
 
-* local macOS, R release: 0 errors | 0 warnings | 0 notes (with the network blocked, 1 note:
-  "unable to verify current time")
-* win-builder, R-devel (2026-11-14 r90890 ucrt), x86_64-w64-mingw32: 0 errors | 0 warnings |
-  1 note:
-  ```
-  Examples with CPU (user + system) or elapsed time > 10s
-                               user system elapsed
-  all_genes                    8.86   0.42   10.58
-  get_all_variant_pleiotropies 8.66   0.53   10.35
-  ```
-  These two examples fetch and parse whole tables from the API (every gene, and every variant's
-  pleiotropy summary). They are unchanged from 1.0.0, and are under the timing threshold on the
-  R-hub platforms and locally (`all_genes`: 1.2 s CPU on macOS). They are skipped when the API
-  can't be reached.
+* CRAN incoming checks (R-devel, Windows and Debian Linux), on the previous upload of this
+  version: 0 errors | 0 warnings | the misspelling note above. The Windows check also noted that the
+  `all_genes()` and `get_all_variant_pleiotropies()` examples took over 10 s, because each
+  downloads a whole table from the API. Both examples are now in `\donttest{}`.
+* local macOS, R release: 0 errors | 0 warnings | no notes from the package (the other notes were
+  an outdated local HTML Tidy, and a 403 from mrcieu.r-universe.dev, which was refusing all requests
+  at the time).
 * R-hub: linux, macos, macos-arm64, windows (R-devel): 0 errors | 0 warnings | 0 notes
 
 ## Reverse dependencies
