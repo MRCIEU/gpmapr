@@ -64,24 +64,40 @@ for, so live tests against production fail until the matching API is deployed).
 7. `devtools::document()`.
 8. `devtools::check(remote = TRUE, manual = TRUE)`, and the same check with
    the network blocked (e.g. `https_proxy=http://127.0.0.1:9`). Expect only
-   the "New submission" NOTE.
+   notes that are about the machine ("unable to verify current time", an old
+   HTML Tidy) and the "possibly misspelled words" note for "colocalization" and
+   "colocalizing": no dictionary knows them, so explain it in `cran-comments.md`.
+   CRAN's own check also flags examples that take over 10 s (Windows is
+   slower), so put any example that downloads a whole table in `\donttest{}`.
+   Explain every acronym in the DESCRIPTION text (API, QTL, GWAS, ...).
 9. `urlchecker::url_check()`.
 10. `devtools::check_win_devel()` and `rhub::rhub_check()`.
 11. Update `cran-comments.md` with the environments and results.
-12. `devtools::submit_cran()`, then confirm the submission from the
-    maintainer's email.
-13. Answer reviewer comments, and resubmit with an incremented version if
-    asked.
+12. Merge the pull request into `main` (these repos squash-merge), then
+    `git checkout main && git pull`.
+13. From `main`, `devtools::submit_cran()`, then confirm the submission from the
+    maintainer's email. Submitting from `main` means the commit written to
+    `CRAN-SUBMISSION` is on `main`, so the release tag lands on it. (`CRAN-SUBMISSION`
+    is not tracked, so it doesn't exist in other checkouts or worktrees.)
+14. Answer reviewer comments. Fix on a branch, merge to `main` and resubmit from
+    `main`, with an incremented version if asked.
 
 ## After acceptance
 
-1. `usethis::use_github_release()`. This tags `v<version>` on the commit recorded in
-   `CRAN-SUBMISSION` and creates the GitHub release from `NEWS.md`. Tag only once CRAN has
-   accepted the release, so the tag always matches what is on CRAN; nothing tags
-   automatically.
-2. `usethis::use_dev_version()` (e.g. 1.0.0 -> 1.0.0.9000).
-3. Add the dev version to `api_to_package_version`, so development installs
-   keep working.
+Don't tag before CRAN accepts, so the tag always matches what is on CRAN;
+nothing tags automatically.
+
+1. `git checkout main && git pull`, so the release is made from `main`.
+   Don't tag from a feature branch: after a squash merge, the branch commits
+   aren't on `main`, so the tag would point at a commit outside its history.
+2. `usethis::use_github_release()`. This tags `v<version>` on the commit recorded
+   in `CRAN-SUBMISSION` (or the current HEAD, if there is no such file) and creates
+   the GitHub release from `NEWS.md`. Answer "Definitely" only when the branch is
+   `main`; it asks otherwise.
+3. Optional: `usethis::use_dev_version()` (e.g. 1.0.1 -> 1.0.1.9000), which lets
+   a development install be told apart from the release. If you do, add the dev
+   version to `api_to_package_version`, or development installs refuse every
+   request. Skip both to stay on the released version number.
 4. After the first release, add the CRAN badge to the README:
    `usethis::use_cran_badge()`.
 
