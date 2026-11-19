@@ -31,7 +31,9 @@ Get all genes from the API
 }
 \examples{
 \dontshow{if (gpmap_available()) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+\donttest{
 genes <- all_genes()
 head(genes[, c("id", "gene", "chr")])
+}
 \dontshow{\}) # examplesIf}
 }

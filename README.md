@@ -2,13 +2,14 @@
 # gpmapr
 
 <!-- badges: start -->
+[![CRAN status](https://www.r-pkg.org/badges/version/gpmapr)](https://CRAN.R-project.org/package=gpmapr)
 [![R-CMD-check](https://github.com/MRCIEU/gpmapr/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/MRCIEU/gpmapr/actions/workflows/R-CMD-check.yaml)
 <!-- badges: end -->
 
 gpmapr is an R client for the [OpenGWAS Genotype-Phenotype Map](https://gpmap.opengwas.io).
 You can:
 - search the map for traits, genes and variants;
-- fetch their colocalisation groups, rare-variant results and associations;
+- fetch their colocalization groups, rare-variant results and associations;
 - upload your own GWAS to compare against the map.
 
 ## Installation

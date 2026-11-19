@@ -19,8 +19,10 @@
 #'     \item num_rare_groups: the number of rare groups for this gene
 #'   }
 #' @examplesIf gpmap_available()
+#' \donttest{
 #' genes <- all_genes()
 #' head(genes[, c("id", "gene", "chr")])
+#' }
 #' @export
 all_genes <- function() {
   genes <- genes_api()

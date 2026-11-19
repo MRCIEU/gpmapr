@@ -53,8 +53,8 @@ You can see information about the different traits that match your search, how t
 ### Understanding `info`
 
 * Extractions: Each trait has a number of extractions, related to the number of finemapped ld regions that had a p-value < 1.5e-4.
-* Colocalisation Groups: The number of colocalisation groups associated with the trait / gene / variant.
-* Colocalising Traits: The number of traits that are colocalising with the trait / gene / variant.
+* Colocalization Groups: The number of colocalization groups associated with the trait / gene / variant.
+* Colocalizing Traits: The number of traits that are colocalizing with the trait / gene / variant.
 * Rare Result Groups: Each trait has a number of rare result groups, related to the number of groups of rare result groups that had a p-value < 1.5e-4.
 
 You can also search for a gene (by ENSG ID or gene name) or variant (by CHR:BP or rsID).
@@ -91,7 +91,7 @@ knitr::kable(search_gpmap("22:37042914"))
 
 ### Variant search returns proxy variants
 
-The variant search will return the original variant and any proxy variants that are in LD with the original variant, which also have colocalisation results.  Each variant is marked as either `original_variant` or `proxy_variant`.  In this example, the original variant has no colocalisation results, but the proxy variant does.  The proxy variant is also marked as having a r^2 of 0.96
+The variant search will return the original variant and any proxy variants that are in LD with the original variant, which also have colocalization results.  Each variant is marked as either `original_variant` or `proxy_variant`.  In this example, the original variant has no colocalization results, but the proxy variant does.  The proxy variant is also marked as having a r^2 of 0.96
 
 
 ``` r
@@ -109,11 +109,11 @@ knitr::kable(proxy_variants)
 
 # Diving in
 
-You can get more information about a trait by subsequently calling the `trait()`, `gene()`, or `variant()` functions.  This will provide you with the colocalisation results, rare disease results, and study extractions.
+You can get more information about a trait by subsequently calling the `trait()`, `gene()`, or `variant()` functions.  This will provide you with the colocalization results, rare disease results, and study extractions.
 
 Each trait, gene, or variant call have optional parameters:
 
-* `include_associations`: Whether to include associations (BETA, SE, P) of the variants in which it's colocalised in the output.
+* `include_associations`: Whether to include associations (BETA, SE, P) of the variants in which it's colocalized in the output.
 * `include_coloc_pairs`: Whether to include coloc pairs in the output (which include h3 and h4), as opposed to just the coloc groups.
 * `h4_threshold`: The h4 threshold for coloc pairs.
 
@@ -143,9 +143,9 @@ This returns a list of elements, which you can access by name.  More detailed ex
 
 All three layers refer to **study extractions** (GWAS hits in finemapped LD regions), keyed by `id` in `study_extractions` and by `study_extraction_id` in `coloc_groups` and `rare_results`.
 
-Think of **`study_extractions`** as the catalogue of extractions linked to the trait or gene in the map: each row is a study signal at a locus. Not every listed extraction necessarily has a full colocalisation story or a rare-disease result row.
+Think of **`study_extractions`** as the catalogue of extractions linked to the trait or gene in the map: each row is a study signal at a locus. Not every listed extraction necessarily has a full colocalization story or a rare-disease result row.
 
-- **`coloc_groups`** holds extractions that sit inside a **colocalisation group** (shared coloc evidence with other studies/traits at that locus). If a study extraction appears here, it has coloc-structured results for that entity.
+- **`coloc_groups`** holds extractions that sit inside a **colocalization group** (shared coloc evidence with other studies/traits at that locus). If a study extraction appears here, it has coloc-structured results for that entity.
 - **`rare_results`** holds extractions that belong to a **rare-result group** (rare-disease-style finemapping in the API). The same biological signal can, in principle, be reflected in both rare and common coloc paths, so overlap between this set of extraction ids and those in `coloc_groups` is possible.
 - **Neither table:** Some extractions appear only under **`study_extractions`**. They are still tied to the trait or gene in the genotype–phenotype map (for example via **locus tagging, proximity, or other association logic** in the pipeline), but they do not currently carry a coloc-group row or a rare-result group row. Treat those as “present on the map at this locus” rather than “absent by mistake.”
 
@@ -245,7 +245,7 @@ knitr::kable(head(slc44a1$coloc_groups[, c("coloc_group_id", "trait_name", "data
 
 Note that by default, the gene endpoint includes trans genetic effects. You can turn this off with `gene("SLC44A1", include_trans = FALSE)`, or filter `coloc_groups` after the fact (for example `cis_trans == "cis"` or a `min_p` cutoff).
 
-After you subset rows, some `coloc_group_id` values may be left with only a single row. Those are no longer meaningful colocalisation **groups**, so drop them by keeping only groups with more than one row:
+After you subset rows, some `coloc_group_id` values may be left with only a single row. Those are no longer meaningful colocalization **groups**, so drop them by keeping only groups with more than one row:
 
 
 ``` r
@@ -281,7 +281,7 @@ knitr::kable(head(slc44a1_no_trans$coloc_groups[, c("coloc_group_id", "trait_nam
 
 ## Coloc pairs example
 
-Although coloc groups provide a helpful overview of the colocalisation results for a gene, you may want to look at the pairwise relationships between the studies.  You can do this by setting `include_coloc_pairs = TRUE` in the call.
+Although coloc groups provide a helpful overview of the colocalization results for a gene, you may want to look at the pairwise relationships between the studies.  You can do this by setting `include_coloc_pairs = TRUE` in the call.
 
 Each pair carries the trait name, data type, tissue and gene of both of its study extractions (`trait_name_a`, `trait_name_b`, and so on), so you can read the pairs without joining them to `study_extractions` yourself.  As there may be many coloc pairs, you may want to filter them, for example by `h4`.
 
@@ -312,14 +312,14 @@ knitr::kable(head(slc44a1_coloc_pairs$coloc_pairs[, c("trait_name_a", "trait_nam
 This section demonstrates a systematic workflow for using the GPMap to prioritise gene targets for a disease of interest.  We use **Alzheimer's disease (AD)** as an example.
 
 The logic proceeds through four steps:
-1. **Get a list of genes mapped to AD** via colocalisation.
+1. **Get a list of genes mapped to AD** via colocalization.
 2. **Rank genes by pleiotropy score** — low-pleiotropy genes are more specific to the indication.
 3. **Assess variant-level specificity** — if a variant associates with many cis-genes, it provides weaker evidence for any single target.
 4. **Check consistency across multiple variants and rare results** — concordant signals from independent loci and rare variant evidence strengthen the target–indication link.
 
 ## Step 1: Genes mapped to Alzheimer's disease
 
-We start by searching for Alzheimer's traits and then pulling their colocalisation groups to identify the set of genes that have colocalisation evidence with AD.
+We start by searching for Alzheimer's traits and then pulling their colocalization groups to identify the set of genes that have colocalization evidence with AD.
 
 
 ``` r
@@ -358,15 +358,15 @@ ad_genes_ranked <- ad_genes |>
   dplyr::arrange(.data$distinct_trait_categories)
 ```
 
-There are a total of 176 genes mapped to Alzheimer's disease.  We can see some of the genes that are mapped to AD, and the number of colocalisation groups that each gene has.
+There are a total of 176 genes mapped to Alzheimer's disease.  We can see some of the genes that are mapped to AD, and the number of colocalization groups that each gene has.
 
 Genes at the top of this list — those with very few distinct trait categories — are the most "specific" to Alzheimer's disease.  A gene appearing in many trait categories (high pleiotropy) is more likely to produce on-target side effects if therapeutically modulated.
 
 ## Step 3: Variant-level specificity and consistency across variants and rare results
 
-Each colocalisation group is anchored to a **variant** (an LD block).  Within a single coloc group, the same variant may map to expression or protein QTLs of **multiple cis-genes**.  When a variant associates with many cis-genes or trait categories, it provides weaker evidence that the gene would be a good drug target without potential off-target effects.
+Each colocalization group is anchored to a **variant** (an LD block).  Within a single coloc group, the same variant may map to expression or protein QTLs of **multiple cis-genes**.  When a variant associates with many cis-genes or trait categories, it provides weaker evidence that the gene would be a good drug target without potential off-target effects.
 
-The strongest evidence for a target-indication pair comes when **multiple independent variants** (different LD blocks) and **rare variant results** all point to the same gene.  This replication across loci greatly reduces the chance that any single colocalisation is spurious.
+The strongest evidence for a target-indication pair comes when **multiple independent variants** (different LD blocks) and **rare variant results** all point to the same gene.  This replication across loci greatly reduces the chance that any single colocalization is spurious.
 
 Let's pick some of the top-ranked genes from Step 2 and check how many independent coloc groups and rare result groups support them.
 
@@ -457,7 +457,7 @@ Genes with **multiple coloc groups** and supporting **rare result groups** have 
 
 From the table above, **TREM2** stands out as a particularly interesting target for Alzheimer's disease.  It has very low pleiotropy (few trait categories), meaning its genetic associations are highly specific to AD rather than spread across many unrelated phenotypes.  At the same time, it is supported by multiple coloc groups and rare result groups — independent lines of genetic evidence converging on the same gene.
 
-Let's examine TREM2 in more detail by looking at the direction of effect across all its AD-related colocalisation and rare variant signals.
+Let's examine TREM2 in more detail by looking at the direction of effect across all its AD-related colocalization and rare variant signals.
 
 
 ``` r
@@ -491,7 +491,7 @@ trem2_ad_rare <- if (length(trem2_ad_rare_group_ids) == 0L) {
 }
 ```
 
-The forest plot below shows the effect sizes (beta with 95% CI) for all colocalisation and rare result entries related to Alzheimer's disease at TREM2.  Panels are labelled with the variant and its MAF (minor allele frequency), and colour distinguishes **molecular phenotypes** (eQTL, pQTL, sQTL, etc.) from **traits** (disease GWAS).
+The forest plot below shows the effect sizes (beta with 95% CI) for all colocalization and rare result entries related to Alzheimer's disease at TREM2.  Panels are labelled with the variant and its MAF (minor allele frequency), and colour distinguishes **molecular phenotypes** (eQTL, pQTL, sQTL, etc.) from **traits** (disease GWAS).
 
 
 
@@ -594,7 +594,7 @@ ggplot2::ggplot(trem2_forest, ggplot2::aes(x = beta, y = row_label, colour = dat
 
 ![plot of chunk trem2-forest](figures/gpmapr-trem2-forest-1.png)
 
-TREM2 shows colocalisation evidence from multiple independent variants, supported by rare result groups.  The direction of effect appears complex — in some instances increased TREM2 expression associates with increased AD risk, while in others the direction is reversed — reflecting the biological complexity of TREM2 signalling in neuroinflammation.  Nonetheless, the convergence of evidence from multiple loci and data types makes it a compelling target, and it is indeed currently under active investigation as a therapeutic target for Alzheimer's disease.
+TREM2 shows colocalization evidence from multiple independent variants, supported by rare result groups.  The direction of effect appears complex — in some instances increased TREM2 expression associates with increased AD risk, while in others the direction is reversed — reflecting the biological complexity of TREM2 signalling in neuroinflammation.  Nonetheless, the convergence of evidence from multiple loci and data types makes it a compelling target, and it is indeed currently under active investigation as a therapeutic target for Alzheimer's disease.
 
 ## Putting it together
 
@@ -602,12 +602,12 @@ This four-step workflow uses the GPMap to move from a broad disease search to a 
 
 | Step | Question | GPMap function |
 |------|----------|----------------|
-| 1 | Which genes colocalise with my disease? | `search_gpmap()` → `trait()` |
+| 1 | Which genes colocalize with my disease? | `search_gpmap()` → `trait()` |
 | 2 | Which are most specific (least pleiotropic)? | `get_all_gene_pleiotropies()` |
 | 3 | Do variants map cleanly to one cis-gene? | `coloc_groups$gene_id` per `coloc_group_id` |
 | 4 | Is the evidence replicated across loci? | `gene()` → count coloc groups, variants, rare results |
 
-A gene that scores well on all four criteria — colocalises with AD, has low pleiotropy, is supported by high-specificity variants, and is replicated across multiple loci including rare variants — is a strong candidate for target validation and drug development.
+A gene that scores well on all four criteria — colocalizes with AD, has low pleiotropy, is supported by high-specificity variants, and is replicated across multiple loci including rare variants — is a strong candidate for target validation and drug development.
 
 # Accessing summary statistics
 

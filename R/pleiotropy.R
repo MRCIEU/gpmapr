@@ -25,7 +25,9 @@ get_all_gene_pleiotropies <- function() {
 #'     \item distinct_protein_coding_genes: the number of genes that the SNP is associated with via coloc groups
 #'   }
 #' @examplesIf gpmap_available()
+#' \donttest{
 #' head(get_all_variant_pleiotropies())
+#' }
 #' @export
 get_all_variant_pleiotropies <- function() {
   variant_pleiotropies <- variant_pleiotropies_api()

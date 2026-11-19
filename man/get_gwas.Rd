@@ -20,9 +20,9 @@ A list containing the GWAS information:
 \item trait: the upload's details, e.g. its \code{id}, \code{guid}, \code{name} and \code{status}
 \item study_extractions: the upload's study extractions and the existing study extractions its coloc
 groups and pairs refer to, in one dataframe.  See below.
-\item coloc_groups: the colocalisation groups the upload's study extractions are in, one row per study
+\item coloc_groups: the colocalization groups the upload's study extractions are in, one row per study
 extraction in each group.  See below.
-\item coloc_pairs: one row per colocalising pair of study extractions.  Each side (\code{a}, \code{b}) is
+\item coloc_pairs: one row per colocalizing pair of study extractions.  Each side (\code{a}, \code{b}) is
 \code{study_extraction_a_id} with \code{source_a}, and \code{trait_name_a}, \code{data_type_a}, \code{tissue_a} and \code{gene_a}
 describe it (and the same for \code{b}).
 }

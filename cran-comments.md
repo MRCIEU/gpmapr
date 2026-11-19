@@ -1,18 +1,29 @@
+## Update
+
+This is a patch release (1.0.0 -> 1.0.1). gpmapr now requests coloc pairs and full associations in
+the API's columnar format, which is smaller and faster for large traits. See NEWS.md.
+
 ## R CMD check results
 
 0 errors | 0 warnings | 1 note
 
-* This is a new release.
-* Possibly misspelled words in DESCRIPTION: "colocalisation", "colocalising" and "pleiotropy" are
-  spelled correctly (British spelling of standard genetics terms).
+* Possibly misspelled words in DESCRIPTION: "colocalization" and "colocalizing" are spelled
+  correctly (standard genetics terms, as in the associated paper).
 
 ## Test environments
 
-* local macOS, R release: 0 errors | 0 warnings | 1 note ("unable to verify current time", from the
-  local network)
-* win-builder, R-devel (2026-10-22 r90748 ucrt), x86_64-w64-mingw32: 0 errors | 0 warnings | 1 note
-  (the note above)
-* R-hub: linux, macos, macos-arm64, windows (R-devel)
+* CRAN incoming checks (R-devel, Windows and Debian Linux), on the previous upload of this
+  version: 0 errors | 0 warnings | the misspelling note above. The Windows check also noted that the
+  `all_genes()` and `get_all_variant_pleiotropies()` examples took over 10 s, because each
+  downloads a whole table from the API. Both examples are now in `\donttest{}`.
+* local macOS, R release: 0 errors | 0 warnings | no notes from the package (the other notes were
+  an outdated local HTML Tidy, and a 403 from mrcieu.r-universe.dev, which was refusing all requests
+  at the time).
+* R-hub: linux, macos, macos-arm64, windows (R-devel): 0 errors | 0 warnings | 0 notes
+
+## Reverse dependencies
+
+There are no reverse dependencies.
 
 ## Notes for the reviewer
 

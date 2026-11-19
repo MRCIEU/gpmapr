@@ -35,6 +35,9 @@ max_elements <- 3
 # Cut every JSON array of records (objects or arrays) to its first
 # `max_elements` elements, recursively. Arrays of plain values, such as column
 # names or the values of one row, are kept whole so every field survives.
+# Columnar tables (`*_columns`: one array of plain values per column, as the
+# coloc pairs and full associations endpoints return with format=columnar)
+# have every column cut to its first `max_elements` values instead.
 trim <- function(x, keep = max_elements) {
   if (!is.list(x)) {
     return(x)
@@ -43,7 +46,13 @@ trim <- function(x, keep = max_elements) {
   if (is_record_array && length(x) > keep) {
     x <- x[seq_len(keep)]
   }
-  return(lapply(x, trim, keep = keep))
+  trimmed <- lapply(x, trim, keep = keep)
+  for (name in grep("_columns$", names(x), value = TRUE)) {
+    trimmed[[name]] <- lapply(x[[name]], function(column) {
+      return(column[seq_len(min(keep, length(column)))])
+    })
+  }
+  return(trimmed)
 }
 
 recorded <- list()
@@ -79,7 +88,8 @@ calls <- list(
   quote(get_gwas(upload_guid)),
   quote(get_gwas(upload_guid, include_associations = TRUE)),
   quote(search_gpmap("rs9939609")),
-  quote(search_gpmap("haemoglobin"))
+  quote(search_gpmap("haemoglobin")),
+  quote(trait(5020, include_coloc_pairs = TRUE))
 )
 
 assignInNamespace("api_get", recording(httr::GET), ns = "gpmapr")

@@ -36,6 +36,14 @@ test_that("gpmapr 1.0.0 needs API 1.1.0, and older versions are told to update f
   expect_error(ensure_api_compatible(), "gpmapr 0.1.0 does not support version 1.1.0")
 })
 
+test_that("gpmapr 1.0.1 supports API 1.1.0", {
+  reset_api_state()
+  on.exit(reset_api_state())
+  local_mocked_bindings(installed_package_version = function() "1.0.1")
+  local_mocked_bindings(fetch_api_version = function(url) "1.1.0")
+  expect_true(ensure_api_compatible())
+})
+
 test_that("an unsupported API version stops with upgrade instructions", {
   reset_api_state()
   on.exit(reset_api_state())
